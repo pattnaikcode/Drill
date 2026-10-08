@@ -43,8 +43,8 @@ function good(s) {
 function careless(s) {
   if (s.firstAlertAt() !== null && s.sim.t > s.firstAlertAt() + 1500 && s.ackAt === null) {
     s.acknowledge('Test responder');
-    const wrong = Object.values(s.sim.c).find(x => x.def.id !== s.sc.root_cause.component && Object.keys(S.TYPES[x.type].faults).length);
-    s.declare(wrong.def.id, Object.keys(S.TYPES[wrong.type].faults)[0]);
+    const wrong = Object.values(s.sim.c).find(x => x.def.id !== s.sc.root_cause.component);
+    s.declare(wrong.def.id, 'bad_deployment', 'guessing');
     const [c, a] = s.sc.risky_actions[0].split('.');
     s.requestAction(c, a, 'Approver', true);
   }
@@ -84,7 +84,7 @@ test('use cases are offered only on their systems', () => {
   assert.strictEqual(D.drillFor(stuck, BLUEPRINTS.exchange), false);
   assert.match(D.validateDrill(stuck, BLUEPRINTS['trade-allocation-direct']).join(), /trades_topic/);
   const exch = drills.filter(d => D.drillFor(d, BLUEPRINTS.exchange)).length;
-  assert.strictEqual(exch, 7);
+  assert.strictEqual(exch, 11);
 });
 
 for (const drill of drills) {
@@ -177,4 +177,53 @@ test('tools: Unix shell is read-only and shows the real state', () => {
   assert.strictEqual((T.shell(sim, 'tam-node1', 'kubectl get pods | grep Pending | wc -l')), '2');
   assert.match(T.shell(sim, 'tam-node1', 'kubectl describe pod tam-7f9c-4'), /Insufficient memory/);
   assert.match(T.shell(sim, 'nowhere', 'ls'), /Could not resolve/);
+});
+
+// ---------------------------------------------------------------- nested (host) and API faults
+test('a full archive disk on the database stalls matching; killing sessions does not help', () => {
+  const sim = new S.Simulator(BLUEPRINTS.exchange, { seed: 5 });
+  sim.injectFault('orderbook_db', 'disk_full');
+  for (let i = 0; i < 36; i++) sim.step(5);
+  assert.ok(sim.metric('matching', 'out_rate') < 100);
+  assert.match(T.shell(sim, 'orderbook-db-db1', 'df -h'), /100% \/u01\/arch/);
+  assert.match(T.search(sim, 'component=matching level=ERROR').events[0].msg, /ORA-00257/);
+  assert.match(sim.applyAction('orderbook_db', 'kill_blocking_session').message, /archiving needed/);
+  assert.strictEqual(sim.applyAction('orderbook_db', 'clear_disk_space').effect, 'fixed');
+  assert.strictEqual(sim.activeFaults().length, 0);
+});
+test('gateway clock drift disconnects every member; sequence resets do not help', () => {
+  const sim = new S.Simulator(BLUEPRINTS.exchange, { seed: 5 });
+  sim.injectFault('fix_gateway', 'clock_skew');
+  for (let i = 0; i < 24; i++) sim.step(5);
+  assert.strictEqual(sim.metric('fix_gateway', 'sessions_down'), 5);
+  assert.match(sim.applyAction('broker_a', 'reset_sequence').message, /SendingTime/);
+  assert.match(T.shell(sim, 'fix-gateway-node1', 'chronyc tracking'), /Not synchronised/);
+  assert.ok(T.sql(sim, 'orderbook_db', "SELECT * FROM sessions WHERE last_reject_reason = 'SendingTime accuracy problem'").rows.length === 5);
+});
+test('API faults: 429 and 401 show in logs and health, and restarts do not fix them', () => {
+  const sim = new S.Simulator(BLUEPRINTS['trade-allocation-kafka'], { seed: 5 });
+  sim.injectFault('ctm', 'api_rate_limited');
+  for (let i = 0; i < 36; i++) sim.step(5);
+  assert.ok(sim.c.ctm.logs.some(l => /429 Too Many Requests/.test(l.msg)));
+  assert.match(T.shell(sim, 'ctm-adapter', 'cat /etc/app/application.yml'), /retry-policy: immediate/);
+  sim.applyAction('ctm', 'restart_adapter');
+  assert.strictEqual(sim.activeFaults().filter(f => f.type === 'api_rate_limited').length, 1);
+  assert.strictEqual(sim.applyAction('ctm', 'enable_retry_backoff').effect, 'fixed');
+  sim.injectFault('ctm', 'api_auth_expired');
+  for (let i = 0; i < 24; i++) sim.step(5);
+  assert.match(T.shell(sim, 'ctm-adapter', 'curl -s localhost:8080/health'), /401 Unauthorized/);
+  assert.match(sim.applyAction('ctm', 'escalate_to_vendor').message, /client secret expired/);
+});
+test('memory crash loop is visible in kubectl and not fixed by a restart', () => {
+  const sim = new S.Simulator(BLUEPRINTS['trade-allocation-kafka'], { seed: 5 });
+  sim.injectFault('tam', 'memory_oom');
+  for (let i = 0; i < 80; i++) sim.step(5);
+  assert.match(T.shell(sim, 'tam-node1', 'kubectl describe pod tam-7f9c-1'), /OOMKilled/);
+  sim.applyAction('tam', 'restart');
+  assert.strictEqual(sim.hostFault(sim.c.tam), 'memory_oom');
+});
+test('the root-cause list is the same for every component and includes decoys', () => {
+  const keys = S.CAUSES.map(c => c.key);
+  for (const t of Object.keys(S.TYPES)) for (const f of Object.keys(S.faultsFor(t))) assert.ok(keys.includes(f), f + ' missing from CAUSES');
+  assert.ok(keys.includes('market_volume') && keys.includes('api_schema_change'));
 });

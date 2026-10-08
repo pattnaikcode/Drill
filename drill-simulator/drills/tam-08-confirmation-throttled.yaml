@@ -1,0 +1,31 @@
+id: tam-confirmation-throttled
+title: Confirmations crawl through
+systems: [trade-allocation-kafka, trade-allocation-direct]
+level: Medium
+summary: The confirmation platform is up, but only part of the flow gets through.
+brief: >
+  13:30. A new connection pool for the confirmation adapter was rolled out last week. The
+  affirmation cut-off is 15:00.
+faults:
+  - {at: "13:37", component: ctm, fault: api_rate_limited}
+root_cause: {component: ctm, fault: api_rate_limited}
+accepted_fixes: [ctm.enable_retry_backoff]
+risky_actions: [ctm.restart_adapter, tam.scale_out, ctm.purge_queue]
+hints:
+  - {after_min: 2, text: "Some confirmations still go through. What HTTP status do the others get?"}
+  - {after_min: 5, text: "What does our adapter do when it is told to slow down? Check its retry policy."}
+debrief:
+  what_happened: >
+    The confirmation platform's API started returning 429 Too Many Requests. Our adapter retried
+    throttled calls immediately, so most of its quota went on retries and the backlog grew.
+  key_signal: >
+    429 with Retry-After in the adapter log, about 64% failed calls, and retry-policy: immediate in
+    the adapter configuration.
+  why_not_restart: >
+    Restarting the adapter replays the queue at full speed and gets throttled harder. More
+    allocation pods push more traffic into the same limit.
+  runbook:
+    - Distinguish "they are down" (5xx) from "we are too fast" (429).
+    - Check the retry policy; immediate retries make throttling worse.
+    - Switch to exponential back-off with approval and watch the backlog drain.
+    - Problem record - respect Retry-After and agree quotas with the provider.

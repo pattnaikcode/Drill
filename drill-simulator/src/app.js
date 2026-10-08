@@ -13,6 +13,11 @@
     set(k, v) { try { localStorage.setItem('opsdrill.' + k, v); } catch (e) { /* storage unavailable */ } },
   };
   const SIM_SECONDS_PER_REAL_SECOND = 10; // at 1× speed
+  // Two pages share this code. The participant page (index.html) never shows fault injection, use case
+  // files or answers before the debrief. The instructor page (admin.html) designs systems and use cases,
+  // injects faults and sees the answer live. Both are static files: a real product keeps use case
+  // definitions on a server and sends participants only what they may see.
+  const ADMIN = window.OPS_ROLE === 'admin';
 
   // ------------------------------------------------------------ systems and use cases
   const SYSTEMS = {}; // id -> { text, bp, builtIn }
@@ -103,7 +108,7 @@
   function keyMetric(id) {
     const s = A.sim.c[id], m = k => A.sim.metric(id, k);
     switch (s.type) {
-      case 'source': return s.fault && s.fault.type === 'session_down' ? `disconnected · ${S.fmtInt(s.held)} queued` : `${S.fmtInt(m('out_rate'))}/min sent`;
+      case 'source': return A.sim.sourceDown(s) ? `disconnected · ${S.fmtInt(s.held)} queued` : `${S.fmtInt(m('out_rate'))}/min sent`;
       case 'kafka_topic': return `lag ${S.fmtInt(m('lag'))}`;
       case 'service': return `${S.fmtInt(m('out_rate'))}/min · ${m('instances')}/${s.configured} up${m('backlog') >= 50 ? ' · q ' + S.fmtInt(m('backlog')) : ''}`;
       case 'external_party': return `${S.fmtInt(m('out_rate'))}/min · ${S.fmtInt(m('backlog'))} waiting`;
@@ -290,10 +295,10 @@
   function unixExamples() {
     const h = TL.hosts(A.sim).find(x => x.host === A.unixHost); if (!h) return [];
     const c = A.sim.c[h.comp];
-    const ex = ['help', `tail -n 30 /var/log/app/${h.comp}.log`, `grep ERROR /var/log/app/${h.comp}.log | wc -l`];
+    const ex = ['help', `tail -n 30 /var/log/app/${h.comp}.log`, `grep ERROR /var/log/app/${h.comp}.log | wc -l`, 'df -h', 'ps aux'];
     if (c.type === 'service') ex.push('kubectl get pods', 'curl -s localhost:8080/health');
     if (c.type === 'kafka_topic') ex.push(`kafka-consumer-groups.sh --describe --group ${c.def.consumer_group || 'consumers'}`);
-    if (c.type === 'database') ex.push('ps aux', 'free -m');
+    if (c.type === 'database') ex.push('free -m');
     ex.push('cat /etc/app/application.yml');
     return ex;
   }
@@ -365,12 +370,14 @@
       $('#ackStatus').textContent = ss.ackAt === null ? 'Not acknowledged' : `Acknowledged at ${S.clockStr(ss.ackAt)} by ${ss.ackBy}`;
       $('#ackBtn').disabled = ss.ackAt !== null;
       $('#hints').innerHTML = ss.visibleHints().map(h => `<div class="hint">${esc(h)}</div>`).join('');
+      if (ADMIN && $('#instrFaults')) { const af = sim.activeFaults(); $('#instrFaults').innerHTML = '<b>Active now:</b> ' + (af.length ? af.map(f => `${esc(f.type === 'outage' ? 'host restarting / failing over' : S.faultsFor(sim.c[f.id].type)[f.type].label)} on ${esc(sim.c[f.id].def.name)}`).join('; ') : 'nothing — all faults cleared'); }
     }
   }
 
   // ------------------------------------------------------------ views
   function renderAll() {
     document.querySelectorAll('.tabs button').forEach(b => b.setAttribute('aria-selected', String(b.dataset.tab === A.tab)));
+    if (!ADMIN && A.tab === 'design') A.tab = 'drills';
     $('#main').innerHTML = ({ drills: viewDrills, run: viewRun, design: viewDesign, debrief: viewDebrief }[A.tab])();
     wire(); updateLive();
   }
@@ -379,7 +386,7 @@
     const list = drillsFor(A.bp), sel = findDrill(A.drillId), running = !!A.session;
     const counts = sys => ({ p: sys.bp.components.filter(c => c.type === 'source').length, n: sys.bp.components.length, u: drillsFor(sys.bp).length });
     return `<div class="stack">
-      <section class="panel stack"><div><h2>1. Choose a system</h2><p class="muted small" style="margin:2px 0 0">Each system has its own architecture and its own use cases. Design new ones in the Design tab.</p></div>
+      <section class="panel stack"><div><h2>1. Choose a system</h2><p class="muted small" style="margin:2px 0 0">Each system has its own architecture and its own use cases.${ADMIN ? ' Design new ones in the Design tab.' : ''}</p></div>
         <div class="lib">${Object.entries(SYSTEMS).map(([id, sys]) => { const k = counts(sys); return `<button class="card" data-sys="${id}" aria-pressed="${id === A.sysId}" ${running ? 'disabled' : ''}>
           <div class="row between"><span class="pill ${sys.builtIn ? 'info' : 'mut'}">${sys.builtIn ? 'Built in' : 'Your design'}</span><span class="small muted">${k.u} use case${k.u === 1 ? '' : 's'}</span></div>
           <h3>${esc(sys.bp.system)}</h3><span class="small muted">${esc(shortName(sys.bp.description, 170))}</span>
@@ -400,20 +407,20 @@
             <div class="row between"><span class="pill ${d.level === 'Easy' ? 'ok' : d.level === 'Medium' ? 'warn' : 'bad'}">${esc(d.level || 'Custom')}</span><span class="small muted">${d.mystery ? 'random fault' : builtIn ? '' : 'your use case'}</span></div>
             <h3>${esc(d.title)}</h3><span class="small muted">${esc(d.summary || '')}</span>
             ${errs.length ? `<span class="small" style="color:var(--bad)">${esc(errs[0])}</span>` : ''}</button>`;
-        }).join('') || '<p class="muted">No use cases for this system yet. Add one in the Design tab.</p>'}</div>
-        ${sel ? `<details><summary class="label" style="cursor:pointer">Use case file: ${esc(sel.d.id)}.yaml</summary><pre class="term" style="height:auto;max-height:420px">${esc(sel.text)}</pre></details>` : ''}
+        }).join('') || `<p class="muted">No use cases for this system yet.${ADMIN ? ' Add one in the Design tab.' : ''}</p>`}</div>
+        ${sel && ADMIN ? `<details><summary class="label" style="cursor:pointer">Use case file: ${esc(sel.d.id)}.yaml</summary><pre class="term" style="height:auto;max-height:420px">${esc(sel.text)}</pre></details>` : ''}
       </section></div>`;
   }
 
   function compOptions(filter) { return A.bp.components.filter(filter).map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join(''); }
   function actionPicker() {
     return `<div class="stack" style="gap:6px"><span class="label">Request an action</span>
-      <div class="pick"><select id="acComp" aria-label="Component">${compOptions(c => Object.keys(S.TYPES[c.type].actions).length)}</select><select id="acAction" aria-label="Action"></select><button class="btn" id="acBtn">Request approval</button></div>
+      <div class="pick"><select id="acComp" aria-label="Component">${compOptions(c => Object.keys(S.actionsFor(c.type)).length)}</select><select id="acAction" aria-label="Action"></select><button class="btn" id="acBtn">Request approval</button></div>
       <div id="approval">${approvalHtml()}</div></div>`;
   }
   function approvalHtml() {
     const ap = A.approval; if (!ap) return '';
-    const c = A.bp.byId[ap.comp], act = S.TYPES[c.type].actions[ap.action];
+    const c = A.bp.byId[ap.comp], act = S.ACTIONS[ap.action];
     return `<div class="approve" role="group" aria-label="Approval">
       <b>${esc(act.label)}</b><span class="small">on ${esc(c.name)}. This changes the system. It runs only with a named approver and confirmation, and is recorded.</span>
       <label class="field">Approver<input type="text" id="apprName" placeholder="e.g. Rahul Mehta, Support Manager" autocomplete="off" value="${esc(ap.name || '')}"></label>
@@ -432,15 +439,23 @@
       <section class="panel stack"><h2>Respond</h2>
         <div class="row between"><span id="ackStatus" class="small muted"></span><button class="btn" id="ackBtn">Acknowledge</button></div>
         <div class="stack" style="gap:6px"><span class="label">Declare root cause</span>
-          <div class="pick"><select id="rcComp" aria-label="Component">${compOptions(c => Object.keys(S.TYPES[c.type].faults).length)}</select><select id="rcFault" aria-label="Fault"></select><button class="btn" id="rcBtn">Declare</button></div></div>
+          <div class="pick"><select id="rcComp" aria-label="Where the problem is">${compOptions(() => true)}</select><select id="rcFault" aria-label="Cause">${causeOptions()}</select></div>
+          <textarea id="rcEvidence" class="evidence" rows="2" placeholder="Your evidence: what you saw, and in which tool (an error in a log, a metric, a query result, a command output)" aria-label="Evidence for the root cause"></textarea>
+          <div class="row"><button class="btn" id="rcBtn">Declare</button><span class="small muted">The same list of causes is offered for every component.</span></div></div>
         ${actionPicker()}
         <div class="feed" id="feed">${feedHtml()}</div>
         <button class="btn" id="endBtn">End drill and see debrief</button>
-      </section>` : `
+      </section>
+      ${ADMIN ? `<section class="panel stack instr"><div class="row between"><h2>Instructor</h2><span class="pill bad">hidden from participants</span></div>
+        <p class="small" style="margin:0"><b>Answer:</b> ${esc(S.causeLabel((ss.sc.root_cause || ss.faultPlan[0]).fault))} on ${esc(A.bp.byId[(ss.sc.root_cause || ss.faultPlan[0]).component].name)} · <b>Fix:</b> ${esc((ss.sc.accepted_fixes || []).join(', '))}</p>
+        <div class="small" id="instrFaults"></div>
+        <div class="stack" style="gap:6px"><span class="label">Add a fault now</span>
+          <div class="pick"><select id="fxComp" aria-label="Component">${compOptions(() => true)}</select><select id="fxFault" aria-label="Fault"></select><button class="btn danger" id="fxBtn">Inject</button></div>
+          <span class="small muted">Not scored: use it to rehearse a curveball.</span></div></section>` : ''}` : `
       <section class="panel stack"><h2>Sandbox</h2>
-        <p class="small muted" style="margin:0">${A.ended ? 'The drill has ended and the system is frozen at that moment. Inspect it, or reset to start a fresh sandbox.' : `Free play on <b>${esc(A.bp.system)}</b>. Break any component and investigate with the tools, or start a scored use case from the Drills tab.`}</p>
-        <div class="stack" style="gap:6px"><span class="label">Break something</span>
-          <div class="pick"><select id="fxComp" aria-label="Component">${compOptions(c => Object.keys(S.TYPES[c.type].faults).length)}</select><select id="fxFault" aria-label="Fault"></select><button class="btn danger" id="fxBtn" ${A.ended ? 'disabled' : ''}>Inject fault</button></div></div>
+        <p class="small muted" style="margin:0">${A.ended ? 'The drill has ended and the system is frozen at that moment. Inspect it, or reset to start a fresh sandbox.' : ADMIN ? `Free play on <b>${esc(A.bp.system)}</b>. Break any component and investigate with the tools, or start a scored use case from the Drills tab.` : `A healthy <b>${esc(A.bp.system)}</b>. Learn what normal looks like in each tool, then start a use case from the Drills tab.`}</p>
+        ${ADMIN ? `<div class="stack" style="gap:6px"><span class="label">Break something</span>
+          <div class="pick"><select id="fxComp" aria-label="Component">${compOptions(() => true)}</select><select id="fxFault" aria-label="Fault"></select><button class="btn danger" id="fxBtn" ${A.ended ? 'disabled' : ''}>Inject fault</button></div></div>` : ''}
         ${actionPicker()}
         <div class="feed" id="feed">${feedHtml()}</div>
         <button class="btn" id="resetBtn">Reset sandbox to healthy</button>
@@ -456,8 +471,8 @@
   }
 
   function ucTemplate(bp) {
-    const fc = bp.components.find(c => c.type === 'service' && Object.keys(S.TYPES.service.faults).length) || bp.components.find(c => Object.keys(S.TYPES[c.type].faults).length);
-    const fault = Object.keys(S.TYPES[fc.type].faults)[0], action = Object.entries(S.TYPES[fc.type].actions).find(([, a]) => a.fixes.includes(fault));
+    const fc = bp.components.find(c => c.type === 'service') || bp.components.find(c => Object.keys(S.faultsFor(c.type)).length);
+    const fault = Object.keys(S.faultsFor(fc.type))[0], action = Object.entries(S.actionsFor(fc.type)).find(([, a]) => (a.fixes || []).includes(fault));
     return `id: my-use-case
 title: My use case
 systems: [${bp.id}]
@@ -468,7 +483,7 @@ brief: >
 faults:
   - {at: "${S.clockStr(bp.start + 360)}", component: ${fc.id}, fault: ${fault}}
 root_cause: {component: ${fc.id}, fault: ${fault}}
-accepted_fixes: [${fc.id}.${action ? action[0] : Object.keys(S.TYPES[fc.type].actions)[0]}]
+accepted_fixes: [${fc.id}.${action ? action[0] : Object.keys(S.actionsFor(fc.type))[0]}]
 risky_actions: []
 hints:
   - {after_min: 3, text: "A nudge shown in practice mode after 3 minutes."}
@@ -483,7 +498,7 @@ debrief:
   function viewDesign() {
     const sysText = A.designSys != null ? A.designSys : SYSTEMS[A.sysId].text;
     const ucText = A.designUC != null ? A.designUC : ucTemplate(A.bp);
-    const comps = A.bp.components.filter(c => Object.keys(S.TYPES[c.type].faults).length || Object.keys(S.TYPES[c.type].actions).length);
+    const comps = A.bp.components;
     return `<div class="stack">
       <div class="bp">
         <section class="panel stack"><div><h2>1. Design a system</h2><p class="small muted" style="margin:2px 0 0">Components, the flow between them, alert rules and the flow diagram. ${A.session ? '<b>Loading ends the current drill.</b>' : ''}</p><p class="small" style="margin:4px 0 0">Prefer forms to YAML? Use the <a href="builder.html">System Builder</a> (the <code>builder.html</code> file next to this one) to add components and copy the YAML here.</p></div>
@@ -502,7 +517,7 @@ debrief:
       </div>
       <section class="panel stack"><h2>What can fail in “${esc(A.bp.system)}”, and how it is fixed</h2>
         <div class="tablewrap"><table><thead><tr><th>Component id</th><th>Name</th><th>Faults (<code>fault:</code>)</th><th>Actions (<code>component.action</code>)</th></tr></thead><tbody>
-        ${comps.map(c => `<tr><td><code>${c.id}</code></td><td>${esc(c.name)}</td><td class="small">${Object.entries(S.TYPES[c.type].faults).map(([k, f]) => `<code>${k}</code> ${esc(f.label)}`).join('<br>') || '—'}</td><td class="small">${Object.entries(S.TYPES[c.type].actions).map(([k, a]) => `<code>${c.id}.${k}</code>${a.fixes.length ? ' fixes ' + a.fixes.map(f => `<code>${f}</code>`).join(', ') : ''}`).join('<br>') || '—'}</td></tr>`).join('')}
+        ${comps.map(c => `<tr><td><code>${c.id}</code></td><td>${esc(c.name)}</td><td class="small">${Object.entries(S.faultsFor(c.type)).map(([k, f]) => `<code>${k}</code> ${esc(f.label)}${f.host ? ' <span class="muted">(host)</span>' : ''}`).join('<br>') || '—'}</td><td class="small">${Object.entries(S.actionsFor(c.type)).map(([k, a]) => `<code>${c.id}.${k}</code>${(a.fixes || []).length ? ' fixes ' + a.fixes.filter(f => S.faultsFor(c.type)[f]).map(f => `<code>${f}</code>`).join(', ') : ''}`).join('<br>') || '—'}</td></tr>`).join('')}
         </tbody></table></div></section>
       <section class="panel stack"><h2>Component types</h2>
         <div class="tablewrap"><table><thead><tr><th>Type</th><th>Settings</th><th>Metrics for alert rules</th></tr></thead><tbody>${Object.entries(S.TYPES).map(([k, T]) => `<tr><td><code>${k}</code></td><td class="small">${T.required.map(r => `<code>${r}</code>`).join(' ')}${k === 'service' ? ' <span class="muted">optional <code>instances</code> <code>uses</code> <code>rejects: queue|return</code></span>' : ''}${k === 'source' ? ' <span class="muted">optional <code>role</code> <code>session</code></span>' : ''}${k === 'kafka_topic' ? ' <span class="muted">optional <code>consumer_group</code></span>' : ''}${k === 'issuer' ? '<code>feeds</code> <span class="muted">optional <code>symbol</code></span>' : ''}</td><td class="small">${Object.keys(T.metrics).map(m => `<code>${m}</code>`).join(' ')}</td></tr>`).join('')}</tbody></table></div>
@@ -523,14 +538,14 @@ debrief:
       <div class="times">${[['Fault started', S.clockStr(t.fault)], ['Time to detect', tm(t.detect)], ['Time to acknowledge', tm(t.mtta)], ['Time to diagnose', tm(t.diagnose)], ['Time to recover', tm(t.recover)]].map(([l, v]) => `<div class="panel"><div class="label">${l}</div><div class="mono" style="font-size:18px">${v}</div></div>`).join('')}</div>
       <div class="bp">
         <section class="panel stack"><h2>What happened</h2>
-          <p style="margin:0"><b>Root cause:</b> ${esc(d.answer.fault)} on ${esc(d.answer.component)}.</p>
+          <p style="margin:0"><b>Root cause:</b> ${esc(d.answer.fault)} on ${esc(d.answer.component)}${d.answer.host ? ' (a host problem underneath the application)' : ''}.</p>
           ${n.what_happened ? `<p style="margin:0">${esc(n.what_happened)}</p>` : ''}
           ${n.key_signal ? `<p style="margin:0"><b>The signal to spot:</b> ${esc(n.key_signal)}</p>` : ''}
           ${n.why_not_restart ? `<p style="margin:0"><b>Why not just restart:</b> ${esc(n.why_not_restart)}</p>` : ''}
           <p style="margin:0"><b>Accepted fix:</b> ${esc(d.accepted.join(' or '))}.</p>
           ${n.runbook ? `<h3>Runbook</h3><ol style="margin:0;padding-left:20px">${n.runbook.map(r => `<li>${esc(r)}</li>`).join('')}</ol>` : ''}
           <h3>Your decisions</h3>
-          ${d.declarations.length ? `<ul style="margin:0;padding-left:20px">${d.declarations.map(x => `<li><span class="mono">${S.clockStr(x.t)}</span> Declared ${esc(x.label)} <span class="cls ${x.correct ? 'accepted' : 'risky'}">${x.correct ? 'correct' : 'incorrect'}</span></li>`).join('')}</ul>` : '<p class="small muted" style="margin:0">No root cause declared.</p>'}
+          ${d.declarations.length ? `<ul style="margin:0;padding-left:20px">${d.declarations.map(x => `<li><span class="mono">${S.clockStr(x.t)}</span> Declared ${esc(x.label)} <span class="cls ${x.correct ? 'accepted' : 'risky'}">${x.correct ? 'correct' : 'incorrect'}</span>${x.evidence ? `<br><span class="small muted">Evidence: ${esc(x.evidence)}</span>` : ''}</li>`).join('')}</ul>` : '<p class="small muted" style="margin:0">No root cause declared.</p>'}
           ${d.actions.length ? `<ul style="margin:0;padding-left:20px">${d.actions.map(x => `<li><span class="mono">${S.clockStr(x.t)}</span> ${esc(x.label)} on ${esc(A.bp.byId[x.component] ? A.bp.byId[x.component].name : x.component)}, approved by ${esc(x.approver)} <span class="cls ${x.cls}">${x.cls}</span></li>`).join('')}</ul>` : '<p class="small muted" style="margin:0">No actions taken.</p>'}
           <h3>How you investigated</h3>
           <p class="small" style="margin:0">Components inspected: ${d.inspected.length ? esc(d.inspected.join(', ')) : 'none'}.</p>
@@ -543,13 +558,17 @@ debrief:
   }
 
   // ------------------------------------------------------------ events
-  function fillFaults(compSel, faultSel) {
+  function fillFaults(compSel, faultSel) { // instructor only: what can be injected here
     const c = A.bp.byId[$(compSel).value]; if (!c) return;
-    $(faultSel).innerHTML = Object.entries(S.TYPES[c.type].faults).map(([k, f]) => `<option value="${k}">${esc(f.label)}</option>`).join('');
+    $(faultSel).innerHTML = Object.entries(S.faultsFor(c.type)).map(([k, f]) => `<option value="${k}">${esc(f.label)}${f.host ? ' (host)' : ''}</option>`).join('');
   }
-  function fillActions() {
+  function causeOptions() { // one list for every component, real causes among decoys
+    const groups = [...new Set(S.CAUSES.map(c => c.group))];
+    return '<option value="">Choose a cause…</option>' + groups.map(g => `<optgroup label="${esc(g)}">${S.CAUSES.filter(c => c.group === g).map(c => `<option value="${c.key}">${esc(c.label)}</option>`).join('')}</optgroup>`).join('');
+  }
+  function fillActions() { // the runbook catalogue for this kind of component: fixes, heavy options and harmful ones alike
     const c = A.bp.byId[$('#acComp').value]; if (!c) return;
-    $('#acAction').innerHTML = Object.entries(S.TYPES[c.type].actions).map(([k, a]) => `<option value="${k}">${esc(a.label)}</option>`).join('');
+    $('#acAction').innerHTML = Object.entries(S.actionsFor(c.type)).map(([k, a]) => `<option value="${k}">${esc(a.label)}</option>`).join('');
   }
   const errList = errs => `<ul class="errors">${errs.map(x => `<li>${esc(x)}</li>`).join('')}</ul>`;
   function copyText(text, btn) {
@@ -608,18 +627,20 @@ debrief:
     each('[data-ux]', b => b.addEventListener('click', () => runUnix(b.dataset.ux)));
     if ($('#uxOut')) $('#uxOut').scrollTop = $('#uxOut').scrollHeight;
     // run: response
-    if ($('#rcComp')) { fillFaults('#rcComp', '#rcFault'); on('#rcComp', 'change', () => fillFaults('#rcComp', '#rcFault')); }
     if ($('#fxComp')) { fillFaults('#fxComp', '#fxFault'); on('#fxComp', 'change', () => fillFaults('#fxComp', '#fxFault')); }
     if ($('#acComp')) { fillActions(); on('#acComp', 'change', fillActions); }
     on('#ackBtn', 'click', () => { if (A.session.acknowledge(A.responder.trim() || 'Responder')) { pushFeed('Incident acknowledged'); updateLive(); } });
     on('#rcBtn', 'click', () => {
-      const comp = $('#rcComp').value, fault = $('#rcFault').value, ss = A.session;
-      const ok = ss.declare(comp, fault);
-      const label = `${S.TYPES[A.bp.byId[comp].type].faults[fault].label} on ${A.bp.byId[comp].name}`;
+      const comp = $('#rcComp').value, fault = $('#rcFault').value, ev = $('#rcEvidence').value.trim(), ss = A.session;
+      if (!fault) { pushFeed('Choose a cause first.', 'bad'); return; }
+      if (ev.length < 8) { pushFeed('Write your evidence first: what you saw, and where.', 'bad'); $('#rcEvidence').focus(); return; }
+      const ok = ss.declare(comp, fault, ev);
+      $('#rcEvidence').value = '';
+      const label = `${S.causeLabel(fault)} on ${A.bp.byId[comp].name}`;
       if (ss.mode === 'practice') pushFeed(ok ? `Root cause confirmed: ${label}. Now fix it.` : `Declared ${label}. The evidence does not support this; keep looking.`, ok ? 'ok' : 'bad');
       else pushFeed(`Root cause recorded: ${label}`);
     });
-    on('#fxBtn', 'click', () => { const comp = $('#fxComp').value, fault = $('#fxFault').value; A.sim.injectFault(comp, fault); pushFeed(`Injected: ${S.TYPES[A.bp.byId[comp].type].faults[fault].label} on ${A.bp.byId[comp].name}`, 'bad'); updateLive(); });
+    on('#fxBtn', 'click', () => { if (!ADMIN) return; const comp = $('#fxComp').value, fault = $('#fxFault').value; A.sim.injectFault(comp, fault); pushFeed(`Injected: ${S.faultsFor(A.bp.byId[comp].type)[fault].label} on ${A.bp.byId[comp].name}`, 'bad'); updateLive(); });
     on('#acBtn', 'click', () => { A.approval = { comp: $('#acComp').value, action: $('#acAction').value, name: '' }; $('#approval').innerHTML = approvalHtml(); wireApproval(); $('#apprName').focus(); });
     wireApproval();
     on('#endBtn', 'click', () => endDrill('abandoned'));
@@ -670,7 +691,7 @@ debrief:
       else r = A.sim.applyAction(ap.comp, ap.action);
       if (!r.ok) { ap.error = r.message; ap.name = name; $('#approval').innerHTML = approvalHtml(); wireApproval(); return; }
       A.approval = null; $('#approval').innerHTML = '';
-      pushFeed(`${r.label} (approved by ${name}): ${r.message}`, r.effect === 'fixed' ? 'ok' : '');
+      pushFeed(`${r.label} (approved by ${name}): ${r.message}`, r.effect === 'fixed' && (!A.session || A.session.mode === 'practice') ? 'ok' : '');
       updateLive();
     });
   }
@@ -679,6 +700,8 @@ debrief:
   let toastT;
   function toast(t) { const el = $('#toast'); el.textContent = t; el.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => { el.hidden = true; }, 3200); }
 
+  if (!ADMIN) document.querySelectorAll('.tabs [data-tab="design"]').forEach(b => b.remove());
+  if (ADMIN) { const b = document.querySelector('.brand b'); if (b) b.textContent = 'OpsPilot Drills · Instructor'; }
   document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click', () => { A.tab = b.dataset.tab; renderAll(); }));
   $('#pauseBtn').addEventListener('click', () => { A.running = !A.running; updateLive(); });
   $('#speed').addEventListener('change', e => { A.speed = +e.target.value; const s = $('#speedSel'); if (s) s.value = String(A.speed); });

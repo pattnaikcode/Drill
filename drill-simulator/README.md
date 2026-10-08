@@ -2,14 +2,21 @@
 
 A browser-based incident drill simulator for production support teams. **Design a system, add use cases to it, and run them as scored drills**, investigating with Grafana-, Splunk-, SQL- and Unix-style tools.
 
-Open `dist/index.html` in any modern browser. No server, no install.
+Open it in any modern browser. No server, no install. There are two pages:
+
+| Page | For | What it shows |
+|---|---|---|
+| `dist/index.html` | **Participants** | Systems, flow diagrams, use case briefs, the tools and the Respond panel. No fault injection, no use case files, no answers until the debrief. |
+| `dist/admin.html` | **Instructors** | Everything above, plus the Design tab, the use case files, a sandbox where you can break anything, and an Instructor panel during a drill showing the answer, the faults active right now, and a control to add a curveball. |
+
+Both are static files, so the split keeps answers off the participant's screen but cannot stop someone determined from opening the instructor page or the browser's developer tools. A hosted version would keep use case definitions on a server and send participants only what they may see.
 
 ## Built-in systems
 
 | System | Architecture | Use cases |
 |---|---|---|
-| **Equity exchange trading platform** | 3 brokers and 2 market makers over FIX → gateway → pre-trade risk (instrument master kept current by 3 listed issuers) → matching (order book store) → Kafka trade bus → clearing corporation; matching also feeds market data vendors and drop copy | Broker cannot log in · Market maker floods the gateway · Orders rejected in one stock (missed corporate action) · Matching slows to a crawl · Trades not reaching clearing · Some trades never reach clearing (stuck partition) · Mystery |
-| **Middle-office trade allocation** (with Kafka) | OMS and execution desk → Kafka → allocation engine (SSI reference data, allocation DB) → confirmation platform → settlement | Allocations falling behind · One partition stuck · Missing settlement instructions · Confirmations not matching · Allocation engine choking · Mystery |
+| **Equity exchange trading platform** | 3 brokers and 2 market makers over FIX → gateway → pre-trade risk (instrument master kept current by 3 listed issuers) → matching (order book store) → Kafka trade bus → clearing corporation; matching also feeds market data vendors and drop copy | Broker cannot log in · Market maker floods the gateway · Orders rejected in one stock (missed corporate action) · Matching slows to a crawl · Trades not reaching clearing · Some trades never reach clearing (stuck partition) · **Matching stops committing trades** (archive disk full on the database) · **Every member is disconnected** (gateway clock drift) · **Clearing stops accepting trades again** (expired TLS certificate) · **Orders slow down in pre-trade risk** (bad configuration change to an API timeout) · Mystery (10 possible faults) |
+| **Middle-office trade allocation** (with Kafka) | OMS and execution desk → Kafka → allocation engine (SSI reference data, allocation DB) → confirmation platform → settlement | Allocations falling behind · One partition stuck · Missing settlement instructions · Confirmations not matching · Allocation engine choking · **Allocation engine keeps restarting** (out of memory) · **Confirmations crawl through** (API rate limit, HTTP 429) · **Confirmation platform rejects everything** (expired API credentials, HTTP 401) · Mystery (9 possible faults) |
 | **Middle-office trade allocation** (direct) | Same system without Kafka, to compare designs | All of the above except the stuck partition |
 
 Every system has a **flow diagram** with groups (who owns what) and numbered steps describing the business flow. Participants see it before they start and can open it at any time during a drill.
@@ -20,7 +27,26 @@ Every system has a **flow diagram** with groups (who owns what) and numbered ste
 2. Choose a use case. Faults are injected at the scheduled time without telling you what or where.
 3. Investigate with the live map, component inspector and four tools (below).
 4. Acknowledge, declare the root cause, and request fixes. Every change needs a named approver and confirmation.
+   - **Root cause**: choose where (any component) and what from one list of causes that is the same for every component and includes plausible causes that never happen in this simulator. Write the evidence that supports it; it appears in the debrief.
+   - **Actions**: each kind of component has its full runbook catalogue, with fixes, heavy-handed options (reboot, fail over to DR) and harmful ones (purge a queue, which loses trades) side by side. Nothing marks which is which.
 5. The drill ends when business flow is back to normal or the deadline passes. You get a score and a debrief: timeline, time to detect / acknowledge / diagnose / recover, every tool query you ran, the signal to spot, why the obvious fix is wrong, and the runbook.
+
+## Nested and API failures
+
+Services, databases, adapters and loaders run on **hosts**, and hosts fail underneath the application. The alert names the symptom; the cause is one or two layers down.
+
+| Host fault | Where | What you see first | Where the evidence is | Fix |
+|---|---|---|---|---|
+| `disk_full` | any host | Database: every commit hangs (ORA-00257), the pool fills, the service using it stalls. Service: requests fail writing logs. | `df -h`, `dmesg`, `v$session` event "log file switch (archiving needed)" | `clear_disk_space` |
+| `memory_oom` | service | Throughput comes in bursts | `kubectl get pods` CrashLoopBackOff, `kubectl describe pod` OOMKilled exit 137, `dmesg` | `increase_memory_limit` |
+| `cpu_runaway` | service, database | Slow processing, high latency | `top` shows a backup job at 98% CPU, load average 15 | `kill_runaway_process` |
+| `fd_exhausted` | service, adapter | Some calls fail | "Too many open files", `lsof -p 3120 \| wc -l` = 4096, mostly CLOSE_WAIT | `raise_fd_limit` |
+| `clock_skew` | service | Every participant rejected at logon | "SendingTime accuracy problem", `date`, `chronyc tracking` | `resync_ntp` |
+| `cert_expired` | adapter | Looks exactly like the external party being down | SSLHandshakeException, `openssl x509 -enddate` | `renew_certificate` |
+
+**API faults:** `api_rate_limited` (HTTP 429; our adapter retries immediately and makes it worse; fix `enable_retry_backoff`), `api_auth_expired` (HTTP 401 invalid_client; fix `rotate_api_credentials`) on external parties, and `config_change` on services (an automated configuration refresh set an API read timeout to 50 ms; "no deployment" is not "no change"; fix `revert_config`).
+
+Rebooting a host or failing over to DR fixes some host faults but takes the component away for four to five minutes; restarting the application fixes none of them.
 
 ## Investigation tools
 
@@ -31,7 +57,7 @@ All tools read the live simulation, so what you find depends on what is actually
 | **Grafana** | Time-series panels for every component, with alert thresholds | Overview dashboard, or one component's dashboard |
 | **Splunk** | Search every component's logs. Fields `component=` `level=` `earliest=-15m`, `"phrases"`, `NOT`. Commands `stats count by component|level|pattern`, `top pattern` (groups lines that differ only by IDs and numbers), `timechart count`, `head` | `level=ERROR \| stats count by component` |
 | **Database** | SQL console on each database: `v$session`, `sessions` (FIX sessions and sequence numbers), `rejects`, `corporate_actions`, `instruments`, reference data load logs. `SELECT … WHERE … GROUP BY … ORDER BY … LIMIT`, `SHOW TABLES`, `DESCRIBE`. Anything that changes data is refused. | `SELECT * FROM sessions` |
-| **Unix** | Shell on each host the support team owns: `tail`, `grep`, `ps`, `free`, `kubectl get/describe pods`, `kafka-consumer-groups.sh --describe`, `curl` health, `cat` config, with pipes to `grep`, `tail`, `head`, `wc -l`, `sort`. `rm`, `kill`, `sudo`, restarts and other changes are refused. | `kubectl get pods \| grep Pending` |
+| **Unix** | Shell on each host the support team owns: `tail`, `grep`, `ps`/`top`, `df -h`, `free`, `dmesg`, `chronyc tracking`, `ulimit -n`, `lsof`, `openssl x509 -enddate`, `kubectl get/describe pods`, `kafka-consumer-groups.sh --describe`, `curl` health, `cat` config, with pipes to `grep`, `tail`, `head`, `wc -l`, `sort`. `rm`, `kill`, `sudo`, restarts and other changes are refused. | `kubectl get pods \| grep Pending` |
 
 Participants' and vendors' own servers are deliberately not reachable, just as in real life.
 
@@ -39,7 +65,7 @@ Participants' and vendors' own servers are deliberately not reachable, just as i
 
 **System Builder (no YAML typing):** open `dist/builder.html`. Add components from a list of types (each with a plain-language explanation), connect them, set business KPIs, alert rules, diagram groups and numbered steps. The YAML is written as you go and checked by the simulator's own validator, with every problem explained in plain language. You can start blank, from a built-in system, or from pasted YAML; renaming a component updates every reference to it. The page also explains how each part of the YAML works. Copy the result into the simulator's Design tab.
 
-The simulator's **Design** tab has two editors:
+The instructor page's **Design** tab has two editors:
 
 1. **System**: write or edit a blueprint, check it, and save. It appears as a new system on the Drills tab.
 2. **Use case**: write a drill for the loaded system, starting from a template or a copy of an existing one. It appears under that system.
@@ -60,12 +86,14 @@ The flow is a graph: many members can feed one gateway, and one matching engine 
 
 ### Component types
 
-| Type | Required | Metrics (for alert rules) | Faults | Fix actions |
+Every component type also gets the host faults above where they apply, and the full runbook catalogue for its type (see `ACTIONS` in `src/engine.js`, or the reference table in the instructor page's Design tab).
+
+| Type | Required | Metrics (for alert rules) | Application faults | Example fix actions |
 |---|---|---|---|---|
 | `source` (participant) | `rate_per_min` (+ `role`, `session`) | `out_rate`, `held` | `session_down`, `order_flood` | `reset_sequence`, `apply_throttle` |
 | `kafka_topic` | `partitions` (+ `consumer_group`) | `lag`, `max_partition_lag`, `in_rate`, `out_rate`, `rebalances` | `poison_message`, `rebalance_storm` | `skip_poison_message`, `tune_consumer_timeout` |
-| `service` | `capacity_per_min` (+ `instances`, `uses`, `rejects: queue\|return`) | `in_rate`, `out_rate`, `backlog`, `reject_rate`, `error_rate`, `instances`, `latency_ms`, `rejected`, `sessions_down` | `instances_lost` | `scale_out`, `restart`, `reprocess_rejected` |
-| `external_party` | `capacity_per_min` | `in_rate`, `out_rate`, `backlog`, `error_rate` | `unavailable` | `escalate_to_vendor`, `restart_adapter` |
+| `service` | `capacity_per_min` (+ `instances`, `uses`, `rejects: queue\|return`) | `in_rate`, `out_rate`, `backlog`, `reject_rate`, `error_rate`, `instances`, `latency_ms`, `rejected`, `sessions_down`, `host_cpu_pct`, `host_mem_pct`, `host_disk_pct` | `instances_lost`, `config_change` | `scale_out`, `revert_config`, `restart`, `reprocess_rejected` |
+| `external_party` | `capacity_per_min` | `in_rate`, `out_rate`, `backlog`, `error_rate`, host metrics | `unavailable`, `api_rate_limited`, `api_auth_expired` | `escalate_to_vendor`, `enable_retry_backoff`, `rotate_api_credentials`, `restart_adapter` |
 | `ref_data` | `refresh_every_min`, `stale_after_min` | `staleness_min` | `feed_failed` | `force_refresh` |
 | `database` | `pool_size` | `pool_used`, `pool_pct`, `wait_ms` | `pool_exhausted` | `kill_blocking_session` |
 | `issuer` | `feeds` (a `ref_data` id) (+ `symbol`) | `pending_announcements` | `announcement_missed` | `reload_announcement` |
@@ -146,21 +174,21 @@ debrief:
 
 | File | Job |
 |---|---|
-| `src/engine.js` | Component types, blueprint validation, the simulator (flow graph, metrics, logs, alerts, health, faults, actions). No screen code. |
+| `src/engine.js` | Component types, hosts and host faults, the runbook action catalogue, the root-cause list, blueprint validation, the simulator (flow graph, metrics, logs, alerts, health, faults, actions). No screen code. |
 | `src/session.js` | Drill runner: schedules faults, records acknowledgement, declarations, tool use and approved actions; scores; builds the debrief. |
 | `src/tools.js` | Splunk-style search, read-only SQL console, read-only Unix shell. |
 | `src/app.js` | User interface: system picker, flow diagram, live map, tools, design editors, debrief. |
 | `src/builder.js`, `src/builder.template.html` | System Builder: forms that write and validate blueprint YAML. |
 | `src/style.css`, `src/index.template.html` | Page design and layout. |
-| `build.py` | Bundles everything, including the YAML files, into `dist/index.html` (simulator) and `dist/builder.html` (System Builder). |
-| `tests/drills.test.js` | 92 automated tests (Node's built-in runner). |
+| `build.py` | Bundles everything, including the YAML files, into `dist/index.html` (participant page), `dist/admin.html` (instructor page) and `dist/builder.html` (System Builder). |
+| `tests/drills.test.js` | 127 automated tests (Node's built-in runner). |
 | `vendor/js-yaml.min.js` | YAML parser (MIT licence, see `vendor/js-yaml.LICENSE`). |
 
 ## Develop
 
 ```bash
 node --test tests/*.test.js    # validation, healthy steady state, every use case on every system it belongs to, tools
-python3 build.py               # rebuild dist/index.html after editing src/, blueprints/ or drills/
+python3 build.py               # rebuild dist/*.html after editing src/, blueprints/ or drills/
 ```
 
 The tests run every use case with a simulated responder who follows the runbook (must recover before the deadline and score at least 85) and one who acknowledges late, guesses wrong and takes a risky action (must score below 50). Mystery drills are tested across ten random picks.

@@ -12,7 +12,7 @@ Support teams are judged on how they handle business incidents: trades not alloc
 
 ## Quick start
 
-**Drill simulator:** open `drill-simulator/dist/index.html` in a browser. Choose a system, read its flow diagram, pick a use case, press Start.
+**Drill simulator:** participants open `drill-simulator/dist/index.html` in a browser: choose a system, read its flow diagram, pick a use case, press Start. Instructors open `drill-simulator/dist/admin.html` to design systems and use cases, inject faults and see the answer live.
 
 **System Builder:** open `drill-simulator/dist/builder.html` to design a system with forms instead of writing YAML.
 

@@ -1,0 +1,31 @@
+id: exch-risk-timeouts
+title: Orders slow down in pre-trade risk
+systems: [exchange]
+level: Medium
+summary: Risk checks are timing out. No deployment happened today.
+brief: >
+  14:30. The change calendar shows no deployments today. The clearing cut-off is 15:30.
+faults:
+  - {at: "14:36", component: risk, fault: config_change, params: {api: limits-api, timeout_ms: 50}}
+root_cause: {component: risk, fault: config_change}
+accepted_fixes: [risk.revert_config]
+risky_actions: [risk.restart, fix_gateway.restart, risk.rollback_deployment]
+hints:
+  - {after_min: 2, text: "Risk has all its instances but processes far less. What do its errors say?"}
+  - {after_min: 5, text: "A 50 ms timeout is unusual. Where did that number come from? Check the configuration."}
+debrief:
+  what_happened: >
+    An automated configuration refresh set the HTTP read timeout for the limits API to 50 ms instead
+    of 2000 ms. Most limit checks timed out, were retried three times and failed, so risk processed
+    a fraction of its normal volume.
+  key_signal: >
+    SocketTimeoutException after 50ms calling limits-api in the risk log, and the config-server
+    refresh line just before the errors started. "No deployment" does not mean "no change".
+  why_not_restart: >
+    A restart reads the same configuration. Rolling back the deployment does nothing because the
+    change was configuration, not code.
+  runbook:
+    - Find the first error and what changed just before it, including configuration.
+    - Compare the running configuration with the known-good value.
+    - Revert the configuration change with approval and watch the timeouts stop.
+    - Problem record - config-server changes go through change control.

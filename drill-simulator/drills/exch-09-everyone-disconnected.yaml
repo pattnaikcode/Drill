@@ -1,0 +1,32 @@
+id: exch-everyone-disconnected
+title: Every member is disconnected
+systems: [exchange]
+level: Medium
+summary: All brokers and market makers lose their sessions at once. The members are not the problem.
+brief: >
+  14:30. The infrastructure team patched some hosts overnight. The clearing cut-off is 15:30.
+faults:
+  - {at: "14:36", component: fix_gateway, fault: clock_skew}
+root_cause: {component: fix_gateway, fault: clock_skew}
+accepted_fixes: [fix_gateway.resync_ntp]
+risky_actions: [fix_gateway.restart, broker_a.reset_sequence, fix_gateway.restart_host]
+hints:
+  - {after_min: 2, text: "When every member fails at the same moment, look at what they all have in common."}
+  - {after_min: 5, text: "Read the gateway's logon reject reason. Is it sequence numbers this time?"}
+debrief:
+  what_happened: >
+    NTP stopped on the gateway host after the overnight patching and its clock drifted 94 seconds
+    ahead. FIX checks SendingTime on every logon, so the gateway rejected every member with
+    "SendingTime accuracy problem".
+  key_signal: >
+    All five sessions down at once, and the reject reason is SendingTime, not MsgSeqNum.
+    chronyc tracking on the gateway host shows it is not synchronised.
+  why_not_restart: >
+    Restarting the gateway or resetting sequence numbers does not move the clock. Rebooting the
+    host fixes it eventually but takes the whole exchange's order entry away for four minutes.
+  runbook:
+    - Many members failing together points at the shared component, not the members.
+    - Read the logon reject reason in the gateway log or the sessions table.
+    - Check the host clock (date, chronyc tracking) against a reference.
+    - Resync NTP with approval and watch members log back on and drain their queues.
+    - Problem record - NTP monitoring after patching.

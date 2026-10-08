@@ -1,0 +1,31 @@
+id: exch-clearing-handshake
+title: Clearing stops accepting trades again
+systems: [exchange]
+level: Medium
+summary: Looks exactly like the clearing corporation being down. It is not.
+brief: >
+  14:30. Midnight was the start of a new certificate cycle for several internal services.
+  The clearing cut-off is 15:30.
+faults:
+  - {at: "14:38", component: clearing, fault: cert_expired}
+root_cause: {component: clearing, fault: cert_expired}
+accepted_fixes: [clearing.renew_certificate]
+risky_actions: [clearing.restart_adapter, clearing_feed.restart, clearing.failover_to_dr]
+hints:
+  - {after_min: 2, text: "Is the clearing corporation really down? What exactly does our adapter log?"}
+  - {after_min: 5, text: "Check the TLS side of our adapter: openssl on the clearing adapter host."}
+debrief:
+  what_happened: >
+    Our adapter's TLS client certificate for the clearing link expired at 23:59 yesterday. The
+    clearing corporation was fine; it refused our handshakes.
+  key_signal: >
+    SSLHandshakeException with "certificate expired" in the adapter log, and an openssl notAfter
+    date in the past. Escalating to clearing gets "no issues on our side".
+  why_not_restart: >
+    Restarting the adapter or failing over reloads the same expired certificate. Escalating to the
+    clearing corporation spends time while trades pile up.
+  runbook:
+    - Read the adapter error before escalating. A handshake failure is usually our side.
+    - Check the certificate expiry on the adapter host.
+    - Install the renewed certificate with approval and confirm the handshake.
+    - Problem record - certificate expiry monitoring 30 days ahead.

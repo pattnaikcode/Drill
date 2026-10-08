@@ -224,3 +224,7 @@ textarea.code.sql { min-height: 70px; }
   .clock .t { font-size: 22px; }
 }
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+
+/* root cause evidence and instructor panel */
+textarea.evidence { width: 100%; box-sizing: border-box; font: inherit; font-size: 14px; background: var(--sunk); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 7px 9px; resize: vertical; }
+.panel.instr { border-style: dashed; border-color: var(--bad); }

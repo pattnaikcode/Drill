@@ -15,7 +15,7 @@
     (sc.faults || []).forEach(f => {
       const c = bp.byId[f.component];
       if (!c) { errors.push(`${where}: needs component "${f.component}", which this system does not have.`); return; }
-      if (!S.TYPES[c.type].faults[f.fault]) errors.push(`${where}: ${c.type} "${f.component}" has no fault "${f.fault}".`);
+      if (!S.faultsFor(c.type)[f.fault]) errors.push(`${where}: ${c.type} "${f.component}" has no fault "${f.fault}".`);
       if (S.parseClock(f.at) === null) errors.push(`${where}: fault time "${f.at}" must look like "13:36".`);
     });
     if (!(sc.faults || []).length) errors.push(`${where}: needs at least one fault.`);
@@ -23,9 +23,9 @@
       const [cid, act] = String(a).split('.');
       const c = bp.byId[cid];
       if (!c) errors.push(`${where}: action "${a}" refers to missing component "${cid}".`);
-      else if (!S.TYPES[c.type].actions[act]) errors.push(`${where}: ${c.type} "${cid}" has no action "${act}".`);
+      else if (!S.actionsFor(c.type)[act]) errors.push(`${where}: ${c.type} "${cid}" has no action "${act}".`);
     });
-    if (sc.root_cause && (!bp.byId[sc.root_cause.component] || !S.TYPES[bp.byId[sc.root_cause.component].type].faults[sc.root_cause.fault]))
+    if (sc.root_cause && (!bp.byId[sc.root_cause.component] || !S.faultsFor(bp.byId[sc.root_cause.component].type)[sc.root_cause.fault]))
       errors.push(`${where}: root_cause must name a component of this system and one of its faults.`);
     if ((sc.faults || []).some(f => bp.start !== undefined && S.parseClock(f.at) !== null && (S.parseClock(f.at) < bp.start || S.parseClock(f.at) >= bp.cutoff)))
       errors.push(`${where}: fault times must fall between this system's start (${S.clockStr(bp.start)}) and cut-off (${S.clockStr(bp.cutoff)}).`);
@@ -109,14 +109,15 @@
     this.timeline.push({ t: this.sim.t, kind: 'inspect', text: `Inspected ${this.sim.c[id].def.name}` });
   };
 
-  Session.prototype.declare = function (component, fault) {
+  Session.prototype.declare = function (component, fault, evidence) {
     if (this.state !== 'running') return null;
     const rc = this.sc.root_cause || { component: this.faultPlan[0].component, fault: this.faultPlan[0].fault };
     const correct = rc.component === component && rc.fault === fault;
     const c = this.sim.c[component];
-    const label = c ? `${S.TYPES[c.type].faults[fault] ? S.TYPES[c.type].faults[fault].label : fault} on ${c.def.name}` : fault;
-    this.declarations.push({ t: this.sim.t, component, fault, correct, label });
-    this.timeline.push({ t: this.sim.t, kind: 'declare', text: `Declared root cause: ${label}` });
+    const label = `${S.causeLabel(fault)} on ${c ? c.def.name : component}`;
+    evidence = String(evidence || '').trim();
+    this.declarations.push({ t: this.sim.t, component, fault, correct, label, evidence });
+    this.timeline.push({ t: this.sim.t, kind: 'declare', text: `Declared root cause: ${label}` + (evidence ? ` — evidence: “${evidence}”` : '') });
     return correct; // stored for the debrief; the UI does not reveal it during the drill
   };
 
@@ -205,8 +206,8 @@
     const c = sim.c[rc.component];
     return {
       score: this.score(), timeline: all,
-      answer: { component: c.def.name, fault: S.TYPES[c.type].faults[rc.fault].label },
-      accepted: (this.sc.accepted_fixes || []).map(k => { const [cid, a] = k.split('.'); return `${S.TYPES[sim.c[cid].type].actions[a].label} on ${sim.c[cid].def.name}`; }),
+      answer: { component: c.def.name, fault: S.faultsFor(c.type)[rc.fault].label, host: !!S.faultsFor(c.type)[rc.fault].host },
+      accepted: (this.sc.accepted_fixes || []).map(k => { const [cid, a] = k.split('.'); return `${S.ACTIONS[a].label} on ${sim.c[cid].def.name}`; }),
       notes: this.sc.debrief || {}, actions: this.actions, declarations: this.declarations,
       inspected: [...this.inspected].map(id => sim.c[id].def.name), tools: this.toolUse || [],
     };

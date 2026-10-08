@@ -2,7 +2,7 @@ id: exch-mystery
 title: Mystery incident on the exchange
 systems: [exchange]
 level: Hard
-summary: One of six real faults, chosen at random. No hints, no clues in the title.
+summary: One of ten real faults, chosen at random. No hints, no clues in the title.
 mystery: true
 brief: >
   14:30. Something will go wrong before the 15:30 clearing cut-off. You do not know what or where.
@@ -39,3 +39,23 @@ pool:
     accepted_fixes: [trade_bus.skip_poison_message]
     risky_actions: [clearing_feed.restart]
     debrief: {what_happened: "A poison message blocked one trade bus partition.", key_signal: "Lag on one partition; repeating offset."}
+  - faults: [{at: "14:38", component: orderbook_db, fault: disk_full}]
+    root_cause: {component: orderbook_db, fault: disk_full}
+    accepted_fixes: [orderbook_db.clear_disk_space]
+    risky_actions: [matching.restart]
+    debrief: {what_happened: "The order book store's archive destination filled up and every commit hung.", key_signal: "ORA-00257 in matching; /u01/arch at 100%."}
+  - faults: [{at: "14:38", component: fix_gateway, fault: clock_skew}]
+    root_cause: {component: fix_gateway, fault: clock_skew}
+    accepted_fixes: [fix_gateway.resync_ntp]
+    risky_actions: [fix_gateway.restart]
+    debrief: {what_happened: "The gateway host clock drifted and every member was rejected.", key_signal: "SendingTime accuracy problem for all sessions."}
+  - faults: [{at: "14:38", component: clearing, fault: cert_expired}]
+    root_cause: {component: clearing, fault: cert_expired}
+    accepted_fixes: [clearing.renew_certificate]
+    risky_actions: [clearing.restart_adapter]
+    debrief: {what_happened: "Our TLS client certificate for clearing expired.", key_signal: "SSLHandshakeException: certificate expired."}
+  - faults: [{at: "14:38", component: risk, fault: config_change}]
+    root_cause: {component: risk, fault: config_change}
+    accepted_fixes: [risk.revert_config]
+    risky_actions: [risk.restart]
+    debrief: {what_happened: "A config refresh set the limits API timeout to 50 ms.", key_signal: "SocketTimeoutException after 50ms; config refresh just before."}

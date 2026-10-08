@@ -1,0 +1,25 @@
+id: tam-confirmation-unauthorised
+title: Confirmation platform rejects everything
+systems: [trade-allocation-kafka, trade-allocation-direct]
+level: Easy
+summary: Every call to the confirmation platform fails. Is it them or us?
+brief: >
+  13:30. The vendor sent a notice last month about credential rotation. The affirmation cut-off is 15:00.
+faults:
+  - {at: "13:36", component: ctm, fault: api_auth_expired}
+root_cause: {component: ctm, fault: api_auth_expired}
+accepted_fixes: [ctm.rotate_api_credentials]
+risky_actions: [ctm.restart_adapter, ctm.failover_to_dr]
+hints:
+  - {after_min: 2, text: "Read the exact HTTP status in the adapter log. 401 and 503 mean very different things."}
+debrief:
+  what_happened: >
+    Our API client secret for the confirmation platform expired at midnight. Every call came back
+    401 Unauthorized with "invalid_client".
+  key_signal: 401 Unauthorized and "client secret expired" in the adapter log, not 503.
+  why_not_restart: The adapter reloads the same expired secret after a restart, and DR uses it too.
+  runbook:
+    - Read the status code before escalating; 401 is almost always our credentials.
+    - Rotate the client secret from the vault with approval.
+    - Watch confirmations drain before the affirmation cut-off.
+    - Problem record - alert on credential expiry dates.

@@ -2,7 +2,7 @@ id: mystery
 title: Mystery incident
 systems: [trade-allocation-kafka, trade-allocation-direct]
 level: Hard
-summary: One of five real faults, chosen at random. No hints, no clues in the title.
+summary: One of nine real faults, chosen at random. No hints, no clues in the title.
 mystery: true
 brief: >
   13:30. Something will go wrong this afternoon. You do not know what or where.
@@ -35,3 +35,23 @@ pool:
     accepted_fixes: [ctm.escalate_to_vendor]
     risky_actions: [tam.restart, ctm.restart_adapter]
     debrief: {what_happened: "The confirmation platform was down on the vendor side.", key_signal: "100% failed calls to CTM; internal systems green."}
+  - faults: [{at: "13:38", component: tam, fault: memory_oom}]
+    root_cause: {component: tam, fault: memory_oom}
+    accepted_fixes: [tam.increase_memory_limit]
+    risky_actions: [tam.restart]
+    debrief: {what_happened: "The allocation engine ran out of memory and crash-looped.", key_signal: "CrashLoopBackOff; OOMKilled exit 137."}
+  - faults: [{at: "13:38", component: tam, fault: cpu_runaway}]
+    root_cause: {component: tam, fault: cpu_runaway}
+    accepted_fixes: [tam.kill_runaway_process]
+    risky_actions: [tam.restart]
+    debrief: {what_happened: "A rescheduled backup job took the allocation host's CPU.", key_signal: "backup_agent at 98% CPU in top; load average 15."}
+  - faults: [{at: "13:38", component: tam, fault: disk_full}]
+    root_cause: {component: tam, fault: disk_full}
+    accepted_fixes: [tam.clear_disk_space]
+    risky_actions: [tam.restart]
+    debrief: {what_happened: "The allocation host's log volume filled up and the application failed on every write.", key_signal: "No space left on device; /var/log at 100%."}
+  - faults: [{at: "13:38", component: ctm, fault: api_rate_limited}]
+    root_cause: {component: ctm, fault: api_rate_limited}
+    accepted_fixes: [ctm.enable_retry_backoff]
+    risky_actions: [ctm.restart_adapter]
+    debrief: {what_happened: "The confirmation API throttled our immediate retries.", key_signal: "429 Too Many Requests; retry-policy immediate."}

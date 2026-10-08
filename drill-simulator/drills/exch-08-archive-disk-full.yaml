@@ -1,0 +1,38 @@
+id: exch-archive-disk-full
+title: Matching stops committing trades
+systems: [exchange]
+level: Hard
+summary: The matching engine is up but almost nothing comes out of it. The cause is two layers down.
+brief: >
+  14:30. A busy afternoon after a results announcement. The clearing cut-off is 15:30.
+  The matching engine shows all instances running.
+faults:
+  - {at: "14:37", component: orderbook_db, fault: disk_full}
+noise:
+  - {at: "14:40", name: "CPU 79% on md-node-2", severity: P4}
+root_cause: {component: orderbook_db, fault: disk_full}
+accepted_fixes: [orderbook_db.clear_disk_space]
+risky_actions: [matching.restart, orderbook_db.failover_to_dr, orderbook_db.kill_blocking_session]
+hints:
+  - {after_min: 2, text: "Matching has all its instances, yet its throughput collapsed. What does matching depend on?"}
+  - {after_min: 5, text: "Read the matching log for the database error code, then check the order book store host."}
+debrief:
+  what_happened: >
+    The order book store's archive log destination (/u01/arch) filled up. Oracle cannot switch redo
+    logs until the archiver can write, so every commit hung (ORA-00257). Matching looked healthy but
+    could not save trades, and the connection pool filled with sessions waiting on
+    "log file switch (archiving needed)".
+  key_signal: >
+    ORA-00257 in the matching log, sessions waiting on "log file switch (archiving needed)", and
+    /u01/arch at 100% on the database host. The pool alert is a symptom, not the cause: there is
+    no blocking session to kill.
+  why_not_restart: >
+    Restarting matching drops every member's order flow and comes back to the same stuck database.
+    Failing over to DR takes the order book store away for five minutes during trading when
+    archiving space is all it needs.
+  runbook:
+    - Read the application error, not just the alert. ORA-00257 means the archiver is stuck.
+    - Check v$session wait events and df -h on the database host.
+    - Clear or move old archive logs (after confirming they are backed up), with approval.
+    - Watch matching throughput and the clearing projection recover.
+    - Problem record - archive destination monitoring and the RMAN backup-and-delete schedule.

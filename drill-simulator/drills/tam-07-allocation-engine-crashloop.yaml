@@ -1,0 +1,31 @@
+id: tam-allocation-crashloop
+title: Allocation engine keeps restarting
+systems: [trade-allocation-kafka, trade-allocation-direct]
+level: Medium
+summary: Allocations come in bursts and then stop. The engine is restarting by itself.
+brief: >
+  13:30. Large block trades from a pension fund are being allocated across 300 accounts this
+  afternoon. The affirmation cut-off is 15:00.
+faults:
+  - {at: "13:36", component: tam, fault: memory_oom}
+root_cause: {component: tam, fault: memory_oom}
+accepted_fixes: [tam.increase_memory_limit]
+risky_actions: [tam.restart, tam.scale_out, tam.purge_queue]
+hints:
+  - {after_min: 2, text: "Throughput rises and falls in a regular pattern. What happens to the pods?"}
+  - {after_min: 5, text: "kubectl get pods and kubectl describe pod show why a container last stopped."}
+debrief:
+  what_happened: >
+    Very large block allocations pushed the allocation engine past its 6 GiB memory limit. The
+    kernel killed it (OOMKilled, exit 137), Kubernetes restarted it, and it died again: a crash loop.
+  key_signal: >
+    CrashLoopBackOff with rising restarts, OOMKilled with exit code 137 in kubectl describe, and
+    "OutOfMemoryError: Java heap space" in the log.
+  why_not_restart: >
+    A restart or extra pods with the same limit run out of memory the same way. Purging the queue
+    throws away trades that then need manual reconciliation.
+  runbook:
+    - A regular up-and-down pattern means something keeps restarting. Check pod status and restarts.
+    - Read the last termination reason (OOMKilled, exit 137).
+    - Raise the memory limit with approval and confirm the pods stay up.
+    - Problem record - sizing for large block allocations.

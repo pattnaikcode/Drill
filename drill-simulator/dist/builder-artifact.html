@@ -231,6 +231,10 @@ textarea.code.sql { min-height: 70px; }
 }
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
 
+/* root cause evidence and instructor panel */
+textarea.evidence { width: 100%; box-sizing: border-box; font: inherit; font-size: 14px; background: var(--sunk); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 7px 9px; resize: vertical; }
+.panel.instr { border-style: dashed; border-color: var(--bad); }
+
 /* builder: forms on the left, the generated YAML pinned on the right */
 .bwrap { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 14px; align-items: start; }
 .out { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 12px); }
@@ -278,7 +282,7 @@ ol.steps .btn { margin-left: 6px; }
         <div class="row between"><h2>Your system as YAML</h2><button class="btn primary" id="copyBtn">Copy YAML</button></div>
         <div id="status"></div>
         <pre id="yaml" tabindex="0" aria-label="Generated YAML"></pre>
-        <p class="small muted" style="margin:0"><b>Next:</b> in OpsPilot Drills open <b>Design</b>, paste into <b>1. Design a system</b>, and press <b>Save and load system</b>. Then add use cases for it in <b>2. Add a use case</b>.</p>
+        <p class="small muted" style="margin:0"><b>Next:</b> in the OpsPilot instructor page (<code>admin.html</code>) open <b>Design</b>, paste into <b>1. Design a system</b>, and press <b>Save and load system</b>. Then add use cases for it in <b>2. Add a use case</b>.</p>
       </section>
     </aside>
   </div>
@@ -332,7 +336,7 @@ system: Equity exchange trading platform</pre><p><code>id</code> is the short na
 
 </script>
 <script>
-window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: members (brokers and market makers) trade through the exchange's\n# gateway, risk checks and matching engine. Listed companies (issuers) keep the instrument\n# master current through corporate actions. Trades go to the clearing corporation over\n# an internal Kafka bus; market data and drop copies go out to subscribers and members.\n\nid: exchange\nsystem: Equity exchange trading platform\ndescription: >\n  Three brokers and two market makers connect over FIX. Orders pass session and throttle\n  checks at the gateway, pre-trade risk checks against the instrument master, and price-time\n  matching. Trades reach the clearing corporation before the clearing cut-off.\n\nclock:\n  start: \"14:30\"\n  cutoff: \"15:30\"\n  cutoff_label: Clearing cut-off\n\nbusiness:\n  currency: \"₹\"\n  unit: \"Cr\"\n  unit_name: orders\n  avg_notional: 0.04          # about ₹4 lakh per order\n  kpis:\n    - {label: \"Orders waiting to match\", at: matching}\n    - {label: \"Trades not with clearing\", at: clearing, cutoff: true}\n\ncomponents:\n  # members\n  - {id: broker_a, type: source, role: Broker, name: Kestrel Securities, session: KEST01, rate_per_min: 420}\n  - {id: broker_b, type: source, role: Broker, name: Narmada Capital, session: NRMD02, rate_per_min: 300}\n  - {id: broker_c, type: source, role: Broker, name: Bluewater Broking, session: BLUW03, rate_per_min: 230}\n  - {id: mm_1, type: source, role: Market maker, name: Arcline Markets, session: ARCL11, rate_per_min: 600}\n  - {id: mm_2, type: source, role: Market maker, name: Delta Quotes, session: DLTQ12, rate_per_min: 450}\n\n  # exchange trading system\n  - {id: fix_gateway, type: service, role: Exchange, name: FIX Order Gateway, capacity_per_min: 2700, instances: 3}\n  - {id: risk, type: service, role: Exchange, name: Pre-trade Risk Checks, capacity_per_min: 2800, instances: 4, uses: [instrument_master], rejects: return}\n  - {id: matching, type: service, role: Exchange, name: Matching Engine, capacity_per_min: 3000, instances: 2, uses: [orderbook_db]}\n  - {id: instrument_master, type: ref_data, name: Instrument Master, refresh_every_min: 10, stale_after_min: 30}\n  - {id: orderbook_db, type: database, name: Order Book Store, pool_size: 80, big_table: ORDER_HIST}\n\n  # listed companies\n  - {id: issuer_1, type: issuer, role: Issuer, name: Mahanadi Power Ltd, symbol: MAHPWR, feeds: instrument_master}\n  - {id: issuer_2, type: issuer, role: Issuer, name: Konark Steel Ltd, symbol: KONSTL, feeds: instrument_master}\n  - {id: issuer_3, type: issuer, role: Issuer, name: Chilika Foods Ltd, symbol: CHLKFD, feeds: instrument_master}\n\n  # post-trade\n  - {id: trade_bus, type: kafka_topic, name: trades.matched, partitions: 8, consumer_group: clearing-feed}\n  - {id: clearing_feed, type: service, role: Exchange, name: Clearing Feed Adapter, capacity_per_min: 2600, instances: 2}\n  - {id: clearing, type: external_party, role: Clearing corporation, name: Clearing Corporation, capacity_per_min: 3600}\n\n  # market data and drop copy\n  - {id: md_publisher, type: service, role: Exchange, name: Market Data Publisher, capacity_per_min: 3000, instances: 2}\n  - {id: md_vendors, type: external_party, role: Subscribers, name: Market Data Vendors, capacity_per_min: 3200}\n  - {id: drop_copy, type: service, role: Exchange, name: Drop Copy Service, capacity_per_min: 3000, instances: 2}\n\nflow:\n  - broker_a -> fix_gateway\n  - broker_b -> fix_gateway\n  - broker_c -> fix_gateway\n  - mm_1 -> fix_gateway\n  - mm_2 -> fix_gateway\n  - fix_gateway -> risk -> matching -> trade_bus -> clearing_feed -> clearing\n  - matching -> md_publisher -> md_vendors\n  - matching -> drop_copy\n\nalerts:\n  - {name: \"Member session disconnected\", on: fix_gateway, metric: sessions_down, above: 0, severity: P2}\n  - {name: \"Gateway inbound rate high\", on: fix_gateway, metric: in_rate, above: 2600, severity: P3}\n  - {name: \"Gateway queue building\", on: fix_gateway, metric: backlog, above: 1500, severity: P2}\n  - {name: \"Risk reject rate high\", on: risk, metric: reject_rate, above: 2, severity: P2}\n  - {name: \"Matching throughput low\", on: matching, metric: out_rate, below: 1400, severity: P2}\n  - {name: \"Order book store pool saturated\", on: orderbook_db, metric: pool_pct, above: 90, severity: P2}\n  - {name: \"Trade bus partition lag\", on: trade_bus, metric: max_partition_lag, above: 400, severity: P2}\n  - {name: \"Clearing submissions backing up\", on: clearing, metric: backlog, above: 2500, severity: P2}\n\ndiagram:\n  notes: >\n    Members cannot see inside the exchange, and the exchange cannot see inside members or issuers.\n    Support works from the exchange's own gateway, risk, matching and post-trade signals.\n  groups:\n    - {label: \"Members\", ids: [broker_a, broker_b, broker_c, mm_1, mm_2]}\n    - {label: \"Exchange trading system\", ids: [fix_gateway, risk, matching, instrument_master, orderbook_db]}\n    - {label: \"Listed companies (issuers)\", ids: [issuer_1, issuer_2, issuer_3]}\n    - {label: \"Post-trade\", ids: [trade_bus, clearing_feed, clearing]}\n    - {label: \"Market data and drop copy\", ids: [md_publisher, md_vendors, drop_copy]}\n  place:\n    broker_a: [0, 0]\n    broker_b: [0, 1]\n    broker_c: [0, 2]\n    mm_1: [0, 3]\n    mm_2: [0, 4]\n    fix_gateway: [1, 2]\n    risk: [2, 2]\n    matching: [3, 2]\n    instrument_master: [2, 3.45]\n    orderbook_db: [3, 3.45]\n    issuer_1: [1.2, 4.9]\n    issuer_2: [2.2, 4.9]\n    issuer_3: [3.2, 4.9]\n    trade_bus: [4.3, 0.6]\n    clearing_feed: [5.3, 0.6]\n    clearing: [6.3, 0.6]\n    md_publisher: [4.3, 2.2]\n    md_vendors: [5.3, 2.2]\n    drop_copy: [4.3, 3.45]\n  steps:\n    - {from: broker_a, to: fix_gateway, text: \"Brokers send client orders over FIX sessions, one session per member.\"}\n    - {from: mm_1, to: fix_gateway, text: \"Market makers stream two-sided quotes to meet their quoting obligations.\"}\n    - {from: fix_gateway, to: risk, text: \"The gateway checks the session (logon, sequence numbers) and each member's message throttle.\"}\n    - {from: risk, to: instrument_master, text: \"Risk checks price bands, lot sizes and circuit limits from the instrument master. Failed orders are rejected back to the member.\"}\n    - {from: issuer_2, to: instrument_master, text: \"Issuers announce corporate actions (splits, dividends, symbol changes) that change prices and bands.\"}\n    - {from: risk, to: matching, text: \"Accepted orders enter the order book; matching runs price-time priority.\"}\n    - {from: matching, to: orderbook_db, text: \"Order book state is persisted for recovery and audit.\"}\n    - {from: matching, to: trade_bus, text: \"Every matched trade is published on the internal Kafka trade bus.\"}\n    - {from: clearing_feed, to: clearing, text: \"Trades are submitted to the clearing corporation before the 15:30 clearing cut-off.\"}\n    - {from: matching, to: md_publisher, text: \"Prices and depth are broadcast to market data vendors.\"}\n    - {from: matching, to: drop_copy, text: \"Drop copies of every fill go back to members' risk systems.\"}\n", "trade-allocation-direct": "# The same trade allocation system WITHOUT Kafka: front office hands fills straight to the\n# allocation engine's queue. Compare with trade-allocation-kafka.yaml — the differences are one\n# component, the flow lines and the alerts that watch it.\n\nid: trade-allocation-direct\nsystem: Middle-office trade allocation (direct, no Kafka)\ndescription: >\n  Front office calls the allocation engine directly. Without Kafka there is no consumer lag to\n  watch: a slow allocation engine shows up as its own queue, and a stuck partition cannot happen.\n\nclock:\n  start: \"13:30\"\n  cutoff: \"15:00\"\n  cutoff_label: Affirmation cut-off\n\nbusiness:\n  currency: \"₹\"\n  unit: \"Cr\"\n  unit_name: trades\n  avg_notional: 0.6\n  kpis:\n    - {label: \"Unallocated\", at: tam}\n    - {label: \"Not yet affirmed\", at: ctm, cutoff: true}\n\ncomponents:\n  - {id: oms, type: source, role: Front office, name: Order Management (OMS), session: OMS01, rate_per_min: 200}\n  - {id: ems, type: source, role: Front office, name: Execution Desk (EMS), session: EMS01, rate_per_min: 100}\n  - {id: tam, type: service, role: Middle office, name: Allocation Engine, capacity_per_min: 420, instances: 4, uses: [ssi, tam_db]}\n  - {id: ssi, type: ref_data, name: SSI Reference Data, refresh_every_min: 15, stale_after_min: 20}\n  - {id: tam_db, type: database, name: Allocation DB, pool_size: 50, big_table: ALLOCATION_HIST}\n  - {id: ctm, type: external_party, role: Confirmation platform, name: Confirmation Platform (CTM), capacity_per_min: 520}\n  - {id: settle, type: external_party, role: Custodian network, name: Settlement (SWIFT), capacity_per_min: 600}\n\nflow:\n  - oms -> tam\n  - ems -> tam\n  - tam -> ctm -> settle\n\nalerts:\n  - {name: \"Allocation backlog high\", on: tam, metric: backlog, above: 900, severity: P2}\n  - {name: \"Allocation throughput low\", on: tam, metric: out_rate, below: 235, severity: P3}\n  - {name: \"Allocation reject rate high\", on: tam, metric: reject_rate, above: 2, severity: P2}\n  - {name: \"DB connection pool saturated\", on: tam_db, metric: pool_pct, above: 90, severity: P2}\n  - {name: \"SSI data stale\", on: ssi, metric: staleness_min, above: 25, severity: P3}\n  - {name: \"Unmatched confirmations\", on: ctm, metric: backlog, above: 900, severity: P2}\n\ndiagram:\n  groups:\n    - {label: \"Front office\", ids: [oms, ems]}\n    - {label: \"Middle office (our systems)\", ids: [tam, ssi, tam_db]}\n    - {label: \"External parties\", ids: [ctm, settle]}\n  place:\n    oms: [0, 0]\n    ems: [0, 1.15]\n    tam: [1.2, 0.55]\n    ssi: [0.7, 1.95]\n    tam_db: [1.7, 1.95]\n    ctm: [2.5, 0.55]\n    settle: [3.6, 0.55]\n  steps:\n    - {from: oms, to: tam, text: \"Executed block fills from the OMS go straight to the allocation engine's queue.\"}\n    - {from: ems, to: tam, text: \"Execution-desk fills join the same queue.\"}\n    - {from: tam, to: ssi, text: \"For each client account the engine looks up the settlement instructions (SSIs).\"}\n    - {from: tam, to: tam_db, text: \"Blocks and allocations are stored; rejected allocations wait in an exception queue.\"}\n    - {from: tam, to: ctm, text: \"Allocations go to the confirmation platform to be affirmed.\"}\n    - {from: ctm, to: settle, text: \"Affirmed trades generate settlement instructions to custodians.\"}\n", "trade-allocation-kafka": "# Middle-office trade allocation (buy side), with Kafka between front office and the allocation engine.\n# Edit this file (or use the Blueprint tab in the app) to change the system being simulated.\n\nid: trade-allocation-kafka\nsystem: Middle-office trade allocation\ndescription: >\n  Block fills arrive from the OMS and the execution desk (EMS) through a Kafka topic. The\n  allocation engine splits each block across client accounts using SSI reference data, sends\n  allocations to the confirmation platform for affirmation, and on to settlement.\n\nclock:\n  start: \"13:30\"\n  cutoff: \"15:00\"\n  cutoff_label: Affirmation cut-off\n\nbusiness:\n  currency: \"₹\"\n  unit: \"Cr\"\n  unit_name: trades\n  avg_notional: 0.6        # ₹ Cr per trade, used to show impact in money\n  kpis:\n    - {label: \"Unallocated\", at: tam}\n    - {label: \"Not yet affirmed\", at: ctm, cutoff: true}\n\ncomponents:\n  - {id: oms, type: source, role: Front office, name: Order Management (OMS), session: OMS01, rate_per_min: 200}\n  - {id: ems, type: source, role: Front office, name: Execution Desk (EMS), session: EMS01, rate_per_min: 100}\n\n  - id: trades_topic\n    type: kafka_topic\n    name: trades.executed\n    partitions: 6\n    consumer_group: tam-allocator\n\n  - id: tam\n    type: service\n    role: Middle office\n    name: Allocation Engine\n    capacity_per_min: 420\n    instances: 4\n    uses: [ssi, tam_db]\n\n  - {id: ssi, type: ref_data, name: SSI Reference Data, refresh_every_min: 15, stale_after_min: 20}\n  - {id: tam_db, type: database, name: Allocation DB, pool_size: 50, big_table: ALLOCATION_HIST}\n\n  - {id: ctm, type: external_party, role: Confirmation platform, name: Confirmation Platform (CTM), capacity_per_min: 520}\n  - {id: settle, type: external_party, role: Custodian network, name: Settlement (SWIFT), capacity_per_min: 600}\n\nflow:\n  - oms -> trades_topic\n  - ems -> trades_topic\n  - trades_topic -> tam -> ctm -> settle\n\nalerts:\n  - {name: \"Kafka consumer lag high\", on: trades_topic, metric: lag, above: 900, severity: P2}\n  - {name: \"Partition lag high\", on: trades_topic, metric: max_partition_lag, above: 300, severity: P2}\n  - {name: \"Allocation throughput low\", on: tam, metric: out_rate, below: 235, severity: P3}\n  - {name: \"Allocation reject rate high\", on: tam, metric: reject_rate, above: 2, severity: P2}\n  - {name: \"DB connection pool saturated\", on: tam_db, metric: pool_pct, above: 90, severity: P2}\n  - {name: \"SSI data stale\", on: ssi, metric: staleness_min, above: 25, severity: P3}\n  - {name: \"Unmatched confirmations\", on: ctm, metric: backlog, above: 900, severity: P2}\n\ndiagram:\n  notes: >\n    Front office books block trades. Middle office must allocate every block to client accounts and get\n    each allocation affirmed before the affirmation cut-off, or the trades fail to settle on time.\n  groups:\n    - {label: \"Front office\", ids: [oms, ems]}\n    - {label: \"Middle office (our systems)\", ids: [trades_topic, tam, ssi, tam_db]}\n    - {label: \"External parties\", ids: [ctm, settle]}\n  place:\n    oms: [0, 0]\n    ems: [0, 1.15]\n    trades_topic: [1.1, 0.55]\n    tam: [2.2, 0.55]\n    ssi: [1.7, 1.95]\n    tam_db: [2.7, 1.95]\n    ctm: [3.4, 0.55]\n    settle: [4.5, 0.55]\n  steps:\n    - {from: oms, to: trades_topic, text: \"Executed block fills from the OMS are published to Kafka.\"}\n    - {from: ems, to: trades_topic, text: \"Algo and program-desk fills arrive from the EMS on the same topic.\"}\n    - {from: trades_topic, to: tam, text: \"The allocation engine consumes fills, one consumer per partition.\"}\n    - {from: tam, to: ssi, text: \"For each client account it looks up the standing settlement instructions (SSIs).\"}\n    - {from: tam, to: tam_db, text: \"Blocks and allocations are stored; rejected allocations wait in an exception queue.\"}\n    - {from: tam, to: ctm, text: \"Allocations go to the confirmation platform to be matched and affirmed by the broker.\"}\n    - {from: ctm, to: settle, text: \"Affirmed trades generate settlement instructions to custodians (SWIFT MT541/543).\"}\n"}, "default_blueprint": "trade-allocation-kafka", "drills": ["id: exch-member-cannot-log-in\ntitle: A broker cannot log in\nsystems: [exchange]\nlevel: Easy\nsummary: A member's desk says their orders are not reaching the exchange.\nbrief: >\n  14:30, one hour before the clearing cut-off. You are on the exchange's market operations\n  support desk. Members call you when they cannot trade.\nfaults:\n  - {at: \"14:36\", component: broker_b, fault: session_down}\nroot_cause: {component: broker_b, fault: session_down}\naccepted_fixes: [broker_b.reset_sequence]\nrisky_actions: [fix_gateway.restart]\nhints:\n  - {after_min: 2, text: \"One member's order flow dropped to zero. Which session, and what does the gateway log say about its logon?\"}\n  - {after_min: 6, text: \"A sequence-number mismatch is agreed and reset with the member; it is not fixed by restarting the gateway.\"}\ndebrief:\n  what_happened: >\n    Narmada Capital's FIX engine came back after a restart with an old sequence number. The gateway\n    rejected every logon as \"MsgSeqNum too low\", so their orders queued on their side.\n  key_signal: Member session disconnected alert, zero order flow from one session, and logon-rejected lines in the gateway log.\n  why_not_restart: >\n    Restarting the gateway disconnects all five members and halves capacity, and the broken\n    session still has the wrong sequence number when it comes back.\n  runbook:\n    - Identify the session from the gateway log (session id and member).\n    - Call the member, agree the sequence numbers, and reset them for that session only.\n    - Watch the member's queued orders resend and the gateway queue drain.\n    - Note the incident for the member's monthly connectivity report.\n", "id: exch-noisy-market-maker\ntitle: A market maker floods the gateway\nsystems: [exchange]\nlevel: Medium\nsummary: Every member reports slow order acknowledgements. Nothing in the exchange is down.\nbrief: >\n  14:30. Volatile afternoon. Several brokers call to say order acknowledgements have become slow.\n  The clearing cut-off is 15:30.\nfaults:\n  - {at: \"14:35\", component: mm_1, fault: order_flood, params: {multiplier: 4}}\nroot_cause: {component: mm_1, fault: order_flood}\naccepted_fixes: [mm_1.apply_throttle]\nrisky_actions: [fix_gateway.restart]\nhints:\n  - {after_min: 2, text: \"The gateway is healthy but its queue is growing. Is the inbound rate normal?\"}\n  - {after_min: 6, text: \"Compare each member's message rate with its usual rate. Which session changed?\"}\ndebrief:\n  what_happened: >\n    Arcline Markets deployed a quoting engine with a misconfigured refresh interval and sent about\n    four times its normal message rate. The gateway's capacity was shared by everyone, so every\n    member's orders queued behind the flood.\n  key_signal: Gateway inbound rate above normal, queue growing, and throttle warnings naming one session.\n  why_not_restart: >\n    Restarting or scaling the gateway treats the symptom. The flood resumes as soon as the session\n    reconnects; the member's throttle is the control built for this.\n  runbook:\n    - Find the session above its message limit in the gateway log.\n    - Apply that member's message throttle (approval required) and tell the member why.\n    - Watch the gateway queue drain and acknowledgement times recover.\n    - Ask the member for a root cause before lifting the throttle.\n", "id: exch-corporate-action-missed\ntitle: Orders rejected in one stock\nsystems: [exchange]\nlevel: Medium\nsummary: Members complain that orders in one symbol are rejected for price, even at the last traded price.\nbrief: >\n  14:30. Konark Steel announced a stock split effective today. Trading looks normal overall.\n  The clearing cut-off is 15:30.\nfaults:\n  - {at: \"14:33\", component: issuer_2, fault: announcement_missed}\nroot_cause: {component: issuer_2, fault: announcement_missed}\naccepted_fixes: [issuer_2.reload_announcement, instrument_master.force_refresh]\nrisky_actions: [risk.restart]\nhints:\n  - {after_min: 2, text: \"Rejects are not a capacity problem. Which symbol do the rejected orders have in common?\"}\n  - {after_min: 6, text: \"Check the instrument master's load log. Was every corporate action file applied?\"}\ndebrief:\n  what_happened: >\n    Konark Steel's corporate action file used a new ISIN format and was skipped during the\n    instrument master load. Its price band still reflected the pre-split price, so risk checks\n    rejected valid orders in KONSTL.\n  key_signal: Risk reject rate above 2% with normal throughput, all rejects for one symbol, and a skipped file in the instrument master log.\n  why_not_restart: The risk service is working correctly on wrong data. Restarting it changes nothing.\n  runbook:\n    - Group rejected orders by symbol and reject reason.\n    - Check the instrument master load log for skipped corporate action files.\n    - Reprocess the issuer's corporate action (or reload the instrument master) with approval.\n    - Inform members that orders in the symbol can be re-entered.\n", "id: exch-order-book-store\ntitle: Matching slows to a crawl\nsystems: [exchange]\nlevel: Hard\nsummary: Many alerts fire at once across the exchange. Find the one that is the cause.\nbrief: >\n  14:30. Month-end. The surveillance team runs heavy reports in the afternoon. The clearing\n  cut-off is 15:30.\nfaults:\n  - {at: \"14:37\", component: orderbook_db, fault: pool_exhausted}\nnoise:\n  - {at: \"14:39\", name: \"CPU 81% on gw-node-2\", severity: P4}\nroot_cause: {component: orderbook_db, fault: pool_exhausted}\naccepted_fixes: [orderbook_db.kill_blocking_session]\nrisky_actions: [matching.restart, fix_gateway.restart]\nhints:\n  - {after_min: 2, text: \"Matching throughput fell, but matching has all its instances. What does matching depend on?\"}\n  - {after_min: 6, text: \"Look at the Order Book Store's connections and who is holding them.\"}\ndebrief:\n  what_happened: >\n    A month-end surveillance report ran a full table scan on ORDER_HIST and held 76 of 80 order\n    book store connections. Matching waited for connections and processed a fifth of its normal volume.\n  key_signal: Order book store pool at 100% and connection timeouts in the matching engine log.\n  why_not_restart: >\n    Restarting matching during trading is a market-wide event, and it would come back to the same\n    exhausted pool. Free the connections first.\n  runbook:\n    - Check the pool and the longest-running sessions on the order book store.\n    - Kill the blocking report session with approval and inform its owner.\n    - Watch matching throughput and the clearing projection recover.\n    - Raise a problem: move reports to a replica.\n", "id: exch-clearing-down\ntitle: Trades not reaching clearing\nsystems: [exchange]\nlevel: Medium\nsummary: Trading is normal, but trades are not being accepted by the clearing corporation.\nbrief: >\n  14:30. Normal trading. Every trade must reach the clearing corporation before the 15:30\n  clearing cut-off.\nfaults:\n  - {at: \"14:40\", component: clearing, fault: unavailable}\nnoise:\n  - {at: \"14:43\", name: \"Disk usage 83% on md-node-1\", severity: P4}\nroot_cause: {component: clearing, fault: unavailable}\naccepted_fixes: [clearing.escalate_to_vendor]\nrisky_actions: [clearing_feed.restart, clearing.restart_adapter, matching.restart]\nhints:\n  - {after_min: 2, text: \"Follow the flow left to right. Where does the queue start?\"}\n  - {after_min: 6, text: \"Is the failure in our clearing adapter, or at the clearing corporation?\"}\ndebrief:\n  what_happened: >\n    The clearing corporation's trade submission API returned HTTP 503. Trading carried on, so the\n    exchange looked healthy while unsubmitted trades piled up against the clearing cut-off.\n  key_signal: Clearing backlog growing with 100% failed calls, while gateway, risk and matching stay green.\n  why_not_restart: >\n    The fault is outside the exchange. Restarting our adapter adds a second outage. The fix is a fast\n    escalation and a clear plan for the cut-off.\n  runbook:\n    - Confirm the errors come from the clearing corporation (HTTP 5xx), not our adapter.\n    - Raise a P1 with the clearing corporation and record the reference.\n    - Agree a cut-off extension if recovery is late.\n    - Monitor the backlog until every trade is submitted.\n", "id: exch-trade-bus-stuck\ntitle: Some trades never reach clearing\nsystems: [exchange]\nlevel: Hard\nsummary: Clearing receives trades, but a slice of them is missing. Total throughput looks almost normal.\nbrief: >\n  14:30. A new release of the matching engine went live this morning. The clearing cut-off is 15:30.\nfaults:\n  - {at: \"14:35\", component: trade_bus, fault: poison_message, params: {partition: 5}}\nroot_cause: {component: trade_bus, fault: poison_message}\naccepted_fixes: [trade_bus.skip_poison_message]\nrisky_actions: [clearing_feed.restart, matching.restart]\nhints:\n  - {after_min: 3, text: \"Throughput to clearing dropped by only one-eighth. Is the trade bus lag even across partitions?\"}\n  - {after_min: 8, text: \"The clearing feed adapter's log repeats the same offset.\"}\ndebrief:\n  what_happened: >\n    The new matching release published one trade with a field the clearing feed adapter could not\n    read. The adapter retried it forever, blocking partition 5 while the other seven kept flowing.\n  key_signal: Lag growing on a single trade bus partition and a repeating offset in the adapter log.\n  why_not_restart: Restarting the adapter re-reads the same message and gets stuck again.\n  runbook:\n    - Compare lag per partition, not just total lag.\n    - Find the offset in the adapter's error log.\n    - Park the message to the dead-letter topic with approval; repair and submit that trade manually.\n    - Raise a problem for schema compatibility checks in the release process.\n", "id: exch-mystery\ntitle: Mystery incident on the exchange\nsystems: [exchange]\nlevel: Hard\nsummary: One of six real faults, chosen at random. No hints, no clues in the title.\nmystery: true\nbrief: >\n  14:30. Something will go wrong before the 15:30 clearing cut-off. You do not know what or where.\nnoise:\n  - {at: \"14:41\", name: \"Disk usage 83% on md-node-1\", severity: P4}\npool:\n  - faults: [{at: \"14:38\", component: broker_c, fault: session_down}]\n    root_cause: {component: broker_c, fault: session_down}\n    accepted_fixes: [broker_c.reset_sequence]\n    risky_actions: [fix_gateway.restart]\n    debrief: {what_happened: \"Bluewater Broking's session was rejected on a sequence number mismatch.\", key_signal: \"Member session disconnected; logon rejected in the gateway log.\"}\n  - faults: [{at: \"14:38\", component: mm_2, fault: order_flood, params: {multiplier: 4}}]\n    root_cause: {component: mm_2, fault: order_flood}\n    accepted_fixes: [mm_2.apply_throttle]\n    risky_actions: [fix_gateway.restart]\n    debrief: {what_happened: \"Delta Quotes flooded the gateway.\", key_signal: \"Gateway inbound rate high; throttle warnings for one session.\"}\n  - faults: [{at: \"14:38\", component: issuer_1, fault: announcement_missed}]\n    root_cause: {component: issuer_1, fault: announcement_missed}\n    accepted_fixes: [issuer_1.reload_announcement, instrument_master.force_refresh]\n    risky_actions: [risk.restart]\n    debrief: {what_happened: \"Mahanadi Power's corporate action was skipped; orders in MAHPWR were rejected.\", key_signal: \"Risk rejects for one symbol; skipped file in the instrument master log.\"}\n  - faults: [{at: \"14:38\", component: orderbook_db, fault: pool_exhausted}]\n    root_cause: {component: orderbook_db, fault: pool_exhausted}\n    accepted_fixes: [orderbook_db.kill_blocking_session]\n    risky_actions: [matching.restart]\n    debrief: {what_happened: \"A report held the order book store's connections.\", key_signal: \"Pool at 100%, timeouts in matching.\"}\n  - faults: [{at: \"14:38\", component: clearing, fault: unavailable}]\n    root_cause: {component: clearing, fault: unavailable}\n    accepted_fixes: [clearing.escalate_to_vendor]\n    risky_actions: [clearing_feed.restart, clearing.restart_adapter]\n    debrief: {what_happened: \"The clearing corporation was down.\", key_signal: \"Clearing backlog with 100% failed calls; exchange green.\"}\n  - faults: [{at: \"14:38\", component: trade_bus, fault: poison_message, params: {partition: 2}}]\n    root_cause: {component: trade_bus, fault: poison_message}\n    accepted_fixes: [trade_bus.skip_poison_message]\n    risky_actions: [clearing_feed.restart]\n    debrief: {what_happened: \"A poison message blocked one trade bus partition.\", key_signal: \"Lag on one partition; repeating offset.\"}\n", "id: allocations-falling-behind\ntitle: Allocations falling behind\nsystems: [trade-allocation-kafka, trade-allocation-direct]\nlevel: Easy\nsummary: Allocations slow down mid-afternoon. Find out why before the affirmation cut-off.\nbrief: >\n  13:30 on a busy trading day. You are the on-call support engineer for middle-office\n  allocations. The affirmation cut-off is 15:00. The ops desk has asked you to keep an eye\n  on today's flow.\nfaults:\n  - {at: \"13:36\", component: tam, fault: instances_lost, params: {remaining: 2}}\nroot_cause: {component: tam, fault: instances_lost}\naccepted_fixes: [tam.scale_out]\nrisky_actions: [tam.restart]\nhints:\n  - {after_min: 3, text: \"Which component's output dropped first? Compare what goes in with what comes out.\"}\n  - {after_min: 7, text: \"Open the Allocation Engine and look at its healthy instance count and logs.\"}\ndebrief:\n  what_happened: >\n    Two of the four Allocation Engine pods were evicted by node memory pressure. Throughput\n    halved to about 210 trades/min while 300/min kept arriving, so the backlog grew steadily.\n  key_signal: Throughput dropped while the input rate stayed flat; the logs show pods Pending.\n  why_not_restart: >\n    A rolling restart halves capacity even further for three minutes and does not bring\n    evicted pods back. The problem is node capacity, not the process.\n  runbook:\n    - Check the healthy instance count and pod status.\n    - Reschedule the instances on healthy nodes (scale out) with approval.\n    - Watch the backlog drain and confirm the cut-off projection.\n    - Raise a problem record for node memory pressure.\n", "id: stuck-partition\ntitle: One partition stuck\nsystems: [trade-allocation-kafka]\nlevel: Medium\nsummary: Overall flow looks almost normal, but part of the book is not being allocated.\nbrief: >\n  13:30. Everything looked fine at the start of the afternoon. Watch the allocation flow\n  through to the 15:00 affirmation cut-off.\nfaults:\n  - {at: \"13:35\", component: trades_topic, fault: poison_message, params: {partition: 3}}\nroot_cause: {component: trades_topic, fault: poison_message}\naccepted_fixes: [trades_topic.skip_poison_message]\nrisky_actions: [tam.restart]\nhints:\n  - {after_min: 4, text: \"Total throughput is only slightly lower. Is the lag spread evenly across partitions?\"}\n  - {after_min: 9, text: \"Search the Allocation Engine logs for errors that repeat the same offset.\"}\ndebrief:\n  what_happened: >\n    A message with a new field (allocRatioV2) could not be deserialised. The consumer retried\n    it forever, so partition 3 stopped while the other five partitions kept flowing. Throughput\n    fell by only one-sixth, which is easy to miss.\n  key_signal: Lag growing on one partition only, and the same offset repeating in the error log.\n  why_not_restart: >\n    Restarting the consumer re-reads the same message and gets stuck again. The message must be\n    parked to a dead-letter topic and repaired separately.\n  runbook:\n    - Compare lag per partition, not just total lag.\n    - Find the offset in the consumer error log.\n    - Park the message to the DLQ with approval, then repair and replay it.\n    - Raise a problem record for schema compatibility between OMS and the allocator.\n", "id: missing-ssis\ntitle: Missing settlement instructions\nsystems: [trade-allocation-kafka, trade-allocation-direct]\nlevel: Medium\nsummary: Some allocations are being rejected. The allocation engine itself looks healthy.\nbrief: >\n  13:30. Allocations are flowing. The 15:00 affirmation cut-off applies. A handful of clients\n  have onboarded new accounts this week.\nfaults:\n  - {at: \"13:32\", component: ssi, fault: feed_failed, params: {last_refresh_minutes_ago: 19}}\nroot_cause: {component: ssi, fault: feed_failed}\naccepted_fixes: [ssi.force_refresh, tam.reprocess_rejected]\nrisky_actions: [tam.restart]\nhints:\n  - {after_min: 3, text: \"Rejects are not a capacity problem. What data does the allocator need for each account?\"}\n  - {after_min: 8, text: \"Check when the SSI reference data last loaded successfully.\"}\n  - {after_min: 12, text: \"After fixing the data, the trades already rejected are still waiting in the exception queue.\"}\ndebrief:\n  what_happened: >\n    The SSI feed job failed (vendor SFTP refused connections). Once the data was older than\n    20 minutes, allocations for recently changed accounts were rejected and parked in the\n    exception queue.\n  key_signal: Reject rate above 2% with normal throughput, plus SSI staleness growing and feed errors.\n  why_not_restart: Restarting the allocator changes nothing; it still reads the same stale SSI data.\n  runbook:\n    - Check the reject reason in the allocator log.\n    - Check reference data freshness and the feed job log.\n    - Re-run the feed from the secondary source with approval.\n    - Reprocess the exception queue, then confirm it is empty.\n", "id: confirmation-platform-down\ntitle: Confirmations not matching\nsystems: [trade-allocation-kafka, trade-allocation-direct]\nlevel: Medium\nsummary: Allocations are fine, yet nothing is getting affirmed. Decide what is in your control.\nbrief: >\n  13:30. Normal afternoon flow. The 15:00 affirmation cut-off applies and client service has\n  three large institutional clients waiting for confirmations.\nfaults:\n  - {at: \"13:40\", component: ctm, fault: unavailable}\nnoise:\n  - {at: \"13:43\", name: \"Disk usage 82% on report-01\", severity: P4}\nroot_cause: {component: ctm, fault: unavailable}\naccepted_fixes: [ctm.escalate_to_vendor]\nrisky_actions: [tam.restart, ctm.restart_adapter]\nhints:\n  - {after_min: 3, text: \"Follow the flow left to right. Where does the backlog start?\"}\n  - {after_min: 7, text: \"Is the failure inside our systems, or at the third party?\"}\ndebrief:\n  what_happened: >\n    The confirmation platform returned HTTP 503 for every call. Our allocations kept flowing,\n    so everything looked healthy until confirmations piled up.\n  key_signal: Unmatched confirmations growing with 100% failed calls, while internal components stay green.\n  why_not_restart: >\n    The fault was on the vendor's side. Restarting our adapter or the allocator only adds a\n    second outage. The right move is a fast, clear vendor escalation and client updates.\n  runbook:\n    - Confirm the error is coming from the vendor (HTTP 5xx), not our adapter.\n    - Raise a P1 with the vendor and record the reference.\n    - Inform client service about the confirmation delay.\n    - Monitor recovery and the cut-off projection.\n", "id: database-pool-exhausted\ntitle: Allocation engine choking\nsystems: [trade-allocation-kafka, trade-allocation-direct]\nlevel: Hard\nsummary: Several alerts fire at once. Separate the cause from the symptoms.\nbrief: >\n  13:30. Month-end week. Finance has been running reconciliation reports today. The 15:00\n  affirmation cut-off applies.\nfaults:\n  - {at: \"13:37\", component: tam_db, fault: pool_exhausted}\nnoise:\n  - {at: \"13:39\", name: \"CPU 78% on tam-allocator-2\", severity: P4}\nroot_cause: {component: tam_db, fault: pool_exhausted}\naccepted_fixes: [tam_db.kill_blocking_session]\nrisky_actions: [tam.restart, tam.scale_out]\nhints:\n  - {after_min: 3, text: \"Throughput, lag and the cut-off are all symptoms. Which alert is closest to the cause?\"}\n  - {after_min: 7, text: \"Look at the Allocation DB logs: who is holding the connections?\"}\ndebrief:\n  what_happened: >\n    A month-end reconciliation report ran a full table scan and held 46 of 50 database\n    connections. The allocator waited for connections and processed only a fifth of its\n    normal volume.\n  key_signal: DB pool at 100% and connection timeouts in the allocator logs.\n  why_not_restart: >\n    Restarting or scaling out the allocator adds more clients competing for the same\n    exhausted pool. Free the connections first.\n  runbook:\n    - Check pool usage and connection wait time.\n    - Identify the blocking session and its owner.\n    - Kill it with approval and inform the report owner.\n    - Raise a problem: move heavy reports to a replica.\n", "id: mystery\ntitle: Mystery incident\nsystems: [trade-allocation-kafka, trade-allocation-direct]\nlevel: Hard\nsummary: One of five real faults, chosen at random. No hints, no clues in the title.\nmystery: true\nbrief: >\n  13:30. Something will go wrong this afternoon. You do not know what or where.\n  The 15:00 affirmation cut-off applies.\nnoise:\n  - {at: \"13:41\", name: \"Disk usage 82% on report-01\", severity: P4}\npool:\n  - faults: [{at: \"13:38\", component: tam, fault: instances_lost, params: {remaining: 2}}]\n    root_cause: {component: tam, fault: instances_lost}\n    accepted_fixes: [tam.scale_out]\n    risky_actions: [tam.restart]\n    debrief: {what_happened: \"Two allocator pods were evicted; throughput halved.\", key_signal: \"Healthy instances 2/4.\"}\n  - faults: [{at: \"13:38\", component: trades_topic, fault: poison_message, params: {partition: 1}}]\n    root_cause: {component: trades_topic, fault: poison_message}\n    accepted_fixes: [trades_topic.skip_poison_message]\n    risky_actions: [tam.restart]\n    debrief: {what_happened: \"A poison message blocked one partition.\", key_signal: \"Lag on a single partition and a repeating offset in the logs.\"}\n  - faults: [{at: \"13:38\", component: ssi, fault: feed_failed, params: {last_refresh_minutes_ago: 19}}]\n    root_cause: {component: ssi, fault: feed_failed}\n    accepted_fixes: [ssi.force_refresh, tam.reprocess_rejected]\n    risky_actions: [tam.restart]\n    debrief: {what_happened: \"The SSI feed failed; allocations for changed accounts were rejected.\", key_signal: \"Reject rate up, SSI staleness growing.\"}\n  - faults: [{at: \"13:38\", component: tam_db, fault: pool_exhausted}]\n    root_cause: {component: tam_db, fault: pool_exhausted}\n    accepted_fixes: [tam_db.kill_blocking_session]\n    risky_actions: [tam.restart, tam.scale_out]\n    debrief: {what_happened: \"A report query held the DB connection pool.\", key_signal: \"Pool at 100%, connection timeouts.\"}\n  - faults: [{at: \"13:38\", component: ctm, fault: unavailable}]\n    root_cause: {component: ctm, fault: unavailable}\n    accepted_fixes: [ctm.escalate_to_vendor]\n    risky_actions: [tam.restart, ctm.restart_adapter]\n    debrief: {what_happened: \"The confirmation platform was down on the vendor side.\", key_signal: \"100% failed calls to CTM; internal systems green.\"}\n"]};
+window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: members (brokers and market makers) trade through the exchange's\n# gateway, risk checks and matching engine. Listed companies (issuers) keep the instrument\n# master current through corporate actions. Trades go to the clearing corporation over\n# an internal Kafka bus; market data and drop copies go out to subscribers and members.\n\nid: exchange\nsystem: Equity exchange trading platform\ndescription: >\n  Three brokers and two market makers connect over FIX. Orders pass session and throttle\n  checks at the gateway, pre-trade risk checks against the instrument master, and price-time\n  matching. Trades reach the clearing corporation before the clearing cut-off.\n\nclock:\n  start: \"14:30\"\n  cutoff: \"15:30\"\n  cutoff_label: Clearing cut-off\n\nbusiness:\n  currency: \"₹\"\n  unit: \"Cr\"\n  unit_name: orders\n  avg_notional: 0.04          # about ₹4 lakh per order\n  kpis:\n    - {label: \"Orders waiting to match\", at: matching}\n    - {label: \"Trades not with clearing\", at: clearing, cutoff: true}\n\ncomponents:\n  # members\n  - {id: broker_a, type: source, role: Broker, name: Kestrel Securities, session: KEST01, rate_per_min: 420}\n  - {id: broker_b, type: source, role: Broker, name: Narmada Capital, session: NRMD02, rate_per_min: 300}\n  - {id: broker_c, type: source, role: Broker, name: Bluewater Broking, session: BLUW03, rate_per_min: 230}\n  - {id: mm_1, type: source, role: Market maker, name: Arcline Markets, session: ARCL11, rate_per_min: 600}\n  - {id: mm_2, type: source, role: Market maker, name: Delta Quotes, session: DLTQ12, rate_per_min: 450}\n\n  # exchange trading system\n  - {id: fix_gateway, type: service, role: Exchange, name: FIX Order Gateway, capacity_per_min: 2700, instances: 3}\n  - {id: risk, type: service, role: Exchange, name: Pre-trade Risk Checks, capacity_per_min: 2800, instances: 4, uses: [instrument_master], rejects: return}\n  - {id: matching, type: service, role: Exchange, name: Matching Engine, capacity_per_min: 3000, instances: 2, uses: [orderbook_db]}\n  - {id: instrument_master, type: ref_data, name: Instrument Master, refresh_every_min: 10, stale_after_min: 30}\n  - {id: orderbook_db, type: database, name: Order Book Store, pool_size: 80, big_table: ORDER_HIST}\n\n  # listed companies\n  - {id: issuer_1, type: issuer, role: Issuer, name: Mahanadi Power Ltd, symbol: MAHPWR, feeds: instrument_master}\n  - {id: issuer_2, type: issuer, role: Issuer, name: Konark Steel Ltd, symbol: KONSTL, feeds: instrument_master}\n  - {id: issuer_3, type: issuer, role: Issuer, name: Chilika Foods Ltd, symbol: CHLKFD, feeds: instrument_master}\n\n  # post-trade\n  - {id: trade_bus, type: kafka_topic, name: trades.matched, partitions: 8, consumer_group: clearing-feed}\n  - {id: clearing_feed, type: service, role: Exchange, name: Clearing Feed Adapter, capacity_per_min: 2600, instances: 2}\n  - {id: clearing, type: external_party, role: Clearing corporation, name: Clearing Corporation, capacity_per_min: 3600}\n\n  # market data and drop copy\n  - {id: md_publisher, type: service, role: Exchange, name: Market Data Publisher, capacity_per_min: 3000, instances: 2}\n  - {id: md_vendors, type: external_party, role: Subscribers, name: Market Data Vendors, capacity_per_min: 3200}\n  - {id: drop_copy, type: service, role: Exchange, name: Drop Copy Service, capacity_per_min: 3000, instances: 2}\n\nflow:\n  - broker_a -> fix_gateway\n  - broker_b -> fix_gateway\n  - broker_c -> fix_gateway\n  - mm_1 -> fix_gateway\n  - mm_2 -> fix_gateway\n  - fix_gateway -> risk -> matching -> trade_bus -> clearing_feed -> clearing\n  - matching -> md_publisher -> md_vendors\n  - matching -> drop_copy\n\nalerts:\n  - {name: \"Member session disconnected\", on: fix_gateway, metric: sessions_down, above: 0, severity: P2}\n  - {name: \"Gateway inbound rate high\", on: fix_gateway, metric: in_rate, above: 2600, severity: P3}\n  - {name: \"Gateway queue building\", on: fix_gateway, metric: backlog, above: 1500, severity: P2}\n  - {name: \"Risk reject rate high\", on: risk, metric: reject_rate, above: 2, severity: P2}\n  - {name: \"Matching throughput low\", on: matching, metric: out_rate, below: 1400, severity: P2}\n  - {name: \"Order book store pool saturated\", on: orderbook_db, metric: pool_pct, above: 90, severity: P2}\n  - {name: \"Trade bus partition lag\", on: trade_bus, metric: max_partition_lag, above: 400, severity: P2}\n  - {name: \"Clearing submissions backing up\", on: clearing, metric: backlog, above: 2500, severity: P2}\n\ndiagram:\n  notes: >\n    Members cannot see inside the exchange, and the exchange cannot see inside members or issuers.\n    Support works from the exchange's own gateway, risk, matching and post-trade signals.\n  groups:\n    - {label: \"Members\", ids: [broker_a, broker_b, broker_c, mm_1, mm_2]}\n    - {label: \"Exchange trading system\", ids: [fix_gateway, risk, matching, instrument_master, orderbook_db]}\n    - {label: \"Listed companies (issuers)\", ids: [issuer_1, issuer_2, issuer_3]}\n    - {label: \"Post-trade\", ids: [trade_bus, clearing_feed, clearing]}\n    - {label: \"Market data and drop copy\", ids: [md_publisher, md_vendors, drop_copy]}\n  place:\n    broker_a: [0, 0]\n    broker_b: [0, 1]\n    broker_c: [0, 2]\n    mm_1: [0, 3]\n    mm_2: [0, 4]\n    fix_gateway: [1, 2]\n    risk: [2, 2]\n    matching: [3, 2]\n    instrument_master: [2, 3.45]\n    orderbook_db: [3, 3.45]\n    issuer_1: [1.2, 4.9]\n    issuer_2: [2.2, 4.9]\n    issuer_3: [3.2, 4.9]\n    trade_bus: [4.3, 0.6]\n    clearing_feed: [5.3, 0.6]\n    clearing: [6.3, 0.6]\n    md_publisher: [4.3, 2.2]\n    md_vendors: [5.3, 2.2]\n    drop_copy: [4.3, 3.45]\n  steps:\n    - {from: broker_a, to: fix_gateway, text: \"Brokers send client orders over FIX sessions, one session per member.\"}\n    - {from: mm_1, to: fix_gateway, text: \"Market makers stream two-sided quotes to meet their quoting obligations.\"}\n    - {from: fix_gateway, to: risk, text: \"The gateway checks the session (logon, sequence numbers) and each member's message throttle.\"}\n    - {from: risk, to: instrument_master, text: \"Risk checks price bands, lot sizes and circuit limits from the instrument master. Failed orders are rejected back to the member.\"}\n    - {from: issuer_2, to: instrument_master, text: \"Issuers announce corporate actions (splits, dividends, symbol changes) that change prices and bands.\"}\n    - {from: risk, to: matching, text: \"Accepted orders enter the order book; matching runs price-time priority.\"}\n    - {from: matching, to: orderbook_db, text: \"Order book state is persisted for recovery and audit.\"}\n    - {from: matching, to: trade_bus, text: \"Every matched trade is published on the internal Kafka trade bus.\"}\n    - {from: clearing_feed, to: clearing, text: \"Trades are submitted to the clearing corporation before the 15:30 clearing cut-off.\"}\n    - {from: matching, to: md_publisher, text: \"Prices and depth are broadcast to market data vendors.\"}\n    - {from: matching, to: drop_copy, text: \"Drop copies of every fill go back to members' risk systems.\"}\n", "trade-allocation-direct": "# The same trade allocation system WITHOUT Kafka: front office hands fills straight to the\n# allocation engine's queue. Compare with trade-allocation-kafka.yaml — the differences are one\n# component, the flow lines and the alerts that watch it.\n\nid: trade-allocation-direct\nsystem: Middle-office trade allocation (direct, no Kafka)\ndescription: >\n  Front office calls the allocation engine directly. Without Kafka there is no consumer lag to\n  watch: a slow allocation engine shows up as its own queue, and a stuck partition cannot happen.\n\nclock:\n  start: \"13:30\"\n  cutoff: \"15:00\"\n  cutoff_label: Affirmation cut-off\n\nbusiness:\n  currency: \"₹\"\n  unit: \"Cr\"\n  unit_name: trades\n  avg_notional: 0.6\n  kpis:\n    - {label: \"Unallocated\", at: tam}\n    - {label: \"Not yet affirmed\", at: ctm, cutoff: true}\n\ncomponents:\n  - {id: oms, type: source, role: Front office, name: Order Management (OMS), session: OMS01, rate_per_min: 200}\n  - {id: ems, type: source, role: Front office, name: Execution Desk (EMS), session: EMS01, rate_per_min: 100}\n  - {id: tam, type: service, role: Middle office, name: Allocation Engine, capacity_per_min: 420, instances: 4, uses: [ssi, tam_db]}\n  - {id: ssi, type: ref_data, name: SSI Reference Data, refresh_every_min: 15, stale_after_min: 20}\n  - {id: tam_db, type: database, name: Allocation DB, pool_size: 50, big_table: ALLOCATION_HIST}\n  - {id: ctm, type: external_party, role: Confirmation platform, name: Confirmation Platform (CTM), capacity_per_min: 520}\n  - {id: settle, type: external_party, role: Custodian network, name: Settlement (SWIFT), capacity_per_min: 600}\n\nflow:\n  - oms -> tam\n  - ems -> tam\n  - tam -> ctm -> settle\n\nalerts:\n  - {name: \"Allocation backlog high\", on: tam, metric: backlog, above: 900, severity: P2}\n  - {name: \"Allocation throughput low\", on: tam, metric: out_rate, below: 235, severity: P3}\n  - {name: \"Allocation reject rate high\", on: tam, metric: reject_rate, above: 2, severity: P2}\n  - {name: \"DB connection pool saturated\", on: tam_db, metric: pool_pct, above: 90, severity: P2}\n  - {name: \"SSI data stale\", on: ssi, metric: staleness_min, above: 25, severity: P3}\n  - {name: \"Unmatched confirmations\", on: ctm, metric: backlog, above: 900, severity: P2}\n\ndiagram:\n  groups:\n    - {label: \"Front office\", ids: [oms, ems]}\n    - {label: \"Middle office (our systems)\", ids: [tam, ssi, tam_db]}\n    - {label: \"External parties\", ids: [ctm, settle]}\n  place:\n    oms: [0, 0]\n    ems: [0, 1.15]\n    tam: [1.2, 0.55]\n    ssi: [0.7, 1.95]\n    tam_db: [1.7, 1.95]\n    ctm: [2.5, 0.55]\n    settle: [3.6, 0.55]\n  steps:\n    - {from: oms, to: tam, text: \"Executed block fills from the OMS go straight to the allocation engine's queue.\"}\n    - {from: ems, to: tam, text: \"Execution-desk fills join the same queue.\"}\n    - {from: tam, to: ssi, text: \"For each client account the engine looks up the settlement instructions (SSIs).\"}\n    - {from: tam, to: tam_db, text: \"Blocks and allocations are stored; rejected allocations wait in an exception queue.\"}\n    - {from: tam, to: ctm, text: \"Allocations go to the confirmation platform to be affirmed.\"}\n    - {from: ctm, to: settle, text: \"Affirmed trades generate settlement instructions to custodians.\"}\n", "trade-allocation-kafka": "# Middle-office trade allocation (buy side), with Kafka between front office and the allocation engine.\n# Edit this file (or use the Blueprint tab in the app) to change the system being simulated.\n\nid: trade-allocation-kafka\nsystem: Middle-office trade allocation\ndescription: >\n  Block fills arrive from the OMS and the execution desk (EMS) through a Kafka topic. The\n  allocation engine splits each block across client accounts using SSI reference data, sends\n  allocations to the confirmation platform for affirmation, and on to settlement.\n\nclock:\n  start: \"13:30\"\n  cutoff: \"15:00\"\n  cutoff_label: Affirmation cut-off\n\nbusiness:\n  currency: \"₹\"\n  unit: \"Cr\"\n  unit_name: trades\n  avg_notional: 0.6        # ₹ Cr per trade, used to show impact in money\n  kpis:\n    - {label: \"Unallocated\", at: tam}\n    - {label: \"Not yet affirmed\", at: ctm, cutoff: true}\n\ncomponents:\n  - {id: oms, type: source, role: Front office, name: Order Management (OMS), session: OMS01, rate_per_min: 200}\n  - {id: ems, type: source, role: Front office, name: Execution Desk (EMS), session: EMS01, rate_per_min: 100}\n\n  - id: trades_topic\n    type: kafka_topic\n    name: trades.executed\n    partitions: 6\n    consumer_group: tam-allocator\n\n  - id: tam\n    type: service\n    role: Middle office\n    name: Allocation Engine\n    capacity_per_min: 420\n    instances: 4\n    uses: [ssi, tam_db]\n\n  - {id: ssi, type: ref_data, name: SSI Reference Data, refresh_every_min: 15, stale_after_min: 20}\n  - {id: tam_db, type: database, name: Allocation DB, pool_size: 50, big_table: ALLOCATION_HIST}\n\n  - {id: ctm, type: external_party, role: Confirmation platform, name: Confirmation Platform (CTM), capacity_per_min: 520}\n  - {id: settle, type: external_party, role: Custodian network, name: Settlement (SWIFT), capacity_per_min: 600}\n\nflow:\n  - oms -> trades_topic\n  - ems -> trades_topic\n  - trades_topic -> tam -> ctm -> settle\n\nalerts:\n  - {name: \"Kafka consumer lag high\", on: trades_topic, metric: lag, above: 900, severity: P2}\n  - {name: \"Partition lag high\", on: trades_topic, metric: max_partition_lag, above: 300, severity: P2}\n  - {name: \"Allocation throughput low\", on: tam, metric: out_rate, below: 235, severity: P3}\n  - {name: \"Allocation reject rate high\", on: tam, metric: reject_rate, above: 2, severity: P2}\n  - {name: \"DB connection pool saturated\", on: tam_db, metric: pool_pct, above: 90, severity: P2}\n  - {name: \"SSI data stale\", on: ssi, metric: staleness_min, above: 25, severity: P3}\n  - {name: \"Unmatched confirmations\", on: ctm, metric: backlog, above: 900, severity: P2}\n\ndiagram:\n  notes: >\n    Front office books block trades. Middle office must allocate every block to client accounts and get\n    each allocation affirmed before the affirmation cut-off, or the trades fail to settle on time.\n  groups:\n    - {label: \"Front office\", ids: [oms, ems]}\n    - {label: \"Middle office (our systems)\", ids: [trades_topic, tam, ssi, tam_db]}\n    - {label: \"External parties\", ids: [ctm, settle]}\n  place:\n    oms: [0, 0]\n    ems: [0, 1.15]\n    trades_topic: [1.1, 0.55]\n    tam: [2.2, 0.55]\n    ssi: [1.7, 1.95]\n    tam_db: [2.7, 1.95]\n    ctm: [3.4, 0.55]\n    settle: [4.5, 0.55]\n  steps:\n    - {from: oms, to: trades_topic, text: \"Executed block fills from the OMS are published to Kafka.\"}\n    - {from: ems, to: trades_topic, text: \"Algo and program-desk fills arrive from the EMS on the same topic.\"}\n    - {from: trades_topic, to: tam, text: \"The allocation engine consumes fills, one consumer per partition.\"}\n    - {from: tam, to: ssi, text: \"For each client account it looks up the standing settlement instructions (SSIs).\"}\n    - {from: tam, to: tam_db, text: \"Blocks and allocations are stored; rejected allocations wait in an exception queue.\"}\n    - {from: tam, to: ctm, text: \"Allocations go to the confirmation platform to be matched and affirmed by the broker.\"}\n    - {from: ctm, to: settle, text: \"Affirmed trades generate settlement instructions to custodians (SWIFT MT541/543).\"}\n"}, "default_blueprint": "trade-allocation-kafka", "drills": ["id: exch-member-cannot-log-in\ntitle: A broker cannot log in\nsystems: [exchange]\nlevel: Easy\nsummary: A member's desk says their orders are not reaching the exchange.\nbrief: >\n  14:30, one hour before the clearing cut-off. You are on the exchange's market operations\n  support desk. Members call you when they cannot trade.\nfaults:\n  - {at: \"14:36\", component: broker_b, fault: session_down}\nroot_cause: {component: broker_b, fault: session_down}\naccepted_fixes: [broker_b.reset_sequence]\nrisky_actions: [fix_gateway.restart]\nhints:\n  - {after_min: 2, text: \"One member's order flow dropped to zero. Which session, and what does the gateway log say about its logon?\"}\n  - {after_min: 6, text: \"A sequence-number mismatch is agreed and reset with the member; it is not fixed by restarting the gateway.\"}\ndebrief:\n  what_happened: >\n    Narmada Capital's FIX engine came back after a restart with an old sequence number. The gateway\n    rejected every logon as \"MsgSeqNum too low\", so their orders queued on their side.\n  key_signal: Member session disconnected alert, zero order flow from one session, and logon-rejected lines in the gateway log.\n  why_not_restart: >\n    Restarting the gateway disconnects all five members and halves capacity, and the broken\n    session still has the wrong sequence number when it comes back.\n  runbook:\n    - Identify the session from the gateway log (session id and member).\n    - Call the member, agree the sequence numbers, and reset them for that session only.\n    - Watch the member's queued orders resend and the gateway queue drain.\n    - Note the incident for the member's monthly connectivity report.\n", "id: exch-noisy-market-maker\ntitle: A market maker floods the gateway\nsystems: [exchange]\nlevel: Medium\nsummary: Every member reports slow order acknowledgements. Nothing in the exchange is down.\nbrief: >\n  14:30. Volatile afternoon. Several brokers call to say order acknowledgements have become slow.\n  The clearing cut-off is 15:30.\nfaults:\n  - {at: \"14:35\", component: mm_1, fault: order_flood, params: {multiplier: 4}}\nroot_cause: {component: mm_1, fault: order_flood}\naccepted_fixes: [mm_1.apply_throttle]\nrisky_actions: [fix_gateway.restart]\nhints:\n  - {after_min: 2, text: \"The gateway is healthy but its queue is growing. Is the inbound rate normal?\"}\n  - {after_min: 6, text: \"Compare each member's message rate with its usual rate. Which session changed?\"}\ndebrief:\n  what_happened: >\n    Arcline Markets deployed a quoting engine with a misconfigured refresh interval and sent about\n    four times its normal message rate. The gateway's capacity was shared by everyone, so every\n    member's orders queued behind the flood.\n  key_signal: Gateway inbound rate above normal, queue growing, and throttle warnings naming one session.\n  why_not_restart: >\n    Restarting or scaling the gateway treats the symptom. The flood resumes as soon as the session\n    reconnects; the member's throttle is the control built for this.\n  runbook:\n    - Find the session above its message limit in the gateway log.\n    - Apply that member's message throttle (approval required) and tell the member why.\n    - Watch the gateway queue drain and acknowledgement times recover.\n    - Ask the member for a root cause before lifting the throttle.\n", "id: exch-corporate-action-missed\ntitle: Orders rejected in one stock\nsystems: [exchange]\nlevel: Medium\nsummary: Members complain that orders in one symbol are rejected for price, even at the last traded price.\nbrief: >\n  14:30. Konark Steel announced a stock split effective today. Trading looks normal overall.\n  The clearing cut-off is 15:30.\nfaults:\n  - {at: \"14:33\", component: issuer_2, fault: announcement_missed}\nroot_cause: {component: issuer_2, fault: announcement_missed}\naccepted_fixes: [issuer_2.reload_announcement, instrument_master.force_refresh]\nrisky_actions: [risk.restart]\nhints:\n  - {after_min: 2, text: \"Rejects are not a capacity problem. Which symbol do the rejected orders have in common?\"}\n  - {after_min: 6, text: \"Check the instrument master's load log. Was every corporate action file applied?\"}\ndebrief:\n  what_happened: >\n    Konark Steel's corporate action file used a new ISIN format and was skipped during the\n    instrument master load. Its price band still reflected the pre-split price, so risk checks\n    rejected valid orders in KONSTL.\n  key_signal: Risk reject rate above 2% with normal throughput, all rejects for one symbol, and a skipped file in the instrument master log.\n  why_not_restart: The risk service is working correctly on wrong data. Restarting it changes nothing.\n  runbook:\n    - Group rejected orders by symbol and reject reason.\n    - Check the instrument master load log for skipped corporate action files.\n    - Reprocess the issuer's corporate action (or reload the instrument master) with approval.\n    - Inform members that orders in the symbol can be re-entered.\n", "id: exch-order-book-store\ntitle: Matching slows to a crawl\nsystems: [exchange]\nlevel: Hard\nsummary: Many alerts fire at once across the exchange. Find the one that is the cause.\nbrief: >\n  14:30. Month-end. The surveillance team runs heavy reports in the afternoon. The clearing\n  cut-off is 15:30.\nfaults:\n  - {at: \"14:37\", component: orderbook_db, fault: pool_exhausted}\nnoise:\n  - {at: \"14:39\", name: \"CPU 81% on gw-node-2\", severity: P4}\nroot_cause: {component: orderbook_db, fault: pool_exhausted}\naccepted_fixes: [orderbook_db.kill_blocking_session]\nrisky_actions: [matching.restart, fix_gateway.restart]\nhints:\n  - {after_min: 2, text: \"Matching throughput fell, but matching has all its instances. What does matching depend on?\"}\n  - {after_min: 6, text: \"Look at the Order Book Store's connections and who is holding them.\"}\ndebrief:\n  what_happened: >\n    A month-end surveillance report ran a full table scan on ORDER_HIST and held 76 of 80 order\n    book store connections. Matching waited for connections and processed a fifth of its normal volume.\n  key_signal: Order book store pool at 100% and connection timeouts in the matching engine log.\n  why_not_restart: >\n    Restarting matching during trading is a market-wide event, and it would come back to the same\n    exhausted pool. Free the connections first.\n  runbook:\n    - Check the pool and the longest-running sessions on the order book store.\n    - Kill the blocking report session with approval and inform its owner.\n    - Watch matching throughput and the clearing projection recover.\n    - Raise a problem: move reports to a replica.\n", "id: exch-clearing-down\ntitle: Trades not reaching clearing\nsystems: [exchange]\nlevel: Medium\nsummary: Trading is normal, but trades are not being accepted by the clearing corporation.\nbrief: >\n  14:30. Normal trading. Every trade must reach the clearing corporation before the 15:30\n  clearing cut-off.\nfaults:\n  - {at: \"14:40\", component: clearing, fault: unavailable}\nnoise:\n  - {at: \"14:43\", name: \"Disk usage 83% on md-node-1\", severity: P4}\nroot_cause: {component: clearing, fault: unavailable}\naccepted_fixes: [clearing.escalate_to_vendor]\nrisky_actions: [clearing_feed.restart, clearing.restart_adapter, matching.restart]\nhints:\n  - {after_min: 2, text: \"Follow the flow left to right. Where does the queue start?\"}\n  - {after_min: 6, text: \"Is the failure in our clearing adapter, or at the clearing corporation?\"}\ndebrief:\n  what_happened: >\n    The clearing corporation's trade submission API returned HTTP 503. Trading carried on, so the\n    exchange looked healthy while unsubmitted trades piled up against the clearing cut-off.\n  key_signal: Clearing backlog growing with 100% failed calls, while gateway, risk and matching stay green.\n  why_not_restart: >\n    The fault is outside the exchange. Restarting our adapter adds a second outage. The fix is a fast\n    escalation and a clear plan for the cut-off.\n  runbook:\n    - Confirm the errors come from the clearing corporation (HTTP 5xx), not our adapter.\n    - Raise a P1 with the clearing corporation and record the reference.\n    - Agree a cut-off extension if recovery is late.\n    - Monitor the backlog until every trade is submitted.\n", "id: exch-trade-bus-stuck\ntitle: Some trades never reach clearing\nsystems: [exchange]\nlevel: Hard\nsummary: Clearing receives trades, but a slice of them is missing. Total throughput looks almost normal.\nbrief: >\n  14:30. A new release of the matching engine went live this morning. The clearing cut-off is 15:30.\nfaults:\n  - {at: \"14:35\", component: trade_bus, fault: poison_message, params: {partition: 5}}\nroot_cause: {component: trade_bus, fault: poison_message}\naccepted_fixes: [trade_bus.skip_poison_message]\nrisky_actions: [clearing_feed.restart, matching.restart]\nhints:\n  - {after_min: 3, text: \"Throughput to clearing dropped by only one-eighth. Is the trade bus lag even across partitions?\"}\n  - {after_min: 8, text: \"The clearing feed adapter's log repeats the same offset.\"}\ndebrief:\n  what_happened: >\n    The new matching release published one trade with a field the clearing feed adapter could not\n    read. The adapter retried it forever, blocking partition 5 while the other seven kept flowing.\n  key_signal: Lag growing on a single trade bus partition and a repeating offset in the adapter log.\n  why_not_restart: Restarting the adapter re-reads the same message and gets stuck again.\n  runbook:\n    - Compare lag per partition, not just total lag.\n    - Find the offset in the adapter's error log.\n    - Park the message to the dead-letter topic with approval; repair and submit that trade manually.\n    - Raise a problem for schema compatibility checks in the release process.\n", "id: exch-mystery\ntitle: Mystery incident on the exchange\nsystems: [exchange]\nlevel: Hard\nsummary: One of ten real faults, chosen at random. No hints, no clues in the title.\nmystery: true\nbrief: >\n  14:30. Something will go wrong before the 15:30 clearing cut-off. You do not know what or where.\nnoise:\n  - {at: \"14:41\", name: \"Disk usage 83% on md-node-1\", severity: P4}\npool:\n  - faults: [{at: \"14:38\", component: broker_c, fault: session_down}]\n    root_cause: {component: broker_c, fault: session_down}\n    accepted_fixes: [broker_c.reset_sequence]\n    risky_actions: [fix_gateway.restart]\n    debrief: {what_happened: \"Bluewater Broking's session was rejected on a sequence number mismatch.\", key_signal: \"Member session disconnected; logon rejected in the gateway log.\"}\n  - faults: [{at: \"14:38\", component: mm_2, fault: order_flood, params: {multiplier: 4}}]\n    root_cause: {component: mm_2, fault: order_flood}\n    accepted_fixes: [mm_2.apply_throttle]\n    risky_actions: [fix_gateway.restart]\n    debrief: {what_happened: \"Delta Quotes flooded the gateway.\", key_signal: \"Gateway inbound rate high; throttle warnings for one session.\"}\n  - faults: [{at: \"14:38\", component: issuer_1, fault: announcement_missed}]\n    root_cause: {component: issuer_1, fault: announcement_missed}\n    accepted_fixes: [issuer_1.reload_announcement, instrument_master.force_refresh]\n    risky_actions: [risk.restart]\n    debrief: {what_happened: \"Mahanadi Power's corporate action was skipped; orders in MAHPWR were rejected.\", key_signal: \"Risk rejects for one symbol; skipped file in the instrument master log.\"}\n  - faults: [{at: \"14:38\", component: orderbook_db, fault: pool_exhausted}]\n    root_cause: {component: orderbook_db, fault: pool_exhausted}\n    accepted_fixes: [orderbook_db.kill_blocking_session]\n    risky_actions: [matching.restart]\n    debrief: {what_happened: \"A report held the order book store's connections.\", key_signal: \"Pool at 100%, timeouts in matching.\"}\n  - faults: [{at: \"14:38\", component: clearing, fault: unavailable}]\n    root_cause: {component: clearing, fault: unavailable}\n    accepted_fixes: [clearing.escalate_to_vendor]\n    risky_actions: [clearing_feed.restart, clearing.restart_adapter]\n    debrief: {what_happened: \"The clearing corporation was down.\", key_signal: \"Clearing backlog with 100% failed calls; exchange green.\"}\n  - faults: [{at: \"14:38\", component: trade_bus, fault: poison_message, params: {partition: 2}}]\n    root_cause: {component: trade_bus, fault: poison_message}\n    accepted_fixes: [trade_bus.skip_poison_message]\n    risky_actions: [clearing_feed.restart]\n    debrief: {what_happened: \"A poison message blocked one trade bus partition.\", key_signal: \"Lag on one partition; repeating offset.\"}\n  - faults: [{at: \"14:38\", component: orderbook_db, fault: disk_full}]\n    root_cause: {component: orderbook_db, fault: disk_full}\n    accepted_fixes: [orderbook_db.clear_disk_space]\n    risky_actions: [matching.restart]\n    debrief: {what_happened: \"The order book store's archive destination filled up and every commit hung.\", key_signal: \"ORA-00257 in matching; /u01/arch at 100%.\"}\n  - faults: [{at: \"14:38\", component: fix_gateway, fault: clock_skew}]\n    root_cause: {component: fix_gateway, fault: clock_skew}\n    accepted_fixes: [fix_gateway.resync_ntp]\n    risky_actions: [fix_gateway.restart]\n    debrief: {what_happened: \"The gateway host clock drifted and every member was rejected.\", key_signal: \"SendingTime accuracy problem for all sessions.\"}\n  - faults: [{at: \"14:38\", component: clearing, fault: cert_expired}]\n    root_cause: {component: clearing, fault: cert_expired}\n    accepted_fixes: [clearing.renew_certificate]\n    risky_actions: [clearing.restart_adapter]\n    debrief: {what_happened: \"Our TLS client certificate for clearing expired.\", key_signal: \"SSLHandshakeException: certificate expired.\"}\n  - faults: [{at: \"14:38\", component: risk, fault: config_change}]\n    root_cause: {component: risk, fault: config_change}\n    accepted_fixes: [risk.revert_config]\n    risky_actions: [risk.restart]\n    debrief: {what_happened: \"A config refresh set the limits API timeout to 50 ms.\", key_signal: \"SocketTimeoutException after 50ms; config refresh just before.\"}\n", "id: exch-archive-disk-full\ntitle: Matching stops committing trades\nsystems: [exchange]\nlevel: Hard\nsummary: The matching engine is up but almost nothing comes out of it. The cause is two layers down.\nbrief: >\n  14:30. A busy afternoon after a results announcement. The clearing cut-off is 15:30.\n  The matching engine shows all instances running.\nfaults:\n  - {at: \"14:37\", component: orderbook_db, fault: disk_full}\nnoise:\n  - {at: \"14:40\", name: \"CPU 79% on md-node-2\", severity: P4}\nroot_cause: {component: orderbook_db, fault: disk_full}\naccepted_fixes: [orderbook_db.clear_disk_space]\nrisky_actions: [matching.restart, orderbook_db.failover_to_dr, orderbook_db.kill_blocking_session]\nhints:\n  - {after_min: 2, text: \"Matching has all its instances, yet its throughput collapsed. What does matching depend on?\"}\n  - {after_min: 5, text: \"Read the matching log for the database error code, then check the order book store host.\"}\ndebrief:\n  what_happened: >\n    The order book store's archive log destination (/u01/arch) filled up. Oracle cannot switch redo\n    logs until the archiver can write, so every commit hung (ORA-00257). Matching looked healthy but\n    could not save trades, and the connection pool filled with sessions waiting on\n    \"log file switch (archiving needed)\".\n  key_signal: >\n    ORA-00257 in the matching log, sessions waiting on \"log file switch (archiving needed)\", and\n    /u01/arch at 100% on the database host. The pool alert is a symptom, not the cause: there is\n    no blocking session to kill.\n  why_not_restart: >\n    Restarting matching drops every member's order flow and comes back to the same stuck database.\n    Failing over to DR takes the order book store away for five minutes during trading when\n    archiving space is all it needs.\n  runbook:\n    - Read the application error, not just the alert. ORA-00257 means the archiver is stuck.\n    - Check v$session wait events and df -h on the database host.\n    - Clear or move old archive logs (after confirming they are backed up), with approval.\n    - Watch matching throughput and the clearing projection recover.\n    - Problem record - archive destination monitoring and the RMAN backup-and-delete schedule.\n", "id: exch-everyone-disconnected\ntitle: Every member is disconnected\nsystems: [exchange]\nlevel: Medium\nsummary: All brokers and market makers lose their sessions at once. The members are not the problem.\nbrief: >\n  14:30. The infrastructure team patched some hosts overnight. The clearing cut-off is 15:30.\nfaults:\n  - {at: \"14:36\", component: fix_gateway, fault: clock_skew}\nroot_cause: {component: fix_gateway, fault: clock_skew}\naccepted_fixes: [fix_gateway.resync_ntp]\nrisky_actions: [fix_gateway.restart, broker_a.reset_sequence, fix_gateway.restart_host]\nhints:\n  - {after_min: 2, text: \"When every member fails at the same moment, look at what they all have in common.\"}\n  - {after_min: 5, text: \"Read the gateway's logon reject reason. Is it sequence numbers this time?\"}\ndebrief:\n  what_happened: >\n    NTP stopped on the gateway host after the overnight patching and its clock drifted 94 seconds\n    ahead. FIX checks SendingTime on every logon, so the gateway rejected every member with\n    \"SendingTime accuracy problem\".\n  key_signal: >\n    All five sessions down at once, and the reject reason is SendingTime, not MsgSeqNum.\n    chronyc tracking on the gateway host shows it is not synchronised.\n  why_not_restart: >\n    Restarting the gateway or resetting sequence numbers does not move the clock. Rebooting the\n    host fixes it eventually but takes the whole exchange's order entry away for four minutes.\n  runbook:\n    - Many members failing together points at the shared component, not the members.\n    - Read the logon reject reason in the gateway log or the sessions table.\n    - Check the host clock (date, chronyc tracking) against a reference.\n    - Resync NTP with approval and watch members log back on and drain their queues.\n    - Problem record - NTP monitoring after patching.\n", "id: exch-clearing-handshake\ntitle: Clearing stops accepting trades again\nsystems: [exchange]\nlevel: Medium\nsummary: Looks exactly like the clearing corporation being down. It is not.\nbrief: >\n  14:30. Midnight was the start of a new certificate cycle for several internal services.\n  The clearing cut-off is 15:30.\nfaults:\n  - {at: \"14:38\", component: clearing, fault: cert_expired}\nroot_cause: {component: clearing, fault: cert_expired}\naccepted_fixes: [clearing.renew_certificate]\nrisky_actions: [clearing.restart_adapter, clearing_feed.restart, clearing.failover_to_dr]\nhints:\n  - {after_min: 2, text: \"Is the clearing corporation really down? What exactly does our adapter log?\"}\n  - {after_min: 5, text: \"Check the TLS side of our adapter: openssl on the clearing adapter host.\"}\ndebrief:\n  what_happened: >\n    Our adapter's TLS client certificate for the clearing link expired at 23:59 yesterday. The\n    clearing corporation was fine; it refused our handshakes.\n  key_signal: >\n    SSLHandshakeException with \"certificate expired\" in the adapter log, and an openssl notAfter\n    date in the past. Escalating to clearing gets \"no issues on our side\".\n  why_not_restart: >\n    Restarting the adapter or failing over reloads the same expired certificate. Escalating to the\n    clearing corporation spends time while trades pile up.\n  runbook:\n    - Read the adapter error before escalating. A handshake failure is usually our side.\n    - Check the certificate expiry on the adapter host.\n    - Install the renewed certificate with approval and confirm the handshake.\n    - Problem record - certificate expiry monitoring 30 days ahead.\n", "id: exch-risk-timeouts\ntitle: Orders slow down in pre-trade risk\nsystems: [exchange]\nlevel: Medium\nsummary: Risk checks are timing out. No deployment happened today.\nbrief: >\n  14:30. The change calendar shows no deployments today. The clearing cut-off is 15:30.\nfaults:\n  - {at: \"14:36\", component: risk, fault: config_change, params: {api: limits-api, timeout_ms: 50}}\nroot_cause: {component: risk, fault: config_change}\naccepted_fixes: [risk.revert_config]\nrisky_actions: [risk.restart, fix_gateway.restart, risk.rollback_deployment]\nhints:\n  - {after_min: 2, text: \"Risk has all its instances but processes far less. What do its errors say?\"}\n  - {after_min: 5, text: \"A 50 ms timeout is unusual. Where did that number come from? Check the configuration.\"}\ndebrief:\n  what_happened: >\n    An automated configuration refresh set the HTTP read timeout for the limits API to 50 ms instead\n    of 2000 ms. Most limit checks timed out, were retried three times and failed, so risk processed\n    a fraction of its normal volume.\n  key_signal: >\n    SocketTimeoutException after 50ms calling limits-api in the risk log, and the config-server\n    refresh line just before the errors started. \"No deployment\" does not mean \"no change\".\n  why_not_restart: >\n    A restart reads the same configuration. Rolling back the deployment does nothing because the\n    change was configuration, not code.\n  runbook:\n    - Find the first error and what changed just before it, including configuration.\n    - Compare the running configuration with the known-good value.\n    - Revert the configuration change with approval and watch the timeouts stop.\n    - Problem record - config-server changes go through change control.\n", "id: allocations-falling-behind\ntitle: Allocations falling behind\nsystems: [trade-allocation-kafka, trade-allocation-direct]\nlevel: Easy\nsummary: Allocations slow down mid-afternoon. Find out why before the affirmation cut-off.\nbrief: >\n  13:30 on a busy trading day. You are the on-call support engineer for middle-office\n  allocations. The affirmation cut-off is 15:00. The ops desk has asked you to keep an eye\n  on today's flow.\nfaults:\n  - {at: \"13:36\", component: tam, fault: instances_lost, params: {remaining: 2}}\nroot_cause: {component: tam, fault: instances_lost}\naccepted_fixes: [tam.scale_out]\nrisky_actions: [tam.restart]\nhints:\n  - {after_min: 3, text: \"Which component's output dropped first? Compare what goes in with what comes out.\"}\n  - {after_min: 7, text: \"Open the Allocation Engine and look at its healthy instance count and logs.\"}\ndebrief:\n  what_happened: >\n    Two of the four Allocation Engine pods were evicted by node memory pressure. Throughput\n    halved to about 210 trades/min while 300/min kept arriving, so the backlog grew steadily.\n  key_signal: Throughput dropped while the input rate stayed flat; the logs show pods Pending.\n  why_not_restart: >\n    A rolling restart halves capacity even further for three minutes and does not bring\n    evicted pods back. The problem is node capacity, not the process.\n  runbook:\n    - Check the healthy instance count and pod status.\n    - Reschedule the instances on healthy nodes (scale out) with approval.\n    - Watch the backlog drain and confirm the cut-off projection.\n    - Raise a problem record for node memory pressure.\n", "id: stuck-partition\ntitle: One partition stuck\nsystems: [trade-allocation-kafka]\nlevel: Medium\nsummary: Overall flow looks almost normal, but part of the book is not being allocated.\nbrief: >\n  13:30. Everything looked fine at the start of the afternoon. Watch the allocation flow\n  through to the 15:00 affirmation cut-off.\nfaults:\n  - {at: \"13:35\", component: trades_topic, fault: poison_message, params: {partition: 3}}\nroot_cause: {component: trades_topic, fault: poison_message}\naccepted_fixes: [trades_topic.skip_poison_message]\nrisky_actions: [tam.restart]\nhints:\n  - {after_min: 4, text: \"Total throughput is only slightly lower. Is the lag spread evenly across partitions?\"}\n  - {after_min: 9, text: \"Search the Allocation Engine logs for errors that repeat the same offset.\"}\ndebrief:\n  what_happened: >\n    A message with a new field (allocRatioV2) could not be deserialised. The consumer retried\n    it forever, so partition 3 stopped while the other five partitions kept flowing. Throughput\n    fell by only one-sixth, which is easy to miss.\n  key_signal: Lag growing on one partition only, and the same offset repeating in the error log.\n  why_not_restart: >\n    Restarting the consumer re-reads the same message and gets stuck again. The message must be\n    parked to a dead-letter topic and repaired separately.\n  runbook:\n    - Compare lag per partition, not just total lag.\n    - Find the offset in the consumer error log.\n    - Park the message to the DLQ with approval, then repair and replay it.\n    - Raise a problem record for schema compatibility between OMS and the allocator.\n", "id: missing-ssis\ntitle: Missing settlement instructions\nsystems: [trade-allocation-kafka, trade-allocation-direct]\nlevel: Medium\nsummary: Some allocations are being rejected. The allocation engine itself looks healthy.\nbrief: >\n  13:30. Allocations are flowing. The 15:00 affirmation cut-off applies. A handful of clients\n  have onboarded new accounts this week.\nfaults:\n  - {at: \"13:32\", component: ssi, fault: feed_failed, params: {last_refresh_minutes_ago: 19}}\nroot_cause: {component: ssi, fault: feed_failed}\naccepted_fixes: [ssi.force_refresh, tam.reprocess_rejected]\nrisky_actions: [tam.restart]\nhints:\n  - {after_min: 3, text: \"Rejects are not a capacity problem. What data does the allocator need for each account?\"}\n  - {after_min: 8, text: \"Check when the SSI reference data last loaded successfully.\"}\n  - {after_min: 12, text: \"After fixing the data, the trades already rejected are still waiting in the exception queue.\"}\ndebrief:\n  what_happened: >\n    The SSI feed job failed (vendor SFTP refused connections). Once the data was older than\n    20 minutes, allocations for recently changed accounts were rejected and parked in the\n    exception queue.\n  key_signal: Reject rate above 2% with normal throughput, plus SSI staleness growing and feed errors.\n  why_not_restart: Restarting the allocator changes nothing; it still reads the same stale SSI data.\n  runbook:\n    - Check the reject reason in the allocator log.\n    - Check reference data freshness and the feed job log.\n    - Re-run the feed from the secondary source with approval.\n    - Reprocess the exception queue, then confirm it is empty.\n", "id: confirmation-platform-down\ntitle: Confirmations not matching\nsystems: [trade-allocation-kafka, trade-allocation-direct]\nlevel: Medium\nsummary: Allocations are fine, yet nothing is getting affirmed. Decide what is in your control.\nbrief: >\n  13:30. Normal afternoon flow. The 15:00 affirmation cut-off applies and client service has\n  three large institutional clients waiting for confirmations.\nfaults:\n  - {at: \"13:40\", component: ctm, fault: unavailable}\nnoise:\n  - {at: \"13:43\", name: \"Disk usage 82% on report-01\", severity: P4}\nroot_cause: {component: ctm, fault: unavailable}\naccepted_fixes: [ctm.escalate_to_vendor]\nrisky_actions: [tam.restart, ctm.restart_adapter]\nhints:\n  - {after_min: 3, text: \"Follow the flow left to right. Where does the backlog start?\"}\n  - {after_min: 7, text: \"Is the failure inside our systems, or at the third party?\"}\ndebrief:\n  what_happened: >\n    The confirmation platform returned HTTP 503 for every call. Our allocations kept flowing,\n    so everything looked healthy until confirmations piled up.\n  key_signal: Unmatched confirmations growing with 100% failed calls, while internal components stay green.\n  why_not_restart: >\n    The fault was on the vendor's side. Restarting our adapter or the allocator only adds a\n    second outage. The right move is a fast, clear vendor escalation and client updates.\n  runbook:\n    - Confirm the error is coming from the vendor (HTTP 5xx), not our adapter.\n    - Raise a P1 with the vendor and record the reference.\n    - Inform client service about the confirmation delay.\n    - Monitor recovery and the cut-off projection.\n", "id: database-pool-exhausted\ntitle: Allocation engine choking\nsystems: [trade-allocation-kafka, trade-allocation-direct]\nlevel: Hard\nsummary: Several alerts fire at once. Separate the cause from the symptoms.\nbrief: >\n  13:30. Month-end week. Finance has been running reconciliation reports today. The 15:00\n  affirmation cut-off applies.\nfaults:\n  - {at: \"13:37\", component: tam_db, fault: pool_exhausted}\nnoise:\n  - {at: \"13:39\", name: \"CPU 78% on tam-allocator-2\", severity: P4}\nroot_cause: {component: tam_db, fault: pool_exhausted}\naccepted_fixes: [tam_db.kill_blocking_session]\nrisky_actions: [tam.restart, tam.scale_out]\nhints:\n  - {after_min: 3, text: \"Throughput, lag and the cut-off are all symptoms. Which alert is closest to the cause?\"}\n  - {after_min: 7, text: \"Look at the Allocation DB logs: who is holding the connections?\"}\ndebrief:\n  what_happened: >\n    A month-end reconciliation report ran a full table scan and held 46 of 50 database\n    connections. The allocator waited for connections and processed only a fifth of its\n    normal volume.\n  key_signal: DB pool at 100% and connection timeouts in the allocator logs.\n  why_not_restart: >\n    Restarting or scaling out the allocator adds more clients competing for the same\n    exhausted pool. Free the connections first.\n  runbook:\n    - Check pool usage and connection wait time.\n    - Identify the blocking session and its owner.\n    - Kill it with approval and inform the report owner.\n    - Raise a problem: move heavy reports to a replica.\n", "id: mystery\ntitle: Mystery incident\nsystems: [trade-allocation-kafka, trade-allocation-direct]\nlevel: Hard\nsummary: One of nine real faults, chosen at random. No hints, no clues in the title.\nmystery: true\nbrief: >\n  13:30. Something will go wrong this afternoon. You do not know what or where.\n  The 15:00 affirmation cut-off applies.\nnoise:\n  - {at: \"13:41\", name: \"Disk usage 82% on report-01\", severity: P4}\npool:\n  - faults: [{at: \"13:38\", component: tam, fault: instances_lost, params: {remaining: 2}}]\n    root_cause: {component: tam, fault: instances_lost}\n    accepted_fixes: [tam.scale_out]\n    risky_actions: [tam.restart]\n    debrief: {what_happened: \"Two allocator pods were evicted; throughput halved.\", key_signal: \"Healthy instances 2/4.\"}\n  - faults: [{at: \"13:38\", component: trades_topic, fault: poison_message, params: {partition: 1}}]\n    root_cause: {component: trades_topic, fault: poison_message}\n    accepted_fixes: [trades_topic.skip_poison_message]\n    risky_actions: [tam.restart]\n    debrief: {what_happened: \"A poison message blocked one partition.\", key_signal: \"Lag on a single partition and a repeating offset in the logs.\"}\n  - faults: [{at: \"13:38\", component: ssi, fault: feed_failed, params: {last_refresh_minutes_ago: 19}}]\n    root_cause: {component: ssi, fault: feed_failed}\n    accepted_fixes: [ssi.force_refresh, tam.reprocess_rejected]\n    risky_actions: [tam.restart]\n    debrief: {what_happened: \"The SSI feed failed; allocations for changed accounts were rejected.\", key_signal: \"Reject rate up, SSI staleness growing.\"}\n  - faults: [{at: \"13:38\", component: tam_db, fault: pool_exhausted}]\n    root_cause: {component: tam_db, fault: pool_exhausted}\n    accepted_fixes: [tam_db.kill_blocking_session]\n    risky_actions: [tam.restart, tam.scale_out]\n    debrief: {what_happened: \"A report query held the DB connection pool.\", key_signal: \"Pool at 100%, connection timeouts.\"}\n  - faults: [{at: \"13:38\", component: ctm, fault: unavailable}]\n    root_cause: {component: ctm, fault: unavailable}\n    accepted_fixes: [ctm.escalate_to_vendor]\n    risky_actions: [tam.restart, ctm.restart_adapter]\n    debrief: {what_happened: \"The confirmation platform was down on the vendor side.\", key_signal: \"100% failed calls to CTM; internal systems green.\"}\n  - faults: [{at: \"13:38\", component: tam, fault: memory_oom}]\n    root_cause: {component: tam, fault: memory_oom}\n    accepted_fixes: [tam.increase_memory_limit]\n    risky_actions: [tam.restart]\n    debrief: {what_happened: \"The allocation engine ran out of memory and crash-looped.\", key_signal: \"CrashLoopBackOff; OOMKilled exit 137.\"}\n  - faults: [{at: \"13:38\", component: tam, fault: cpu_runaway}]\n    root_cause: {component: tam, fault: cpu_runaway}\n    accepted_fixes: [tam.kill_runaway_process]\n    risky_actions: [tam.restart]\n    debrief: {what_happened: \"A rescheduled backup job took the allocation host's CPU.\", key_signal: \"backup_agent at 98% CPU in top; load average 15.\"}\n  - faults: [{at: \"13:38\", component: tam, fault: disk_full}]\n    root_cause: {component: tam, fault: disk_full}\n    accepted_fixes: [tam.clear_disk_space]\n    risky_actions: [tam.restart]\n    debrief: {what_happened: \"The allocation host's log volume filled up and the application failed on every write.\", key_signal: \"No space left on device; /var/log at 100%.\"}\n  - faults: [{at: \"13:38\", component: ctm, fault: api_rate_limited}]\n    root_cause: {component: ctm, fault: api_rate_limited}\n    accepted_fixes: [ctm.enable_retry_backoff]\n    risky_actions: [ctm.restart_adapter]\n    debrief: {what_happened: \"The confirmation API throttled our immediate retries.\", key_signal: \"429 Too Many Requests; retry-policy immediate.\"}\n", "id: tam-allocation-crashloop\ntitle: Allocation engine keeps restarting\nsystems: [trade-allocation-kafka, trade-allocation-direct]\nlevel: Medium\nsummary: Allocations come in bursts and then stop. The engine is restarting by itself.\nbrief: >\n  13:30. Large block trades from a pension fund are being allocated across 300 accounts this\n  afternoon. The affirmation cut-off is 15:00.\nfaults:\n  - {at: \"13:36\", component: tam, fault: memory_oom}\nroot_cause: {component: tam, fault: memory_oom}\naccepted_fixes: [tam.increase_memory_limit]\nrisky_actions: [tam.restart, tam.scale_out, tam.purge_queue]\nhints:\n  - {after_min: 2, text: \"Throughput rises and falls in a regular pattern. What happens to the pods?\"}\n  - {after_min: 5, text: \"kubectl get pods and kubectl describe pod show why a container last stopped.\"}\ndebrief:\n  what_happened: >\n    Very large block allocations pushed the allocation engine past its 6 GiB memory limit. The\n    kernel killed it (OOMKilled, exit 137), Kubernetes restarted it, and it died again: a crash loop.\n  key_signal: >\n    CrashLoopBackOff with rising restarts, OOMKilled with exit code 137 in kubectl describe, and\n    \"OutOfMemoryError: Java heap space\" in the log.\n  why_not_restart: >\n    A restart or extra pods with the same limit run out of memory the same way. Purging the queue\n    throws away trades that then need manual reconciliation.\n  runbook:\n    - A regular up-and-down pattern means something keeps restarting. Check pod status and restarts.\n    - Read the last termination reason (OOMKilled, exit 137).\n    - Raise the memory limit with approval and confirm the pods stay up.\n    - Problem record - sizing for large block allocations.\n", "id: tam-confirmation-throttled\ntitle: Confirmations crawl through\nsystems: [trade-allocation-kafka, trade-allocation-direct]\nlevel: Medium\nsummary: The confirmation platform is up, but only part of the flow gets through.\nbrief: >\n  13:30. A new connection pool for the confirmation adapter was rolled out last week. The\n  affirmation cut-off is 15:00.\nfaults:\n  - {at: \"13:37\", component: ctm, fault: api_rate_limited}\nroot_cause: {component: ctm, fault: api_rate_limited}\naccepted_fixes: [ctm.enable_retry_backoff]\nrisky_actions: [ctm.restart_adapter, tam.scale_out, ctm.purge_queue]\nhints:\n  - {after_min: 2, text: \"Some confirmations still go through. What HTTP status do the others get?\"}\n  - {after_min: 5, text: \"What does our adapter do when it is told to slow down? Check its retry policy.\"}\ndebrief:\n  what_happened: >\n    The confirmation platform's API started returning 429 Too Many Requests. Our adapter retried\n    throttled calls immediately, so most of its quota went on retries and the backlog grew.\n  key_signal: >\n    429 with Retry-After in the adapter log, about 64% failed calls, and retry-policy: immediate in\n    the adapter configuration.\n  why_not_restart: >\n    Restarting the adapter replays the queue at full speed and gets throttled harder. More\n    allocation pods push more traffic into the same limit.\n  runbook:\n    - Distinguish \"they are down\" (5xx) from \"we are too fast\" (429).\n    - Check the retry policy; immediate retries make throttling worse.\n    - Switch to exponential back-off with approval and watch the backlog drain.\n    - Problem record - respect Retry-After and agree quotas with the provider.\n", "id: tam-confirmation-unauthorised\ntitle: Confirmation platform rejects everything\nsystems: [trade-allocation-kafka, trade-allocation-direct]\nlevel: Easy\nsummary: Every call to the confirmation platform fails. Is it them or us?\nbrief: >\n  13:30. The vendor sent a notice last month about credential rotation. The affirmation cut-off is 15:00.\nfaults:\n  - {at: \"13:36\", component: ctm, fault: api_auth_expired}\nroot_cause: {component: ctm, fault: api_auth_expired}\naccepted_fixes: [ctm.rotate_api_credentials]\nrisky_actions: [ctm.restart_adapter, ctm.failover_to_dr]\nhints:\n  - {after_min: 2, text: \"Read the exact HTTP status in the adapter log. 401 and 503 mean very different things.\"}\ndebrief:\n  what_happened: >\n    Our API client secret for the confirmation platform expired at midnight. Every call came back\n    401 Unauthorized with \"invalid_client\".\n  key_signal: 401 Unauthorized and \"client secret expired\" in the adapter log, not 503.\n  why_not_restart: The adapter reloads the same expired secret after a restart, and DR uses it too.\n  runbook:\n    - Read the status code before escalating; 401 is almost always our credentials.\n    - Rotate the client secret from the vault with approval.\n    - Watch confirmations drain before the affirmation cut-off.\n    - Problem record - alert on credential expiry dates.\n"]};
 </script>
 <script>
 /*
@@ -340,18 +344,18 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
  *
  * Pure logic, no screen code. The same file runs in the browser and in Node tests.
  *
- * Three layers:
- *   1. Component TYPES (this file): how a kind of thing behaves, what it measures,
- *      how it can fail and how it can be fixed.
- *   2. A BLUEPRINT (YAML): which components a system has and how they connect.
- *      Connections form a flow graph: many members can feed one gateway (fan-in),
- *      and one matching engine can feed clearing, market data and drop copy (fan-out).
- *   3. A DRILL / use case (YAML, see session.js): which fault hits which component,
- *      and how the responder is scored.
+ * Layers:
+ *   1. Component TYPES: how a kind of thing behaves, what it measures, how it can fail.
+ *   2. HOSTS: services, databases, adapters and loaders run on hosts, and hosts fail too
+ *      (disk full, out of memory, runaway CPU, open files, clock drift, expired certificates).
+ *      A host fault shows up as an application symptom one layer up: nested failures.
+ *   3. ACTIONS: one runbook catalogue per kind of component. It contains fixes, heavy-handed
+ *      options and harmful ones; nothing tells the responder which is which.
+ *   4. A BLUEPRINT (YAML): which components a system has and how they connect (a flow graph).
+ *   5. A DRILL / use case (YAML, see session.js): which fault hits where, and how it is scored.
  *
- * Every simulated tick, work flows through the graph in dependency order. Faults only
- * change one component's rules (capacity, rejects, availability). Backlogs, lag, alerts
- * and missed cut-offs are not scripted — they follow from the flow.
+ * Every simulated tick, work flows through the graph in dependency order. Faults only change
+ * one component's (or host's) rules. Backlogs, lag, alerts and missed cut-offs follow from the flow.
  */
 (function (root) {
   'use strict';
@@ -378,34 +382,25 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
     return pad(h) + ':' + pad(m) + (withSeconds ? ':' + pad(s) : '');
   }
   const fmtInt = n => Math.round(n).toLocaleString('en-IN');
+  const hash = s => [...String(s)].reduce((a, c) => (a * 31 + c.charCodeAt(0)) >>> 0, 7);
 
   // ---------------------------------------------------------------- 1. component types
+  const HOST_METRICS = { host_cpu_pct: 'Host CPU (%)', host_mem_pct: 'Host memory (%)', host_disk_pct: 'Host disk, busiest mount (%)' };
   const TYPES = {
     source: {
       label: 'Participant', flow: true, required: ['rate_per_min'],
       metrics: { out_rate: 'Orders/trades sent per minute', held: 'Waiting at participant (not delivered)' },
       faults: {
-        session_down: { label: 'Connection rejected (FIX sequence number mismatch)', params: {} },
-        order_flood: { label: 'Message flood (misconfigured quoting or order engine)', params: { multiplier: 4 } },
-      },
-      actions: {
-        reset_sequence: { label: 'Reset session sequence numbers with the participant', fixes: ['session_down'] },
-        apply_throttle: { label: 'Apply message throttle to this participant', fixes: ['order_flood'] },
+        session_down: { label: 'Session rejected: sequence number mismatch', params: {} },
+        order_flood: { label: 'Message flood from the participant', params: { multiplier: 4 } },
       },
     },
     kafka_topic: {
       label: 'Kafka topic', flow: true, required: ['partitions'],
-      metrics: {
-        lag: 'Total consumer lag (messages)', max_partition_lag: 'Largest single-partition lag',
-        in_rate: 'Messages produced per minute', out_rate: 'Messages consumed per minute', rebalances: 'Consumer group rebalances',
-      },
+      metrics: { lag: 'Total consumer lag (messages)', max_partition_lag: 'Largest single-partition lag', in_rate: 'Messages produced per minute', out_rate: 'Messages consumed per minute', rebalances: 'Consumer group rebalances' },
       faults: {
         poison_message: { label: 'Poison message blocking a partition', params: { partition: 3 } },
         rebalance_storm: { label: 'Consumer group rebalance storm', params: {} },
-      },
-      actions: {
-        skip_poison_message: { label: 'Park stuck message to dead-letter topic', fixes: ['poison_message'] },
-        tune_consumer_timeout: { label: 'Raise consumer session timeout and rejoin group', fixes: ['rebalance_storm'] },
       },
     },
     service: {
@@ -413,61 +408,126 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
       metrics: {
         in_rate: 'Received per minute', out_rate: 'Processed per minute', backlog: 'Waiting in queue',
         reject_rate: 'Rejected (%)', error_rate: 'Errors and timeouts (%)', instances: 'Healthy instances',
-        latency_ms: 'Processing time (ms)', rejected: 'In exception queue', sessions_down: 'Participant sessions down',
+        latency_ms: 'Processing time (ms)', rejected: 'In exception queue', sessions_down: 'Participant sessions down', ...HOST_METRICS,
       },
       faults: {
         instances_lost: { label: 'Instances lost (pods evicted)', params: { remaining: 2 } },
-      },
-      actions: {
-        scale_out: { label: 'Scale out (reschedule instances on healthy nodes)', fixes: ['instances_lost'] },
-        restart: { label: 'Rolling restart', fixes: [] },
-        reprocess_rejected: { label: 'Reprocess exception queue', fixes: [] },
+        config_change: { label: 'Bad configuration change', params: { api: 'limits-api', timeout_ms: 50 } },
       },
     },
     external_party: {
       label: 'External party', flow: true, required: ['capacity_per_min'],
-      metrics: { in_rate: 'Received per minute', out_rate: 'Completed per minute', backlog: 'Waiting / unmatched', error_rate: 'Failed calls (%)' },
+      metrics: { in_rate: 'Received per minute', out_rate: 'Completed per minute', backlog: 'Waiting / unmatched', error_rate: 'Failed calls (%)', ...HOST_METRICS },
       faults: {
-        unavailable: { label: 'External platform unavailable', params: {} },
-      },
-      actions: {
-        escalate_to_vendor: { label: 'Raise P1 with the external party', fixes: ['unavailable'], delay_min: 8 },
-        restart_adapter: { label: 'Restart our adapter', fixes: [] },
+        unavailable: { label: 'External platform down (their side)', params: {} },
+        api_rate_limited: { label: 'API rate limit exceeded (HTTP 429)', params: { quota_per_min: 600 } },
+        api_auth_expired: { label: 'API credentials expired (HTTP 401)', params: {} },
       },
     },
     ref_data: {
       label: 'Reference data', flow: false, required: ['refresh_every_min', 'stale_after_min'],
-      metrics: { staleness_min: 'Minutes since last successful load' },
-      faults: {
-        feed_failed: { label: 'Upstream feed job failing', params: { last_refresh_minutes_ago: 18 } },
-      },
-      actions: {
-        force_refresh: { label: 'Re-run the load (secondary source, all pending files)', fixes: ['feed_failed'] },
-      },
+      metrics: { staleness_min: 'Minutes since last successful load', ...HOST_METRICS },
+      faults: { feed_failed: { label: 'Upstream feed job failing', params: { last_refresh_minutes_ago: 18 } } },
     },
     database: {
       label: 'Database', flow: false, required: ['pool_size'],
-      metrics: { pool_used: 'Connections in use', pool_pct: 'Pool used (%)', wait_ms: 'Connection wait (ms)' },
-      faults: {
-        pool_exhausted: { label: 'Connection pool exhausted by a long-running query', params: {} },
-      },
-      actions: {
-        kill_blocking_session: { label: 'Kill blocking session', fixes: ['pool_exhausted'] },
-      },
+      metrics: { pool_used: 'Connections in use', pool_pct: 'Pool used (%)', wait_ms: 'Connection wait (ms)', ...HOST_METRICS },
+      faults: { pool_exhausted: { label: 'Connection pool exhausted by a long-running query', params: {} } },
     },
     issuer: {
       label: 'Issuer', flow: false, required: [],
       metrics: { pending_announcements: 'Announcements not yet applied' },
-      faults: {
-        announcement_missed: { label: 'Corporate action not applied to reference data', params: { reject_share: 0.06 } },
-      },
-      actions: {
-        reload_announcement: { label: 'Reprocess this issuer’s corporate action file', fixes: ['announcement_missed'] },
-      },
+      faults: { announcement_missed: { label: 'Corporate action not applied', params: { reject_share: 0.06 } } },
     },
   };
 
-  // ---------------------------------------------------------------- 2. blueprint parsing + validation
+  // ---------------------------------------------------------------- 2. hosts and host faults
+  // In the simulator the adapter host of an external party is OURS (our side of the connection).
+  const HOST_TYPES = ['service', 'database', 'external_party', 'ref_data'];
+  const MOUNT = { service: '/var/log', database: '/u01/arch', external_party: '/var/spool/adapter', ref_data: '/data/feeds' };
+  const HOST_FAULTS = {
+    disk_full: { label: 'Disk full on the host', types: HOST_TYPES, params: {} },
+    memory_oom: { label: 'Out of memory: process killed and crash-looping', types: ['service'], params: {} },
+    cpu_runaway: { label: 'CPU saturated by another process on the host', types: ['service', 'database'], params: {} },
+    fd_exhausted: { label: 'Too many open files (file descriptor limit)', types: ['service', 'external_party'], params: {} },
+    clock_skew: { label: 'Host clock drift (NTP stopped)', types: ['service'], params: { seconds: 94 } },
+    cert_expired: { label: 'TLS client certificate expired', types: ['external_party'], params: {} },
+  };
+  const hasHost = type => HOST_TYPES.includes(type);
+  function faultsFor(type) { // every fault a component of this type can have, application and host
+    const out = { ...(TYPES[type] ? TYPES[type].faults : {}) };
+    Object.entries(HOST_FAULTS).forEach(([k, f]) => { if (f.types.includes(type)) out[k] = { ...f, host: true }; });
+    return out;
+  }
+
+  // ---------------------------------------------------------------- 3. runbook action catalogue
+  // Shown for every component of a type. Fixes, heavy-handed options and harmful ones sit side by side.
+  const SVC = ['service'], EXT = ['external_party'], DB = ['database'], REF = ['ref_data'], SRC = ['source'], KAF = ['kafka_topic'], ISS = ['issuer'];
+  const ACTIONS = {
+    restart: { label: 'Rolling restart of the application', types: SVC },
+    scale_out: { label: 'Scale out / reschedule instances', types: SVC, fixes: ['instances_lost'] },
+    rollback_deployment: { label: 'Roll back the last deployment', types: SVC },
+    revert_config: { label: 'Revert the last configuration change', types: SVC, fixes: ['config_change'] },
+    reprocess_rejected: { label: 'Reprocess the exception queue', types: SVC },
+    increase_memory_limit: { label: 'Increase memory limit and redeploy', types: SVC, fixes: ['memory_oom'] },
+    raise_fd_limit: { label: 'Raise open-files limit and restart', types: [...SVC, ...EXT], fixes: ['fd_exhausted'] },
+    purge_queue: { label: 'Purge the queue (drop waiting messages)', types: [...SVC, ...KAF, ...EXT] },
+    clear_disk_space: { label: 'Archive and clear old files on the host', types: HOST_TYPES, fixes: ['disk_full'] },
+    kill_runaway_process: { label: 'Kill the runaway process on the host', types: ['service', 'database'], fixes: ['cpu_runaway'] },
+    resync_ntp: { label: 'Restart NTP and resync the host clock', types: HOST_TYPES, fixes: ['clock_skew'] },
+    restart_host: { label: 'Reboot the host', types: HOST_TYPES, fixes: ['clock_skew', 'cpu_runaway'] },
+    failover_to_dr: { label: 'Fail over to the DR site', types: ['service', 'database', 'external_party'], fixes: ['disk_full', 'memory_oom', 'cpu_runaway', 'fd_exhausted', 'clock_skew'] },
+    renew_certificate: { label: 'Install the renewed TLS certificate', types: EXT, fixes: ['cert_expired'] },
+    escalate_to_vendor: { label: 'Raise a P1 with the external party', types: EXT, fixes: ['unavailable'], delay_min: 8 },
+    restart_adapter: { label: 'Restart our adapter', types: EXT },
+    enable_retry_backoff: { label: 'Switch API retries to exponential back-off', types: EXT, fixes: ['api_rate_limited'] },
+    rotate_api_credentials: { label: 'Rotate the API client secret from the vault', types: EXT, fixes: ['api_auth_expired'] },
+    skip_poison_message: { label: 'Park the stuck message to a dead-letter topic', types: KAF, fixes: ['poison_message'] },
+    tune_consumer_timeout: { label: 'Raise consumer session timeout and rejoin', types: KAF, fixes: ['rebalance_storm'] },
+    kill_blocking_session: { label: 'Kill the blocking database session', types: DB, fixes: ['pool_exhausted'] },
+    increase_pool_size: { label: 'Increase the connection pool size', types: DB },
+    force_refresh: { label: 'Re-run the reference data load', types: REF, fixes: ['feed_failed'] },
+    reset_sequence: { label: 'Reset session sequence numbers with the participant', types: SRC, fixes: ['session_down'] },
+    apply_throttle: { label: 'Apply message throttle to the participant', types: SRC, fixes: ['order_flood'] },
+    disconnect_participant: { label: 'Disconnect the participant', types: SRC },
+    reload_announcement: { label: 'Reprocess the issuer’s corporate action file', types: ISS, fixes: ['announcement_missed'] },
+  };
+  function actionsFor(type) { return Object.fromEntries(Object.entries(ACTIONS).filter(([, a]) => a.types.includes(type))); }
+
+  // ---------------------------------------------------------------- 4. root causes a responder can declare
+  // Same list for every component. Real faults sit among plausible causes that never happen here.
+  const CAUSES = [
+    { group: 'Application', key: 'instances_lost', label: 'Instances lost (pods evicted)' },
+    { group: 'Application', key: 'bad_deployment', label: 'Faulty code deployment' },
+    { group: 'Application', key: 'config_change', label: 'Bad configuration change' },
+    { group: 'Application', key: 'gc_pauses', label: 'Long garbage-collection pauses' },
+    { group: 'Application', key: 'thread_deadlock', label: 'Thread deadlock in the application' },
+    { group: 'Messaging', key: 'poison_message', label: 'Poison message blocking a partition' },
+    { group: 'Messaging', key: 'rebalance_storm', label: 'Consumer group rebalance storm' },
+    { group: 'Data', key: 'pool_exhausted', label: 'Connection pool exhausted by a long-running query' },
+    { group: 'Data', key: 'db_deadlock', label: 'Database deadlocks' },
+    { group: 'Data', key: 'feed_failed', label: 'Reference data feed failing (stale data)' },
+    { group: 'Data', key: 'announcement_missed', label: 'Corporate action not applied' },
+    { group: 'Infrastructure', key: 'disk_full', label: 'Disk full on the host' },
+    { group: 'Infrastructure', key: 'memory_oom', label: 'Out of memory: process killed and crash-looping' },
+    { group: 'Infrastructure', key: 'cpu_runaway', label: 'CPU saturated by another process on the host' },
+    { group: 'Infrastructure', key: 'fd_exhausted', label: 'Too many open files (file descriptor limit)' },
+    { group: 'Infrastructure', key: 'clock_skew', label: 'Host clock drift (NTP stopped)' },
+    { group: 'Infrastructure', key: 'cert_expired', label: 'TLS client certificate expired' },
+    { group: 'Infrastructure', key: 'network_loss', label: 'Network packet loss' },
+    { group: 'Infrastructure', key: 'dns_failure', label: 'DNS resolution failure' },
+    { group: 'APIs', key: 'api_rate_limited', label: 'API rate limit exceeded (HTTP 429)' },
+    { group: 'APIs', key: 'api_auth_expired', label: 'API credentials expired (HTTP 401)' },
+    { group: 'APIs', key: 'api_schema_change', label: 'API contract changed by the provider' },
+    { group: 'APIs', key: 'api_dependency_down', label: 'Internal API dependency down' },
+    { group: 'Participants and vendors', key: 'session_down', label: 'Session rejected: sequence number mismatch' },
+    { group: 'Participants and vendors', key: 'order_flood', label: 'Message flood from the participant' },
+    { group: 'Participants and vendors', key: 'unavailable', label: 'External platform down (their side)' },
+    { group: 'Participants and vendors', key: 'market_volume', label: 'Unusually high market volume' },
+  ];
+  const causeLabel = k => (CAUSES.find(c => c.key === k) || {}).label || k;
+
+  // ---------------------------------------------------------------- 5. blueprint parsing + validation
   function parseBlueprint(text, yaml) {
     let bp;
     try { bp = yaml.load(text); } catch (e) { return { errors: ['YAML syntax: ' + (e.reason || e.message) + (e.mark ? ` (line ${e.mark.line + 1})` : '')] }; }
@@ -509,7 +569,6 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
       if (!d || d.type !== 'ref_data') errors.push(`${c.id}: issuers need "feeds" naming a reference data component.`);
     });
 
-    // flow graph: each line "a -> b -> c" adds edges; components may appear in several lines
     const edges = [], edgeSet = new Set(), inFlow = new Set();
     (Array.isArray(bp.flow) ? bp.flow : []).forEach((line, i) => {
       const parts = String(line).split('->').map(s => s.trim()).filter(Boolean);
@@ -544,7 +603,6 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
       if (c.type === 'service' && ups[c.id].some(u => ids.get(u).type === 'kafka_topic') && ups[c.id].length > 1)
         errors.push(`${c.id}: a service that consumes a Kafka topic can have only that topic as its input.`);
     });
-    // dependency order (and cycle check)
     const order = [], state = {};
     let cycle = false;
     const visit = id => {
@@ -554,7 +612,6 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
     [...inFlow].forEach(visit);
     if (cycle) errors.push('The flow contains a loop. Flows must run one way, from participants to the end of the chain.');
 
-    // clock + business
     const clock = bp.clock || {};
     const start = parseClock(clock.start || '13:30'), cutoff = parseClock(clock.cutoff || '15:00');
     if (start === null) errors.push('clock.start must look like "13:30".');
@@ -568,7 +625,6 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
     });
     if (kpis.filter(k => k && k.cutoff).length > 1) errors.push('Only one business KPI can be marked "cutoff: true".');
 
-    // alert rules
     const alerts = Array.isArray(bp.alerts) ? bp.alerts : [];
     alerts.forEach((a, i) => {
       const where = `alerts[${i}]` + (a && a.name ? ` (${a.name})` : '');
@@ -581,7 +637,6 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
       if (a.severity && !/^P[1-4]$/.test(a.severity)) errors.push(`${where}: severity must be P1–P4.`);
     });
 
-    // reference diagram (optional): groups, numbered steps, fixed positions
     const dg = bp.diagram || {};
     const linked = (a, b) => edgeSet.has(a + '>' + b) || (ids.get(a) && (ids.get(a).uses || []).includes(b)) || (ids.get(a) && ids.get(a).feeds === b);
     (Array.isArray(dg.groups) ? dg.groups : []).forEach((g, i) => {
@@ -617,7 +672,7 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
     return { errors: [], blueprint: model };
   }
 
-  // ---------------------------------------------------------------- 3. the simulator
+  // ---------------------------------------------------------------- 6. the simulator
   function Simulator(bp, opts) {
     opts = opts || {};
     this.bp = bp;
@@ -629,24 +684,24 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
     bp.components.forEach(def => { this.c[def.id] = this._initState(def); });
     bp.components.forEach(def => { this.c[def.id].ups = bp.ups[def.id] || []; this.c[def.id].downs = bp.downs[def.id] || []; });
     this.ruleState = {};
-    this.biz = { produced: 0, prevCut: 0, netRate: 0 };
+    this.biz = { produced: 0, prevCut: 0, netRate: 0, lost: 0 };
     this.warmup(bp.start - this.t);
   }
 
   Simulator.prototype._initState = function (def) {
     const s = { def, type: def.type, fault: null, logs: [], hist: {}, rates: {}, tot: { in: 0, out: 0, rej: 0, err: 0 }, win: { in: 0, out: 0, rej: 0, err: 0, n: 0 } };
-    if (def.type === 'source') { s.held = 0; s.seqOut = 10000 + Math.floor(Math.random() * 500); }
+    if (def.type === 'source') { s.held = 0; s.seqOut = 10000 + Math.floor(this.rand() * 500); }
     if (def.type === 'kafka_topic') { s.parts = new Array(def.partitions).fill(0); s.blocked = -1; s.rebalances = 0; s.offsets = new Array(def.partitions).fill(0).map((_, i) => 884000 + i * 3121); s.dlq = 0; }
-    if (def.type === 'service') { s.inbox = 0; s.retry = 0; s.rejected = 0; s.configured = def.instances || 4; s.instances = s.configured; s.restartUntil = -1; s.rejectLog = []; }
+    if (def.type === 'service') { s.inbox = 0; s.retry = 0; s.rejected = 0; s.configured = def.instances || 4; s.instances = s.configured; s.restartUntil = -1; s.rejectLog = []; s.oomRestarts = 0; }
     if (def.type === 'external_party') { s.inbox = 0; s.recoverAt = -1; s.adapterDownUntil = -1; }
     if (def.type === 'ref_data') { s.lastRefresh = this.t; s.records = 48210; }
     if (def.type === 'database') { s.used = Math.round(def.pool_size * 0.28); }
+    if (hasHost(def.type)) { const h = hash(def.id); s.host = { fault: null, outageUntil: -1, disk: 34 + h % 27, cpu: 18 + h % 17, mem: 52 + h % 14 }; }
     return s;
   };
 
   Simulator.prototype.now = function () { return this.t; };
   Simulator.prototype.time = function (sec) { return clockStr(this.t, sec); };
-
   Simulator.prototype.log = function (id, level, msg) {
     const s = this.c[id];
     s.logs.push({ t: this.t, level, msg, id, line: `${clockStr(this.t, true)} ${level.padEnd(5)} [${id}] ${msg}` });
@@ -655,11 +710,54 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
   Simulator.prototype.chance = function (p) { return this.rand() < p; };
   Simulator.prototype.sessionId = function (s) { return s.def.session || s.def.id.toUpperCase().slice(0, 6); };
 
-  // capacity of a service after faults and dependencies are applied
+  // host helpers
+  Simulator.prototype.hostFault = function (s) { return s && s.host && s.host.fault ? s.host.fault.type : null; };
+  Simulator.prototype.inOutage = function (s) { return !!(s && s.host && this.t < s.host.outageUntil); };
+  Simulator.prototype.oomUp = function (s) { // crash loop: about 45 s up, 135 s down while Kubernetes backs off
+    const ph = (this.t - s.host.fault.since) % 180; return ph < 45;
+  };
+  Simulator.prototype.hostFactor = function (s) {
+    if (!s.host) return 1;
+    if (this.inOutage(s)) return 0;
+    switch (this.hostFault(s)) {
+      case 'disk_full': return 0;
+      case 'memory_oom': return this.oomUp(s) ? 1 : 0;
+      case 'cpu_runaway': return 0.45;
+      case 'fd_exhausted': return 0.4;
+      default: return 1;
+    }
+  };
+  Simulator.prototype.dbFactor = function (d) { // how a database's state slows the services that use it
+    if (this.inOutage(d)) return 0;
+    const hf = this.hostFault(d);
+    if (hf === 'disk_full') return 0; // archiver stuck: no commits
+    let f = 1;
+    if (hf === 'cpu_runaway') f *= 0.5;
+    if (d.fault && d.fault.type === 'pool_exhausted') f *= 0.2;
+    return f;
+  };
+  Simulator.prototype.extDown = function (s) { // external connection unusable, and why
+    if (s.fault && s.fault.type === 'unavailable') return 'vendor';
+    if (s.fault && s.fault.type === 'api_auth_expired') return 'auth';
+    if (this.t < s.adapterDownUntil || this.inOutage(s)) return 'restart';
+    const hf = this.hostFault(s);
+    if (hf === 'cert_expired') return 'cert';
+    if (hf === 'disk_full') return 'disk';
+    return null;
+  };
+  // why a participant's session is down: its own sequence mismatch, or the gateway host's clock
+  Simulator.prototype.sourceDown = function (s) {
+    if (s.fault && s.fault.type === 'session_down') return 'seq';
+    if (s.downs.some(d => this.hostFault(this.c[d]) === 'clock_skew')) return 'clock';
+    return null;
+  };
+
   Simulator.prototype.serviceFactor = function (s) {
     let f = s.instances / s.configured;
     if (this.t < s.restartUntil) f *= 0.5;
-    (s.def.uses || []).forEach(u => { const d = this.c[u]; if (d.type === 'database' && d.fault && d.fault.type === 'pool_exhausted') f *= 0.2; });
+    f *= this.hostFactor(s);
+    if (s.fault && s.fault.type === 'config_change') f *= 0.4;
+    (s.def.uses || []).forEach(u => { const d = this.c[u]; if (d.type === 'database') f *= this.dbFactor(d); });
     s.ups.forEach(u => { const up = this.c[u]; if (up.type === 'kafka_topic' && up.fault && up.fault.type === 'rebalance_storm') f *= 0.35; });
     return f;
   };
@@ -668,7 +766,6 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
     return (s.def.uses || []).map(u => this.c[u]).filter(d => d.type === 'ref_data' && this.staleness(d) > d.def.stale_after_min);
   };
   Simulator.prototype.issuersOf = function (refId) { return Object.values(this.c).filter(x => x.type === 'issuer' && x.def.feeds === refId); };
-  // reasons this service rejects work right now, with the share of work each one affects
   Simulator.prototype.rejectCauses = function (s) {
     const out = [];
     this.staleRefs(s).forEach(r => out.push({ share: 0.08, ref: r, kind: 'stale' }));
@@ -686,17 +783,18 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
       for (let i = 0; i < s.parts.length; i++) { s.parts[i] += per; s.offsets[i] += per; }
     } else if (s.type === 'service' || s.type === 'external_party') s.inbox += n;
   };
-  Simulator.prototype.emit = function (s, n) { s.downs.forEach(d => this.accept(d, n)); }; // fan-out: each output goes to every downstream
+  Simulator.prototype.emit = function (s, n) { s.downs.forEach(d => this.accept(d, n)); };
 
   Simulator.prototype.step = function (dt) {
     this.t += dt;
     Object.values(this.c).filter(s => s.type === 'ref_data').forEach(s => {
-      const due = this.t - s.lastRefresh >= s.def.refresh_every_min * 60;
-      if (!due) return;
-      if (s.fault && s.fault.type === 'feed_failed') {
+      if (this.t - s.lastRefresh < s.def.refresh_every_min * 60) return;
+      const hostBad = this.hostFault(s) === 'disk_full' || this.inOutage(s);
+      if ((s.fault && s.fault.type === 'feed_failed') || hostBad) {
         if (!s.lastFailLog || this.t - s.lastFailLog >= 300) {
           s.lastFailLog = this.t;
-          this.log(s.def.id, 'ERROR', `${s.def.name} feed job FAILED: sftp://feeds.vendor.example:22 connection refused (attempt ${Math.floor((this.t - s.fault.since) / 300) + 1})`);
+          if (hostBad) this.log(s.def.id, 'ERROR', `${s.def.name} load FAILED: No space left on device writing ${MOUNT.ref_data}/ssi_${clockStr(this.t).replace(':', '')}.csv`);
+          else this.log(s.def.id, 'ERROR', `${s.def.name} feed job FAILED: sftp://feeds.vendor.example:22 connection refused`);
         }
       } else {
         s.lastRefresh = this.t; s.records += Math.floor(this.rand() * 40);
@@ -707,7 +805,7 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
     });
     Object.values(this.c).filter(s => s.type === 'database').forEach(s => {
       const P = s.def.pool_size;
-      if (s.fault && s.fault.type === 'pool_exhausted') s.used = P;
+      if ((s.fault && s.fault.type === 'pool_exhausted') || this.hostFault(s) === 'disk_full') s.used = P;
       else s.used = Math.max(2, Math.min(P, Math.round(P * (0.24 + this.rand() * 0.1))));
     });
     this.bp.order.forEach(id => this._process(id, dt));
@@ -715,6 +813,11 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
       if (s.type === 'external_party' && s.recoverAt > 0 && this.t >= s.recoverAt) {
         s.recoverAt = -1; this.clearFault(s.def.id, 'External party reports platform restored');
         this.log(s.def.id, 'INFO', `${s.def.name} responding normally again (incident closed by the external party)`);
+      }
+      if (s.type === 'service' && this.hostFault(s) === 'memory_oom') {
+        const ph = (this.t - s.host.fault.since) % 180;
+        if (ph < dt) { s.oomRestarts++; this.log(s.def.id, 'ERROR', `java.lang.OutOfMemoryError: Java heap space (heap 6144 MB)`); this.log(s.def.id, 'WARN', `Container ${s.def.id}-7f9c-1 OOMKilled (exit 137); restart #${s.oomRestarts}, back-off ${Math.min(300, 10 * 2 ** s.oomRestarts)}s`); }
+        if (ph >= 45 && ph - dt < 45) this.log(s.def.id, 'INFO', `Starting ${s.def.name} (heap 6144 MB)... CrashLoopBackOff wait`);
       }
     });
     this._chatter(dt);
@@ -724,21 +827,21 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
     if (this.t - this.lastSample >= 60) { this.lastSample = this.t; this._sample(); }
   };
 
+  const x429 = (s, min) => s.def.capacity_per_min * min * 0.6; // throttled calls that come back 429 and are retried at once
   Simulator.prototype._process = function (id, dt) {
     const s = this.c[id], def = s.def, min = dt / 60;
     if (s.type === 'source') {
-      const f = s.fault && s.fault.type;
-      const mult = f === 'order_flood' ? (s.fault.params.multiplier || 4) : 1;
+      const mult = s.fault && s.fault.type === 'order_flood' ? (s.fault.params.multiplier || 4) : 1;
       const n = def.rate_per_min * mult * min * (0.94 + this.rand() * 0.12);
       this.biz.produced += n;
-      if (f === 'session_down') { s.held += n; return; }
+      if (this.sourceDown(s)) { s.held += n; return; }
       let send = n;
-      if (s.held > 0) { const r = Math.min(s.held, def.rate_per_min * 2 * min); s.held -= r; send += r; } // resend after reconnect
+      if (s.held > 0) { const r = Math.min(s.held, def.rate_per_min * 2 * min); s.held -= r; send += r; }
       s.tot.out += send; s.win.out += send; s.seqOut += Math.round(send);
       this.emit(s, send);
       return;
     }
-    if (s.type === 'kafka_topic') return; // the consumer pulls from the topic
+    if (s.type === 'kafka_topic') return;
     if (s.type === 'service') {
       const kafkaUp = s.ups.length === 1 && this.c[s.ups[0]].type === 'kafka_topic' ? this.c[s.ups[0]] : null;
       let cap = def.capacity_per_min * this.serviceFactor(s) * min;
@@ -761,42 +864,49 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
       const causes = this.rejectCauses(s);
       const rejFrac = Math.min(0.9, causes.reduce((a, c) => a + c.share, 0));
       const rej = got * rejFrac;
-      if (rej > 0) { // keep a sample of rejects (what and why) for the SQL console
+      if (rej > 0) {
         const c = causes[Math.floor(this.rand() * causes.length)];
         s.rejectLog.push({ t: this.t, n: rej, kind: c.kind, ref: c.ref.def.name, symbol: c.issuer ? (c.issuer.def.symbol || c.issuer.def.id.toUpperCase()) : null, ca: c.issuer ? c.issuer.fault.ca : null });
         if (s.rejectLog.length > 300) s.rejectLog.shift();
       }
-      if (def.rejects !== 'return') s.rejected += rej; // 'return': rejects go back to the sender, nothing to reprocess
+      if (def.rejects !== 'return') s.rejected += rej;
       s.tot.rej += rej; s.win.rej += rej;
       const ok = got - rej;
       s.tot.out += ok; s.win.out += ok;
-      const dbBad = (def.uses || []).some(u => this.c[u].fault && this.c[u].fault.type === 'pool_exhausted');
+      const dbBad = (def.uses || []).some(u => { const d = this.c[u]; return d.type === 'database' && this.dbFactor(d) < 1; });
       if (dbBad) s.win.err += got * 0.06 + 0.5;
+      const hf = this.hostFault(s);
+      if (hf === 'fd_exhausted') s.win.err += got * 0.3 + 1;
+      if (s.fault && s.fault.type === 'config_change') s.win.err += got * 0.8 + 1;
+      if (hf === 'disk_full' || (hf === 'memory_oom' && !this.oomUp(s)) || this.inOutage(s)) s.win.err += 2;
       this.emit(s, ok);
       return;
     }
     if (s.type === 'external_party') {
-      const unavailable = (s.fault && s.fault.type === 'unavailable') || this.t < s.adapterDownUntil;
-      const cap = unavailable ? 0 : def.capacity_per_min * min;
+      const down = this.extDown(s);
+      let cap = down ? 0 : def.capacity_per_min * min;
+      if (!down && this.hostFault(s) === 'fd_exhausted') cap *= 0.4;
+      if (!down && s.fault && s.fault.type === 'api_rate_limited') { cap *= 0.35; s.win.err += x429(s, min); }
       const x = Math.min(s.inbox, cap); s.inbox -= x;
       s.tot.out += x; s.win.out += x;
-      if (unavailable) s.win.err += 3;
+      if (down) s.win.err += 3;
       this.emit(s, x);
     }
   };
 
   // realistic log lines, driven by the current state (never by the drill script)
   Simulator.prototype._chatter = function (dt) {
-    const p = dt / 30; // ~one routine line per component every 30 simulated seconds
+    const p = dt / 30;
     const blk = () => `BLK-${71000 + Math.floor(this.rand() * 900)}`;
     Object.values(this.c).forEach(s => {
-      const id = s.def.id, name = s.def.name, f = s.fault && s.fault.type;
+      const id = s.def.id, name = s.def.name, f = s.fault && s.fault.type, hf = this.hostFault(s);
       if (s.type === 'source') {
-        if (f !== 'session_down' && this.chance(p * 0.6)) {
+        const why = this.sourceDown(s);
+        if (!why && this.chance(p * 0.6)) {
           const tgt = s.downs.length ? this.c[s.downs[0]].def.name : 'downstream';
           this.log(id, 'INFO', `Session ${this.sessionId(s)}: sent ${Math.round(this.rates(id).out_rate / 2)} messages to ${tgt} (seq ${fmtInt(s.seqOut)})`);
         }
-        if (f === 'session_down' && this.chance(p * 0.7)) this.log(id, 'WARN', `Session ${this.sessionId(s)}: logon attempt failed, retrying in 30s (${fmtInt(s.held)} orders queued)`);
+        if (why && this.chance(p * 0.7)) this.log(id, 'WARN', `Session ${this.sessionId(s)}: logon attempt failed, retrying in 30s (${fmtInt(s.held)} orders queued)`);
       }
       if (s.type === 'kafka_topic') {
         if (s.blocked >= 0 && this.chance(p * 0.6)) this.log(id, 'WARN', `Consumer offset for ${name}-${s.blocked} not advancing at ${Math.floor(s.stuckOffset)} (lag ${fmtInt(s.parts[s.blocked])})`);
@@ -810,29 +920,50 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
             this.log(id, 'ERROR', `Failed to deserialize record ${up.def.name}-${up.blocked}@${Math.floor(up.stuckOffset)}: Unrecognized field "allocRatioV2" (class TradeEvent) — retrying`);
           if (up.type === 'kafka_topic' && up.fault && up.fault.type === 'rebalance_storm' && this.chance(p))
             this.log(id, 'WARN', `Partitions revoked [0, 1, 2]; rejoining group ${up.def.consumer_group || ''}`.trim());
-          if (up.type === 'source' && up.fault && up.fault.type === 'session_down' && this.chance(p * 1.2))
-            this.log(id, 'ERROR', `Logon rejected for session ${this.sessionId(up)} (${up.def.name}): MsgSeqNum ${fmtInt(up.seqOut - 334)} lower than expected ${fmtInt(up.seqOut)}; disconnecting`);
-          if (up.type === 'source' && up.fault && up.fault.type === 'order_flood' && this.chance(p * 1.3))
-            this.log(id, 'WARN', `Session ${this.sessionId(up)} (${up.def.name}) sending ${fmtInt(this.rates(u).out_rate)} msgs/min, above its ${fmtInt(up.def.rate_per_min * 1.5)} msgs/min limit; inbound queue ${fmtInt(s.inbox)}`);
+          if (up.type === 'source') {
+            const why = this.sourceDown(up);
+            if (why === 'seq' && this.chance(p * 1.2)) this.log(id, 'ERROR', `Logon rejected for session ${this.sessionId(up)} (${up.def.name}): MsgSeqNum ${fmtInt(up.seqOut - 334)} lower than expected ${fmtInt(up.seqOut)}; disconnecting`);
+            if (why === 'clock' && this.chance(p * 0.9)) this.log(id, 'ERROR', `Logon rejected for session ${this.sessionId(up)} (${up.def.name}): SendingTime accuracy problem (difference ${s.host.fault.params.seconds}s); disconnecting`);
+            if (up.fault && up.fault.type === 'order_flood' && this.chance(p * 1.3))
+              this.log(id, 'WARN', `Session ${this.sessionId(up)} (${up.def.name}) sending ${fmtInt(this.rates(u).out_rate)} msgs/min, above its ${fmtInt(up.def.rate_per_min * 1.5)} msgs/min limit; inbound queue ${fmtInt(s.inbox)}`);
+          }
         });
         if (f === 'instances_lost' && this.chance(p * 0.8))
           this.log(id, 'WARN', `Only ${s.instances}/${s.configured} ${name} instances ready; pods ${id}-${s.instances + 1}, ${id}-${s.configured} Pending (node memory pressure)`);
-        if ((s.def.uses || []).some(u => this.c[u].fault && this.c[u].fault.type === 'pool_exhausted') && this.chance(p * 1.6))
-          this.log(id, 'ERROR', `HikariPool-1 - Connection is not available, request timed out after 30000ms (${blk()})`);
+        (s.def.uses || []).forEach(u => {
+          const d = this.c[u]; if (d.type !== 'database') return;
+          if (this.hostFault(d) === 'disk_full' && this.chance(p * 1.6)) this.log(id, 'ERROR', `ORA-00257: Archiver error. Connect AS SYSDBA only until resolved (${blk()} commit failed)`);
+          else if (d.fault && d.fault.type === 'pool_exhausted' && this.chance(p * 1.6)) this.log(id, 'ERROR', `HikariPool-1 - Connection is not available, request timed out after 30000ms (${blk()})`);
+          else if (this.hostFault(d) === 'cpu_runaway' && this.chance(p)) this.log(id, 'WARN', `Slow query 3,8${Math.floor(this.rand() * 9)}0ms on ${d.def.name} (expected < 200ms)`);
+        });
+        if (hf === 'disk_full' && this.chance(p * 1.4)) this.log(id, 'ERROR', `java.io.IOException: No space left on device (writing ${MOUNT.service}/app/${id}.log); request failed`);
+        if (hf === 'cpu_runaway' && this.chance(p)) this.log(id, 'WARN', `Request p99 ${fmtInt(2200 + this.rand() * 900)}ms; worker threads waiting for CPU`);
+        if (hf === 'fd_exhausted' && this.chance(p * 1.5)) this.log(id, 'ERROR', `java.net.SocketException: Too many open files (accept failed on :8443)`);
+        if (f === 'config_change' && this.chance(p * 1.6)) this.log(id, 'ERROR', `java.net.SocketTimeoutException: Read timed out after ${s.fault.params.timeout_ms}ms calling ${s.fault.params.api} POST /v2/check (attempt 3/3); request failed`);
         this.rejectCauses(s).forEach(c => {
           if (!this.chance(p * 1.4)) return;
           if (c.kind === 'stale') this.log(id, 'ERROR', `Rejected ${blk()}: no SSI for account ACC-${48000 + Math.floor(this.rand() * 900)} in ${c.ref.def.name}`);
           else this.log(id, 'ERROR', `Order rejected: price ${(1100 + this.rand() * 200).toFixed(2)} outside band for ${c.issuer.def.symbol || c.issuer.def.id.toUpperCase()} (band not updated for ${c.issuer.fault.ca})`);
         });
         if (this.t < s.restartUntil && this.chance(p)) this.log(id, 'INFO', `Rolling restart in progress: instance ${1 + Math.floor(this.rand() * s.configured)}/${s.configured} restarting`);
-        if (this.chance(p * 0.6)) this.log(id, 'INFO', `Processed ${fmtInt(this.rates(id).out_rate / 2)} in last 30s (queue ${fmtInt(this.metric(id, 'backlog'))})`);
+        if (this.hostFactor(s) > 0 && this.chance(p * 0.6)) this.log(id, 'INFO', `Processed ${fmtInt(this.rates(id).out_rate / 2)} in last 30s (queue ${fmtInt(this.metric(id, 'backlog'))})`);
       }
       if (s.type === 'external_party') {
-        if ((f === 'unavailable' || this.t < s.adapterDownUntil) && this.chance(p * 1.6)) this.log(id, 'ERROR', `${name} API POST /v1/messages returned 503 Service Unavailable (retry ${1 + Math.floor(this.rand() * 5)}/5)`);
-        else if (!f && this.chance(p * 0.5)) this.log(id, 'INFO', `${name}: ${fmtInt(this.rates(id).out_rate / 2)} messages acknowledged in last 30s`);
+        const why = this.extDown(s);
+        if (why && this.chance(p * 1.6)) {
+          if (why === 'vendor') this.log(id, 'ERROR', `${name} API POST /v1/messages returned 503 Service Unavailable (retry ${1 + Math.floor(this.rand() * 5)}/5)`);
+          if (why === 'cert') this.log(id, 'ERROR', `SSLHandshakeException: PKIX path validation failed: certificate expired (client cert CN=${id}-adapter); connection to ${name} closed`);
+          if (why === 'disk') this.log(id, 'ERROR', `Cannot spool outbound message: No space left on device (${MOUNT.external_party})`);
+          if (why === 'restart') this.log(id, 'WARN', `${name} connection not ready (adapter starting)`);
+          if (why === 'auth') this.log(id, 'ERROR', `${name} API POST /v1/messages returned 401 Unauthorized: {"error":"invalid_client","error_description":"client secret expired"}`);
+        } else if (!why && f === 'api_rate_limited' && this.chance(p * 1.8)) {
+          this.log(id, 'WARN', `${name} API POST /v1/messages returned 429 Too Many Requests (Retry-After: 30); retrying immediately (attempt ${1 + Math.floor(this.rand() * 5)}/5)`);
+        } else if (!why && hf === 'fd_exhausted' && this.chance(p * 1.4)) this.log(id, 'ERROR', `java.net.SocketException: Too many open files (connect to ${name})`);
+        else if (!why && !f && this.chance(p * 0.5)) this.log(id, 'INFO', `${name}: ${fmtInt(this.rates(id).out_rate / 2)} messages acknowledged in last 30s`);
       }
       if (s.type === 'database') {
-        if (f === 'pool_exhausted' && this.chance(p)) this.log(id, 'WARN', `Session 482 (month_end_recon_report) running ${Math.round((this.t - s.fault.since) / 60) + 14} min, holding ${s.def.pool_size - 4} connections`);
+        if (hf === 'disk_full' && this.chance(p)) this.log(id, 'ERROR', `ARC0: Error 19809 creating archive log file to '${MOUNT.database}/1_${48210 + Math.floor(this.t / 300)}.arc'; ORA-19815: destination is 100% full`);
+        else if (f === 'pool_exhausted' && this.chance(p)) this.log(id, 'WARN', `Session 482 (month_end_recon_report) running ${Math.round((this.t - s.fault.since) / 60) + 14} min, holding ${s.def.pool_size - 4} connections`);
         else if (this.chance(p * 0.25)) this.log(id, 'INFO', `Pool active ${s.used}/${s.def.pool_size}, idle ${s.def.pool_size - s.used}`);
       }
     });
@@ -845,7 +976,7 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
   Simulator.prototype._rates = function (dt) {
     Object.values(this.c).forEach(s => {
       const w = s.win; w.n += dt;
-      if (w.n < 30) return; // rates over a rolling 30-second window
+      if (w.n < 30) return;
       const k = 60 / w.n, a = 0.5;
       const prev = s.rates;
       const nr = { in_rate: w.in * k, out_rate: w.out * k, rej_rate: w.rej * k, err_rate: w.err * k };
@@ -856,8 +987,16 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
   };
   Simulator.prototype.rates = function (id) { const r = this.c[id].rates; return r.n ? r : { in_rate: 0, out_rate: 0, rej_rate: 0, err_rate: 0 }; };
 
+  Simulator.prototype.hostMetric = function (s, m) {
+    const h = s.host, hf = this.hostFault(s), j = this.rand() * 3;
+    if (m === 'host_disk_pct') return hf === 'disk_full' ? 100 : h.disk + j * 0.3;
+    if (m === 'host_cpu_pct') return hf === 'cpu_runaway' ? 97 + j : Math.min(95, h.cpu + j + (s.type === 'service' ? 25 * (1 - Math.min(1, this.serviceFactor(s))) : 0));
+    if (m === 'host_mem_pct') return hf === 'memory_oom' ? (this.oomUp(s) ? 91 + j * 2 : 38) : h.mem + j;
+    return 0;
+  };
   Simulator.prototype.metric = function (id, m) {
     const s = this.c[id], r = this.rates(id);
+    if (m.startsWith('host_')) return s.host ? this.hostMetric(s, m) : 0;
     switch (s.type) {
       case 'source':
         if (m === 'out_rate') return r.out_rate;
@@ -879,9 +1018,9 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
         if (m === 'out_rate') return r.out_rate;
         if (m === 'reject_rate') return processed > 1 ? 100 * r.rej_rate / processed : 0;
         if (m === 'error_rate') return processed > 1 ? Math.min(100, 100 * r.err_rate / processed) : (r.err_rate > 0 ? 100 : 0);
-        if (m === 'instances') return s.instances;
+        if (m === 'instances') return this.hostFault(s) === 'memory_oom' && !this.oomUp(s) ? 0 : this.hostFault(s) === 'disk_full' || this.inOutage(s) ? 0 : s.instances;
         if (m === 'rejected') return s.rejected;
-        if (m === 'sessions_down') return s.ups.filter(u => this.c[u].type === 'source' && this.c[u].fault && this.c[u].fault.type === 'session_down').length;
+        if (m === 'sessions_down') return s.ups.filter(u => this.c[u].type === 'source' && this.sourceDown(this.c[u])).length;
         if (m === 'latency_ms') { const f = this.serviceFactor(s); const q = backlog / Math.max(1, s.def.capacity_per_min * f) * 60000; return Math.round(140 / Math.max(f, 0.05) * (0.95 + this.rand() * 0.1) + Math.min(q, 600000)); }
         return 0;
       }
@@ -889,13 +1028,13 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
         if (m === 'backlog') return s.inbox;
         if (m === 'in_rate') return r.in_rate;
         if (m === 'out_rate') return r.out_rate;
-        if (m === 'error_rate') return (s.fault && s.fault.type === 'unavailable') || this.t < s.adapterDownUntil ? 100 : 0;
+        if (m === 'error_rate') return this.extDown(s) ? 100 : this.hostFault(s) === 'fd_exhausted' ? 60 : s.fault && s.fault.type === 'api_rate_limited' ? 64 : 0;
         return 0;
       case 'ref_data': return m === 'staleness_min' ? this.staleness(s) : 0;
       case 'database':
         if (m === 'pool_used') return s.used;
         if (m === 'pool_pct') return 100 * s.used / s.def.pool_size;
-        if (m === 'wait_ms') return s.fault && s.fault.type === 'pool_exhausted' ? 30000 : 2 + Math.round(this.rand() * 6);
+        if (m === 'wait_ms') return this.dbFactor(s) < 0.3 ? 30000 : this.dbFactor(s) < 1 ? 900 + Math.round(this.rand() * 400) : 2 + Math.round(this.rand() * 6);
         return 0;
       case 'issuer': return m === 'pending_announcements' ? (s.fault ? 1 : 0) : 0;
     }
@@ -905,11 +1044,10 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
   // business KPIs: work produced but not yet past a stage
   Simulator.prototype.kpi = function (k) {
     const s = this.c[k.at];
-    const returned = s.type === 'service' && s.def.rejects === 'return' ? s.tot.rej : 0; // queued rejects still count as waiting
+    const returned = s.type === 'service' && s.def.rejects === 'return' ? s.tot.rej : 0;
     const trades = Math.max(0, this.biz.produced - s.tot.out - returned - this._rejectedUpstream(k.at));
     return { label: k.label, trades, notional: trades * this.bp.business.avg_notional, cutoff: !!k.cutoff };
   };
-  // work rejected back to senders before reaching a stage no longer counts as "waiting" for it
   Simulator.prototype._rejectedUpstream = function (at) {
     let n = 0; const seen = new Set();
     const walk = id => (this.bp.ups[id] || []).forEach(u => { if (seen.has(u)) return; seen.add(u); const s = this.c[u]; if (s.type === 'service' && s.def.rejects === 'return') n += s.tot.rej; walk(u); });
@@ -933,7 +1071,7 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
   };
 
   Simulator.prototype._evalAlerts = function () {
-    if (this.t < this.bp.start) return; // no paging during warm-up
+    if (this.t < this.bp.start) return;
     const rules = this.bp.alerts.slice();
     const k = this.cutoffKpi();
     if (k) rules.push({ id: 'cutoff', name: `${k.label} — ${this.bp.clockLabel.toLowerCase()} at risk`, on: this.bp.business.kpis.find(x => x.cutoff).at, severity: 'P1', builtin: true });
@@ -948,7 +1086,7 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
       if (firing) {
         st.clearSince = null;
         if (st.since === null) st.since = this.t;
-        if (!st.alert && this.t - st.since >= 60) { // sustained for 1 simulated minute
+        if (!st.alert && this.t - st.since >= 60) {
           const a = { id: 'ALRT-' + (++this.alertSeq), rule: rule.id, name: rule.name, severity: rule.severity || 'P3', on: rule.on, metric: rule.metric || 'business', threshold: rule.builtin ? 'projected past cut-off' : (typeof rule.above === 'number' ? '> ' + rule.above : '< ' + rule.below), value: val, firedAt: this.t, resolvedAt: null, status: 'FIRING', source: rule.source || 'Grafana' };
           st.alert = a; this.alerts.unshift(a);
           this.events.push({ t: this.t, kind: 'alert', text: `${a.id} ${a.severity} ${a.name} fired` });
@@ -975,10 +1113,7 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
   Simulator.prototype._sample = function () {
     this.history.t.push(this.t);
     Object.values(this.c).forEach(s => {
-      Object.keys(TYPES[s.type].metrics).forEach(m => {
-        const h = s.hist[m] || (s.hist[m] = []);
-        h.push(this.metric(s.def.id, m));
-      });
+      Object.keys(TYPES[s.type].metrics).forEach(m => { (s.hist[m] || (s.hist[m] = [])).push(this.metric(s.def.id, m)); });
     });
     const k = this.cutoffKpi();
     (this.history.cut || (this.history.cut = [])).push(k ? k.notional : 0);
@@ -987,23 +1122,23 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
       Object.values(this.c).forEach(s => Object.values(s.hist).forEach(h => h.shift()));
     }
   };
-
   Simulator.prototype.warmup = function (secs) { const step = 5; for (let x = 0; x < secs; x += step) this.step(step); };
 
   Simulator.prototype.health = function (id) {
     const s = this.c[id], m = k => this.metric(id, k);
     const rate = this.bp.sourceRate || 1;
     switch (s.type) {
-      case 'source': return s.fault && s.fault.type === 'session_down' ? 'bad' : s.fault ? 'warn' : 'ok';
+      case 'source': { const why = this.sourceDown(s); return why ? 'bad' : s.fault ? 'warn' : 'ok'; }
       case 'kafka_topic': { const L = m('lag'), P = m('max_partition_lag'); return L > rate * 8 || P > rate * 2 ? 'bad' : L > rate * 2 || P > rate * 0.8 / Math.max(1, s.parts.length / 6) ? 'warn' : 'ok'; }
       case 'service': {
-        if (s.instances < s.configured || m('error_rate') > 2 || m('reject_rate') > 5) return m('reject_rate') > 5 || this.serviceFactor(s) < 0.3 ? 'bad' : 'warn';
+        if (this.serviceFactor(s) < 0.3 || m('reject_rate') > 5) return 'bad';
+        if (s.instances < s.configured || m('error_rate') > 2 || this.serviceFactor(s) < 0.9) return 'warn';
         if (m('reject_rate') > 1 || s.rejected > 5 || m('backlog') > rate * 2 || m('sessions_down') > 0) return 'warn';
         return 'ok';
       }
-      case 'external_party': return m('error_rate') > 50 ? 'bad' : m('backlog') > rate * 2 ? 'warn' : 'ok';
+      case 'external_party': return m('error_rate') > 50 ? 'bad' : m('backlog') > rate * 2 || m('error_rate') > 0 ? 'warn' : 'ok';
       case 'ref_data': { const st = m('staleness_min'); return st > s.def.stale_after_min * 1.5 ? 'bad' : st > s.def.stale_after_min ? 'warn' : 'ok'; }
-      case 'database': { const p = m('pool_pct'); return p > 95 ? 'bad' : p > 85 ? 'warn' : 'ok'; }
+      case 'database': { const p = m('pool_pct'); return p > 95 ? 'bad' : p > 85 || this.dbFactor(s) < 1 ? 'warn' : 'ok'; }
       case 'issuer': return 'ok'; // an exchange cannot see inside a listed company; the signal is downstream
     }
     return 'ok';
@@ -1013,41 +1148,57 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
   Simulator.prototype.injectFault = function (id, type, params) {
     const s = this.c[id];
     if (!s) throw new Error(`No component "${id}"`);
-    const F = TYPES[s.type].faults[type];
+    const F = faultsFor(s.type)[type];
     if (!F) throw new Error(`${s.type} "${id}" has no fault "${type}"`);
     const p = { ...F.params, ...(params || {}) };
-    s.fault = { type, params: p, since: this.t };
-    if (type === 'poison_message') { s.blocked = Math.min(s.parts.length - 1, Math.max(0, p.partition | 0)); s.stuckOffset = s.offsets[s.blocked] - s.parts[s.blocked]; }
-    if (type === 'instances_lost') s.instances = Math.max(1, Math.min(s.configured - 1, p.remaining | 0));
-    if (type === 'feed_failed') s.lastRefresh = Math.min(s.lastRefresh, this.t - p.last_refresh_minutes_ago * 60);
-    if (type === 'pool_exhausted') this.log(id, 'WARN', `Long-running query started: session 482 (month_end_recon_report), full table scan on ${s.def.big_table || 'ALLOCATION_HIST'}`);
-    if (type === 'announcement_missed') s.fault.ca = `CA-2026-${100 + Math.floor(this.rand() * 80)}`;
-    if (type === 'session_down') this.log(id, 'ERROR', `Session ${this.sessionId(s)}: disconnected by counterparty after logon rejected (sequence number too low)`);
+    const fault = { type, params: p, since: this.t };
+    if (F.host) {
+      s.host.fault = fault;
+      if (type === 'cpu_runaway') this.log(id, 'INFO', 'cron: started backup_agent --full --target=/mnt/nfs/backup (nightly job, rescheduled)');
+      if (type === 'clock_skew') this.log(id, 'WARN', 'chronyd: no reachable NTP sources; clock unsynchronised');
+    } else {
+      s.fault = fault;
+      if (type === 'poison_message') { s.blocked = Math.min(s.parts.length - 1, Math.max(0, p.partition | 0)); s.stuckOffset = s.offsets[s.blocked] - s.parts[s.blocked]; }
+      if (type === 'instances_lost') s.instances = Math.max(1, Math.min(s.configured - 1, p.remaining | 0));
+      if (type === 'feed_failed') s.lastRefresh = Math.min(s.lastRefresh, this.t - p.last_refresh_minutes_ago * 60);
+      if (type === 'pool_exhausted') this.log(id, 'WARN', `Long-running query started: session 482 (month_end_recon_report), full table scan on ${s.def.big_table || 'ALLOCATION_HIST'}`);
+      if (type === 'announcement_missed') fault.ca = `CA-2026-${100 + Math.floor(this.rand() * 80)}`;
+      if (type === 'config_change') { fault.commit = '7c1e2a9'; this.log(id, 'INFO', `Configuration refreshed from config-server (commit ${fault.commit} by ops-automation): http.client.${p.api}.read-timeout-ms=${p.timeout_ms}`); }
+      if (type === 'api_auth_expired') this.log(id, 'WARN', `OAuth token refresh failed for client ${id}-adapter: invalid_client`);
+      if (type === 'session_down') this.log(id, 'ERROR', `Session ${this.sessionId(s)}: disconnected by counterparty after logon rejected (sequence number too low)`);
+    }
     this.events.push({ t: this.t, kind: 'fault', hidden: true, text: `Fault injected: ${F.label} on ${s.def.name}` });
-    return s.fault;
+    return fault;
   };
-  Simulator.prototype.clearFault = function (id, why) {
-    const s = this.c[id]; if (!s.fault) return;
+  Simulator.prototype.clearFault = function (id, why, host) {
+    const s = this.c[id];
+    if (host) { if (!s.host || !s.host.fault) return; s.host.fault = null; }
+    else { if (!s.fault) return; if (s.type === 'kafka_topic') s.blocked = -1; s.fault = null; }
     this.events.push({ t: this.t, kind: 'fixed', text: `${s.def.name}: ${why}` });
-    if (s.type === 'kafka_topic') s.blocked = -1;
-    s.fault = null;
   };
-  Simulator.prototype.actionsFor = function (id) { const s = this.c[id]; return s ? TYPES[s.type].actions : {}; };
+  Simulator.prototype.actionsFor = function (id) { const s = this.c[id]; return s ? actionsFor(s.type) : {}; };
+
   Simulator.prototype.applyAction = function (id, action) {
     const s = this.c[id];
     if (!s) return { ok: false, message: `No component "${id}"` };
-    const A = TYPES[s.type].actions[action];
-    if (!A) return { ok: false, message: `${s.def.name} has no action "${action}"` };
-    const f = s.fault && s.fault.type, name = s.def.name;
+    const A = ACTIONS[action];
+    if (!A || !A.types.includes(s.type)) return { ok: false, message: `“${A ? A.label : action}” does not apply to ${s.def.name}.` };
+    const f = s.fault && s.fault.type, hf = this.hostFault(s), name = s.def.name, host = `${id.replace(/_/g, '-')} host`;
     let message, effect = 'none';
+    const fixHost = why => { this.clearFault(id, why, true); effect = 'fixed'; };
     switch (action) {
       case 'reset_sequence':
         if (f === 'session_down') { message = `Sequence numbers reset with ${name}; session ${this.sessionId(s)} logged on. ${fmtInt(s.held)} queued orders are being resent.`; this.clearFault(id, 'session sequence reset, participant reconnected'); effect = 'fixed'; this.log(id, 'INFO', `Session ${this.sessionId(s)}: logon accepted after sequence reset`); }
+        else if (this.sourceDown(s) === 'clock') message = `Sequence numbers reset, but the logon is rejected again: “SendingTime accuracy problem”. The sequence numbers were not the issue.`;
         else message = `Session ${this.sessionId(s)} was already connected; the reset forced a brief logout and logon.`;
         break;
       case 'apply_throttle':
         if (f === 'order_flood') { message = `Throttle of ${fmtInt(s.def.rate_per_min * 1.5)} msgs/min applied to ${name}. Excess messages are rejected back to the participant.`; this.clearFault(id, 'participant throttled'); effect = 'fixed'; }
-        else message = `Throttle applied to ${name}, which was within its limit. Its quoting or orders may now be rejected unnecessarily.`;
+        else message = `Throttle applied to ${name}, which was within its limit. Its orders may now be rejected unnecessarily.`;
+        break;
+      case 'disconnect_participant':
+        message = `${name} disconnected. Its orders now queue on its side and it will call the exchange.`;
+        s.fault = { type: 'session_down', params: {}, since: this.t, operator: true }; // an operator-caused outage the responder must undo
         break;
       case 'skip_poison_message':
         if (f === 'poison_message') { s.dlq++; message = `Parked ${name}-${s.blocked}@${Math.floor(s.stuckOffset)} to ${name}.DLQ; partition ${s.blocked} consuming again. 1 message needs manual repair.`; this.log(id, 'INFO', `Offset ${Math.floor(s.stuckOffset)} on partition ${s.blocked} skipped and parked to DLQ`); this.clearFault(id, 'stuck message parked to DLQ'); effect = 'fixed'; }
@@ -1059,7 +1210,7 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
         break;
       case 'scale_out':
         if (f === 'instances_lost') { s.configured += 1; s.instances = s.configured; message = `Rescheduled on healthy nodes; ${s.instances}/${s.configured} instances ready.`; this.clearFault(id, 'instances rescheduled'); effect = 'fixed'; }
-        else { s.configured += 1; s.instances += 1; message = `Added one instance (${s.instances}/${s.configured} ready). No change to the underlying problem.`; }
+        else { s.configured += 1; s.instances += 1; message = `Added one instance (${s.instances}/${s.configured} ready).` + (hf ? ' It runs on the same kind of host and shows the same problem.' : ' No change to the underlying problem.'); }
         this.log(id, 'INFO', message);
         break;
       case 'restart': {
@@ -1067,10 +1218,31 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
         const sessions = s.ups.filter(u => this.c[u].type === 'source');
         message = 'Rolling restart started: capacity halved for about 3 minutes.'
           + (sessions.length ? ` All ${sessions.length} participant sessions were disconnected and had to log on again.` : '')
-          + (f === 'instances_lost' ? ' Evicted pods are still Pending — the nodes are the problem, not the process.' : '');
+          + (f === 'config_change' ? ' It starts with the same configuration and keeps timing out.' : '')
+          + (f === 'instances_lost' ? ' Evicted pods are still Pending — the nodes are the problem, not the process.' : '')
+          + (hf === 'disk_full' ? ' The application starts, then fails again writing to a full disk.' : '')
+          + (hf === 'memory_oom' ? ' It runs out of memory again within a minute.' : '')
+          + (hf === 'fd_exhausted' ? ' It works briefly, then runs out of file descriptors again.' : '');
+        if (hf === 'fd_exhausted') { /* the leak returns: fault stays */ }
         this.log(id, 'INFO', 'Rolling restart requested' + (sessions.length ? '; disconnecting all participant sessions' : ''));
         break;
       }
+      case 'rollback_deployment':
+        message = `No deployment to ${name} in the last 7 days. Nothing to roll back.` + (f === 'config_change' ? ` (Configuration was refreshed at ${clockStr(s.fault.since)}, commit ${s.fault.commit}; that is not a deployment.)` : '');
+        break;
+      case 'revert_config':
+        if (f === 'config_change') { const api = s.fault.params.api; message = `Reverted commit ${s.fault.commit}: ${api} read timeout back to 2000 ms. Calls succeeding again.`; this.clearFault(id, 'configuration change reverted'); effect = 'fixed'; this.log(id, 'INFO', `Configuration refreshed (revert of ${'7c1e2a9'}): http.client.${api}.read-timeout-ms=2000`); }
+        else message = `No configuration change to ${name} today. Nothing reverted.`;
+        break;
+      case 'enable_retry_backoff':
+        s.backoff = true;
+        if (f === 'api_rate_limited') { message = `Retries now back off exponentially with jitter. 429 responses stopped; throughput back within the ${fmtInt(s.fault.params.quota_per_min)}/min quota.`; this.clearFault(id, 'API retries switched to back-off'); effect = 'fixed'; }
+        else message = 'Retry policy changed to exponential back-off. No calls were being throttled, so nothing changed.';
+        break;
+      case 'rotate_api_credentials':
+        if (f === 'api_auth_expired') { message = `New client secret fetched from the vault; ${name} accepts our token again.`; this.clearFault(id, 'API client secret rotated'); effect = 'fixed'; }
+        else message = 'Client secret rotated. The old one was still valid; no change.';
+        break;
       case 'reprocess_rejected': {
         const n = Math.round(s.rejected);
         if (!n) { message = 'Exception queue is empty.'; break; }
@@ -1079,17 +1251,70 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
         s.retry += s.rejected; s.rejected = 0; effect = still ? 'none' : 'partial';
         break;
       }
+      case 'increase_memory_limit':
+        if (hf === 'memory_oom') { message = `Memory limit raised to 12 GiB; ${name} redeployed and running stably.`; fixHost('memory limit raised'); }
+        else message = `Memory limit raised and ${name} redeployed (capacity briefly halved). Memory was not the problem.`;
+        if (hf !== 'memory_oom') s.restartUntil = this.t + 120;
+        break;
+      case 'raise_fd_limit':
+        if (hf === 'fd_exhausted') { message = `Open-files limit raised from 4,096 to 65,536 and ${name} restarted.`; fixHost('open-files limit raised'); }
+        else { message = `Open-files limit raised and ${name} restarted. Descriptors were not the problem.`; if (s.type === 'service') s.restartUntil = this.t + 120; else s.adapterDownUntil = this.t + 60; }
+        break;
+      case 'purge_queue': {
+        let n = 0;
+        if (s.type === 'kafka_topic') { n = s.parts.reduce((a, b) => a + b, 0); s.parts = s.parts.map(() => 0); if (f === 'poison_message') this.clearFault(id, 'partition purged (stuck message deleted with everything behind it)'); }
+        else { n = s.inbox + (s.retry || 0); s.inbox = 0; if (s.retry) s.retry = 0; }
+        this.biz.lost += n;
+        message = `Purged ${fmtInt(n)} waiting messages. They are gone: every one of them now needs manual reconciliation.`;
+        this.log(id, 'WARN', `Operator purged ${fmtInt(n)} messages`);
+        break;
+      }
+      case 'clear_disk_space':
+        if (hf === 'disk_full') { message = `Archived and removed old files on ${host}: ${MOUNT[s.type]} down from 100% to 46%. ${s.type === 'database' ? 'Archiver resumed; commits flowing again.' : 'Writes succeeding again.'}`; fixHost(`${MOUNT[s.type]} cleared`); }
+        else message = `Cleared old files on ${host}; disk was already at ${Math.round(s.host.disk)}%. No change.`;
+        break;
+      case 'kill_runaway_process':
+        if (hf === 'cpu_runaway') { message = `Killed backup_agent (PID 7731) using 98% CPU on ${host}. CPU back to normal; reschedule the backup outside trading hours.`; fixHost('runaway backup job killed'); }
+        else message = `No runaway process found on ${host}; top shows only the application.`;
+        break;
+      case 'resync_ntp':
+        if (hf === 'clock_skew') { message = `chronyd restarted; clock stepped by ${s.host.fault.params.seconds}s and now in sync. Participants can log on again.`; fixHost('host clock resynchronised'); }
+        else message = `NTP resync on ${host}: offset was already under 1 ms. No change.`;
+        break;
+      case 'restart_host':
+        s.host.outageUntil = this.t + 240;
+        message = `${host} rebooting: ${name} is unavailable for about 4 minutes.`;
+        if (hf === 'clock_skew' || hf === 'cpu_runaway') { message += ' The reboot also cleared the host problem.'; fixHost('host rebooted'); }
+        else if (hf) message += ' The problem returns once it is back up.';
+        break;
+      case 'failover_to_dr':
+        s.host.outageUntil = this.t + 300;
+        message = `Failing ${name} over to the DR site: unavailable for about 5 minutes while it switches.`;
+        if (hf === 'cert_expired') message += ' The DR adapter uses the same expired client certificate.';
+        else if (hf) { message += ' The DR host does not have the problem.'; fixHost('failed over to DR'); }
+        if (f === 'api_rate_limited' || f === 'api_auth_expired') message += ' The API still rejects calls from DR.';
+        if (s.type === 'external_party' && f === 'unavailable') message += ' The external party is still down, so DR does not help.';
+        break;
+      case 'renew_certificate':
+        if (hf === 'cert_expired') { message = `Renewed client certificate installed (valid to 2027-10-08); TLS handshake with ${name} succeeds.`; fixHost('client certificate renewed'); }
+        else message = `Certificate renewed; the old one was valid for another 214 days. No change.`;
+        break;
       case 'escalate_to_vendor':
         if (f === 'unavailable') { s.recoverAt = this.t + (A.delay_min || 8) * 60; message = `P1 raised with ${name}. They confirm an outage on their side; ETA about ${A.delay_min || 8} minutes.`; effect = 'pending'; }
+        else if (f === 'api_rate_limited') message = `${name} reports your adapter exceeds its ${fmtInt(s.fault.params.quota_per_min)} calls/min quota, mostly immediate retries of throttled calls. They will not raise the quota today.`;
+        else if (f === 'api_auth_expired') message = `${name} reports no issues. Your calls are rejected because your API client secret expired at 00:00 today, as notified last month.`;
+        else if (hf === 'cert_expired') message = `${name} reports no issues on their platform. They see TLS handshakes from your adapter failing because your client certificate has expired.`;
+        else if (hf === 'disk_full' || hf === 'fd_exhausted') message = `${name} reports no issues and no recent traffic from you. The problem is on your side of the connection.`;
         else message = `${name} reports no issues on their platform.`;
         break;
       case 'restart_adapter':
         s.adapterDownUntil = this.t + 60;
-        message = 'Adapter restarted (1 minute without connectivity).' + (f === 'unavailable' ? ' Calls still fail: the external platform itself is down.' : '');
+        message = 'Adapter restarted (1 minute without connectivity).' + (f === 'unavailable' ? ' Calls still fail: the external platform itself is down.' : f === 'api_rate_limited' ? ' On reconnect it replayed its queue at full speed and was throttled harder.' : f === 'api_auth_expired' ? ' It reloads the same expired secret: still 401.' : hf === 'cert_expired' ? ' The TLS handshake still fails after the restart.' : hf === 'disk_full' ? ' It still cannot spool messages: the disk is full.' : '');
         break;
       case 'force_refresh': {
-        s.lastRefresh = this.t; s.records += 12;
         const missed = this.issuersOf(id).filter(is => is.fault && is.fault.type === 'announcement_missed');
+        if (hf === 'disk_full') { message = 'Load failed again: No space left on device.'; break; }
+        s.lastRefresh = this.t; s.records += 12;
         missed.forEach(is => this.clearFault(is.def.id, 'corporate action applied during full reload'));
         if (f === 'feed_failed') { message = `Loaded ${fmtInt(s.records)} records from the secondary source. Rejections should stop; anything already rejected needs reprocessing.`; this.clearFault(id, 'feed re-run from secondary source'); effect = 'fixed'; }
         else if (missed.length) { message = `Full reload done, including pending corporate action files (${missed.map(m => m.def.name).join(', ')}).`; effect = 'fixed'; }
@@ -1103,23 +1328,34 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
         break;
       case 'kill_blocking_session':
         if (f === 'pool_exhausted') { message = 'Killed session 482 (month_end_recon_report). Connections released.'; this.log(id, 'INFO', 'Session 482 killed by operator; pool recovering'); this.clearFault(id, 'blocking session killed'); effect = 'fixed'; }
+        else if (hf === 'disk_full') message = 'No blocking sessions. Sessions are waiting on “log file switch (archiving needed)”.';
         else message = 'No blocking sessions found.';
         break;
+      case 'increase_pool_size':
+        message = f === 'pool_exhausted' ? `Pool raised to ${s.def.pool_size + 30}. The long-running query is still running and the new connections fill up too.` : hf === 'disk_full' ? 'Pool raised. New connections wait on the archiver like the others.' : 'Pool raised. It was not the bottleneck.';
+        break;
     }
+    if (effect === 'none' && A.fixes && (A.fixes.includes(f) || A.fixes.includes(hf))) effect = 'fixed';
     this.events.push({ t: this.t, kind: 'action', text: `${A.label} on ${name}: ${message}` });
     return { ok: true, message, effect, label: A.label };
   };
 
   Simulator.prototype.activeFaults = function () {
-    return Object.values(this.c).filter(s => s.fault).map(s => ({ id: s.def.id, type: s.fault.type }));
+    const out = [];
+    Object.values(this.c).forEach(s => {
+      if (s.fault) out.push({ id: s.def.id, type: s.fault.type });
+      if (s.host && s.host.fault) out.push({ id: s.def.id, type: s.host.fault.type, host: true });
+      if (s.host && this.inOutage(s)) out.push({ id: s.def.id, type: 'outage', host: true });
+    });
+    return out;
   };
-  Simulator.prototype.pendingRepair = function () { // work a responder still has to clear up
+  Simulator.prototype.pendingRepair = function () {
     let rejected = 0, held = 0;
     Object.values(this.c).forEach(s => { if (s.type === 'service') rejected += s.rejected; if (s.type === 'source') held += s.held; });
-    return { rejected, held };
+    return { rejected, held, lost: this.biz.lost };
   };
 
-  const OpsSim = { TYPES, parseBlueprint, validateBlueprint, Simulator, clockStr, parseClock, fmtInt, rng };
+  const OpsSim = { TYPES, HOST_TYPES, HOST_FAULTS, MOUNT, ACTIONS, CAUSES, faultsFor, actionsFor, causeLabel, hasHost, parseBlueprint, validateBlueprint, Simulator, clockStr, parseClock, fmtInt, rng };
   if (typeof module === 'object' && module.exports) module.exports = OpsSim;
   else root.OpsSim = OpsSim;
 })(typeof globalThis !== 'undefined' ? globalThis : this);
