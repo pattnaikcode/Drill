@@ -1,5 +1,6 @@
 id: database-pool-exhausted
 title: Allocation engine choking
+systems: [trade-allocation-kafka, trade-allocation-direct]
 level: Hard
 summary: Several alerts fire at once. Separate the cause from the symptoms.
 brief: >

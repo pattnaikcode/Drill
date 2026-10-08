@@ -1,31 +1,30 @@
-# Middle-office trade allocation, with Kafka between the OMS and the allocation engine.
-# Edit this file (or the Blueprint tab in the app) to change the system being simulated.
+# Middle-office trade allocation (buy side), with Kafka between front office and the allocation engine.
+# Edit this file (or use the Blueprint tab in the app) to change the system being simulated.
 
 id: trade-allocation-kafka
 system: Middle-office trade allocation
 description: >
-  Executed fills flow from the OMS through a Kafka topic to the allocation engine,
-  which splits block trades across client accounts using SSI reference data,
-  then sends allocations to the confirmation platform and on to settlement.
+  Block fills arrive from the OMS and the execution desk (EMS) through a Kafka topic. The
+  allocation engine splits each block across client accounts using SSI reference data, sends
+  allocations to the confirmation platform for affirmation, and on to settlement.
 
 clock:
   start: "13:30"
-  cutoff: "15:00"          # affirmation cut-off for today's trades
+  cutoff: "15:00"
+  cutoff_label: Affirmation cut-off
 
 business:
   currency: "₹"
   unit: "Cr"
+  unit_name: trades
   avg_notional: 0.6        # ₹ Cr per trade, used to show impact in money
-  produced_at: oms
   kpis:
     - {label: "Unallocated", at: tam}
     - {label: "Not yet affirmed", at: ctm, cutoff: true}
 
 components:
-  - id: oms
-    type: source
-    name: Order Management
-    rate_per_min: 300
+  - {id: oms, type: source, role: Front office, name: Order Management (OMS), session: OMS01, rate_per_min: 200}
+  - {id: ems, type: source, role: Front office, name: Execution Desk (EMS), session: EMS01, rate_per_min: 100}
 
   - id: trades_topic
     type: kafka_topic
@@ -35,34 +34,22 @@ components:
 
   - id: tam
     type: service
+    role: Middle office
     name: Allocation Engine
     capacity_per_min: 420
     instances: 4
     uses: [ssi, tam_db]
 
-  - id: ssi
-    type: ref_data
-    name: SSI Reference Data
-    refresh_every_min: 15
-    stale_after_min: 20
+  - {id: ssi, type: ref_data, name: SSI Reference Data, refresh_every_min: 15, stale_after_min: 20}
+  - {id: tam_db, type: database, name: Allocation DB, pool_size: 50, big_table: ALLOCATION_HIST}
 
-  - id: tam_db
-    type: database
-    name: Allocation DB
-    pool_size: 50
-
-  - id: ctm
-    type: external_party
-    name: Confirmation Platform (CTM)
-    capacity_per_min: 520
-
-  - id: settle
-    type: external_party
-    name: Settlement (SWIFT)
-    capacity_per_min: 600
+  - {id: ctm, type: external_party, role: Confirmation platform, name: Confirmation Platform (CTM), capacity_per_min: 520}
+  - {id: settle, type: external_party, role: Custodian network, name: Settlement (SWIFT), capacity_per_min: 600}
 
 flow:
-  - oms -> trades_topic -> tam -> ctm -> settle
+  - oms -> trades_topic
+  - ems -> trades_topic
+  - trades_topic -> tam -> ctm -> settle
 
 alerts:
   - {name: "Kafka consumer lag high", on: trades_topic, metric: lag, above: 900, severity: P2}
@@ -72,3 +59,29 @@ alerts:
   - {name: "DB connection pool saturated", on: tam_db, metric: pool_pct, above: 90, severity: P2}
   - {name: "SSI data stale", on: ssi, metric: staleness_min, above: 25, severity: P3}
   - {name: "Unmatched confirmations", on: ctm, metric: backlog, above: 900, severity: P2}
+
+diagram:
+  notes: >
+    Front office books block trades. Middle office must allocate every block to client accounts and get
+    each allocation affirmed before the affirmation cut-off, or the trades fail to settle on time.
+  groups:
+    - {label: "Front office", ids: [oms, ems]}
+    - {label: "Middle office (our systems)", ids: [trades_topic, tam, ssi, tam_db]}
+    - {label: "External parties", ids: [ctm, settle]}
+  place:
+    oms: [0, 0]
+    ems: [0, 1.15]
+    trades_topic: [1.1, 0.55]
+    tam: [2.2, 0.55]
+    ssi: [1.7, 1.95]
+    tam_db: [2.7, 1.95]
+    ctm: [3.4, 0.55]
+    settle: [4.5, 0.55]
+  steps:
+    - {from: oms, to: trades_topic, text: "Executed block fills from the OMS are published to Kafka."}
+    - {from: ems, to: trades_topic, text: "Algo and program-desk fills arrive from the EMS on the same topic."}
+    - {from: trades_topic, to: tam, text: "The allocation engine consumes fills, one consumer per partition."}
+    - {from: tam, to: ssi, text: "For each client account it looks up the standing settlement instructions (SSIs)."}
+    - {from: tam, to: tam_db, text: "Blocks and allocations are stored; rejected allocations wait in an exception queue."}
+    - {from: tam, to: ctm, text: "Allocations go to the confirmation platform to be matched and affirmed by the broker."}
+    - {from: ctm, to: settle, text: "Affirmed trades generate settlement instructions to custodians (SWIFT MT541/543)."}

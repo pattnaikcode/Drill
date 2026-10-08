@@ -1,5 +1,5 @@
 <title>OpsPilot Drills</title>
-<meta name="description" content="Incident drill simulator for production support teams: configurable system blueprints, real fault propagation, scoring and debriefs.">
+<meta name="description" content="Incident drill simulator for production support teams: design a system, add use cases, investigate with Grafana, Splunk, SQL and Unix tools, and get scored.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Semi+Condensed:wght@600;700&family=JetBrains+Mono:wght@400;500&display=swap">
@@ -8,7 +8,7 @@
 </style>
 <header class="top">
   <div class="top-in">
-    <div class="brand"><b>OpsPilot Drills</b><span>Incident drills on a simulated system</span></div>
+    <div class="brand"><b>OpsPilot Drills</b><span id="sysName">Incident drills on a simulated system</span></div>
     <div class="clock"><span class="label">Simulated time</span><span class="t" id="clock">13:30:00</span><span class="small muted" id="cutoff"></span></div>
     <div class="row" id="kpis" style="gap:22px"></div>
     <div class="grow"></div>
@@ -22,12 +22,12 @@
   <nav class="tabs" role="tablist" aria-label="Views">
     <button role="tab" data-tab="drills">Drills</button>
     <button role="tab" data-tab="run">System</button>
-    <button role="tab" data-tab="blueprint">Blueprint</button>
+    <button role="tab" data-tab="design">Design</button>
     <button role="tab" data-tab="debrief">Debrief</button>
   </nav>
 </header>
 <main id="main"></main>
-<footer>Simulated environment: synthetic trades only, no real systems or client data. Blueprints and drills are plain YAML.</footer>
+<footer>Simulated environment: synthetic orders and trades only, no real systems or client data. Systems and use cases are plain YAML.</footer>
 <div id="toast" role="status" hidden style="position:fixed;left:50%;transform:translateX(-50%);bottom:calc(18px + env(safe-area-inset-bottom, 0px));background:var(--ink);color:var(--panel);padding:9px 16px;border-radius:8px;font-size:14px;z-index:30;max-width:90vw"></div>
 <script>
 /*INLINE:vendor/js-yaml.min.js*/
@@ -40,6 +40,9 @@
 </script>
 <script>
 /*INLINE:src/session.js*/
+</script>
+<script>
+/*INLINE:src/tools.js*/
 </script>
 <script>
 /*INLINE:src/app.js*/

@@ -1,0 +1,30 @@
+id: exch-noisy-market-maker
+title: A market maker floods the gateway
+systems: [exchange]
+level: Medium
+summary: Every member reports slow order acknowledgements. Nothing in the exchange is down.
+brief: >
+  14:30. Volatile afternoon. Several brokers call to say order acknowledgements have become slow.
+  The clearing cut-off is 15:30.
+faults:
+  - {at: "14:35", component: mm_1, fault: order_flood, params: {multiplier: 4}}
+root_cause: {component: mm_1, fault: order_flood}
+accepted_fixes: [mm_1.apply_throttle]
+risky_actions: [fix_gateway.restart]
+hints:
+  - {after_min: 2, text: "The gateway is healthy but its queue is growing. Is the inbound rate normal?"}
+  - {after_min: 6, text: "Compare each member's message rate with its usual rate. Which session changed?"}
+debrief:
+  what_happened: >
+    Arcline Markets deployed a quoting engine with a misconfigured refresh interval and sent about
+    four times its normal message rate. The gateway's capacity was shared by everyone, so every
+    member's orders queued behind the flood.
+  key_signal: Gateway inbound rate above normal, queue growing, and throttle warnings naming one session.
+  why_not_restart: >
+    Restarting or scaling the gateway treats the symptom. The flood resumes as soon as the session
+    reconnects; the member's throttle is the control built for this.
+  runbook:
+    - Find the session above its message limit in the gateway log.
+    - Apply that member's message throttle (approval required) and tell the member why.
+    - Watch the gateway queue drain and acknowledgement times recover.
+    - Ask the member for a root cause before lifting the throttle.

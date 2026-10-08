@@ -1,36 +1,40 @@
-# The same system WITHOUT Kafka: the OMS calls the allocation engine directly.
-# Compare with trade-allocation-kafka.yaml — the only differences are one component,
-# one flow line and the alerts that watch it.
+# The same trade allocation system WITHOUT Kafka: front office hands fills straight to the
+# allocation engine's queue. Compare with trade-allocation-kafka.yaml — the differences are one
+# component, the flow lines and the alerts that watch it.
 
 id: trade-allocation-direct
 system: Middle-office trade allocation (direct, no Kafka)
 description: >
-  The OMS hands fills straight to the allocation engine's queue. Without Kafka there is
-  no consumer lag to watch: a slow allocation engine shows up as its own backlog.
+  Front office calls the allocation engine directly. Without Kafka there is no consumer lag to
+  watch: a slow allocation engine shows up as its own queue, and a stuck partition cannot happen.
 
 clock:
   start: "13:30"
   cutoff: "15:00"
+  cutoff_label: Affirmation cut-off
 
 business:
   currency: "₹"
   unit: "Cr"
+  unit_name: trades
   avg_notional: 0.6
-  produced_at: oms
   kpis:
     - {label: "Unallocated", at: tam}
     - {label: "Not yet affirmed", at: ctm, cutoff: true}
 
 components:
-  - {id: oms, type: source, name: Order Management, rate_per_min: 300}
-  - {id: tam, type: service, name: Allocation Engine, capacity_per_min: 420, instances: 4, uses: [ssi, tam_db]}
+  - {id: oms, type: source, role: Front office, name: Order Management (OMS), session: OMS01, rate_per_min: 200}
+  - {id: ems, type: source, role: Front office, name: Execution Desk (EMS), session: EMS01, rate_per_min: 100}
+  - {id: tam, type: service, role: Middle office, name: Allocation Engine, capacity_per_min: 420, instances: 4, uses: [ssi, tam_db]}
   - {id: ssi, type: ref_data, name: SSI Reference Data, refresh_every_min: 15, stale_after_min: 20}
-  - {id: tam_db, type: database, name: Allocation DB, pool_size: 50}
-  - {id: ctm, type: external_party, name: Confirmation Platform (CTM), capacity_per_min: 520}
-  - {id: settle, type: external_party, name: Settlement (SWIFT), capacity_per_min: 600}
+  - {id: tam_db, type: database, name: Allocation DB, pool_size: 50, big_table: ALLOCATION_HIST}
+  - {id: ctm, type: external_party, role: Confirmation platform, name: Confirmation Platform (CTM), capacity_per_min: 520}
+  - {id: settle, type: external_party, role: Custodian network, name: Settlement (SWIFT), capacity_per_min: 600}
 
 flow:
-  - oms -> tam -> ctm -> settle
+  - oms -> tam
+  - ems -> tam
+  - tam -> ctm -> settle
 
 alerts:
   - {name: "Allocation backlog high", on: tam, metric: backlog, above: 900, severity: P2}
@@ -39,3 +43,24 @@ alerts:
   - {name: "DB connection pool saturated", on: tam_db, metric: pool_pct, above: 90, severity: P2}
   - {name: "SSI data stale", on: ssi, metric: staleness_min, above: 25, severity: P3}
   - {name: "Unmatched confirmations", on: ctm, metric: backlog, above: 900, severity: P2}
+
+diagram:
+  groups:
+    - {label: "Front office", ids: [oms, ems]}
+    - {label: "Middle office (our systems)", ids: [tam, ssi, tam_db]}
+    - {label: "External parties", ids: [ctm, settle]}
+  place:
+    oms: [0, 0]
+    ems: [0, 1.15]
+    tam: [1.2, 0.55]
+    ssi: [0.7, 1.95]
+    tam_db: [1.7, 1.95]
+    ctm: [2.5, 0.55]
+    settle: [3.6, 0.55]
+  steps:
+    - {from: oms, to: tam, text: "Executed block fills from the OMS go straight to the allocation engine's queue."}
+    - {from: ems, to: tam, text: "Execution-desk fills join the same queue."}
+    - {from: tam, to: ssi, text: "For each client account the engine looks up the settlement instructions (SSIs)."}
+    - {from: tam, to: tam_db, text: "Blocks and allocations are stored; rejected allocations wait in an exception queue."}
+    - {from: tam, to: ctm, text: "Allocations go to the confirmation platform to be affirmed."}
+    - {from: ctm, to: settle, text: "Affirmed trades generate settlement instructions to custodians."}

@@ -1,5 +1,6 @@
 id: mystery
 title: Mystery incident
+systems: [trade-allocation-kafka, trade-allocation-direct]
 level: Hard
 summary: One of five real faults, chosen at random. No hints, no clues in the title.
 mystery: true

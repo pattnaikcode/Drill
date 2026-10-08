@@ -6,13 +6,13 @@ Support teams are judged on how they handle business incidents: trades not alloc
 
 | Part | What it is | Runs |
 |---|---|---|
-| [`drill-simulator/`](drill-simulator/) | Configurable system simulator with scored incident drills. Systems are described as YAML blueprints, drills as YAML files. | In the browser, no install |
+| [`drill-simulator/`](drill-simulator/) | Design a system, add use cases, run them as scored drills. Built-in exchange (brokers, market makers, issuers, clearing) and middle-office trade allocation systems, each with a flow diagram. Investigate with Grafana-, Splunk-, SQL- and Unix-style tools. | In the browser, no install |
 | [`command-center/`](command-center/) | Operations command center demo: alert correlation, incident lifecycle, evidence-based copilot, RCA, shift handover, SLA KPIs, log analyzer. | In the browser, no install |
 | [`linux-lab/`](linux-lab/) | A real Linux machine you can break (disk full, crash, CPU, memory leak). Investigation runs only approved, read-only checks; fixes need a named approver. | Docker |
 
 ## Quick start
 
-**Drill simulator:** open `drill-simulator/dist/index.html` in a browser. Pick a drill, press Start.
+**Drill simulator:** open `drill-simulator/dist/index.html` in a browser. Choose a system, read its flow diagram, pick a use case, press Start.
 
 **Command center:** open `command-center/index.html` and press *Start scenario*.
 
@@ -30,7 +30,9 @@ To publish the browser parts with GitHub Pages: *Settings → Pages → Deploy f
 
 - **Business impact, not just technical metrics.** Every drill runs against a real deadline (the 15:00 affirmation cut-off) and shows impact in ₹ Cr, the way a head of operations sees it.
 - **Faults propagate; nothing is scripted.** A fault only changes one component's rules. Backlogs, consumer lag, alerts and missed cut-offs follow from the flow, so the same fault looks different on a different system design.
-- **Configurable systems.** Put Kafka between two services by editing two lines of YAML. Compare `blueprints/trade-allocation-kafka.yaml` with `trade-allocation-direct.yaml`.
+- **Configurable systems and use cases.** Design a system (members, gateways, Kafka, databases, issuers, external parties) in YAML, then add use cases to it, in the app or as files. Putting Kafka between two services is a two-line change; compare `blueprints/trade-allocation-kafka.yaml` with `trade-allocation-direct.yaml`.
+- **Realistic investigation.** Splunk-style search, a read-only SQL console and a read-only Unix shell all read the live simulation. Participants' and vendors' servers are out of reach, as in real life.
+- **A flow diagram for every system**, grouped by ownership with numbered business steps, available before and during a drill.
 - **Safe-operations scoring.** Restarting a healthy service or acting on the wrong component costs points. Every change needs a named approver and confirmation, as in a regulated environment.
 - **A debrief, not just a score:** timeline, time to detect / acknowledge / diagnose / recover, the signal to spot, why the obvious fix is wrong, and the runbook.
 
@@ -50,7 +52,7 @@ To publish the browser parts with GitHub Pages: *Settings → Pages → Deploy f
 
 ## Roadmap
 
-- More blueprints: exchange order path (FIX gateway → risk → matching → market data), bond issuance, OMS with smart order routing.
+- More systems: bond issuance, OMS with smart order routing, payments.
 - Assessment invites with a candidate report for hiring managers.
 - Team readiness dashboard: drill history per engineer.
 - Drills generated from a team's own (redacted) RCAs.

@@ -1,8 +1,48 @@
 # OpsPilot Drill Simulator
 
-A browser-based incident drill simulator. Describe a system as a YAML **blueprint**, describe incidents as YAML **drills**, and run them against a ticking clock with a business cut-off.
+A browser-based incident drill simulator for production support teams. **Design a system, add use cases to it, and run them as scored drills**, investigating with Grafana-, Splunk-, SQL- and Unix-style tools.
 
 Open `dist/index.html` in any modern browser. No server, no install.
+
+## Built-in systems
+
+| System | Architecture | Use cases |
+|---|---|---|
+| **Equity exchange trading platform** | 3 brokers and 2 market makers over FIX → gateway → pre-trade risk (instrument master kept current by 3 listed issuers) → matching (order book store) → Kafka trade bus → clearing corporation; matching also feeds market data vendors and drop copy | Broker cannot log in · Market maker floods the gateway · Orders rejected in one stock (missed corporate action) · Matching slows to a crawl · Trades not reaching clearing · Some trades never reach clearing (stuck partition) · Mystery |
+| **Middle-office trade allocation** (with Kafka) | OMS and execution desk → Kafka → allocation engine (SSI reference data, allocation DB) → confirmation platform → settlement | Allocations falling behind · One partition stuck · Missing settlement instructions · Confirmations not matching · Allocation engine choking · Mystery |
+| **Middle-office trade allocation** (direct) | Same system without Kafka, to compare designs | All of the above except the stuck partition |
+
+Every system has a **flow diagram** with groups (who owns what) and numbered steps describing the business flow. Participants see it before they start and can open it at any time during a drill.
+
+## How a drill works
+
+1. Choose a system and read its flow diagram.
+2. Choose a use case. Faults are injected at the scheduled time without telling you what or where.
+3. Investigate with the live map, component inspector and four tools (below).
+4. Acknowledge, declare the root cause, and request fixes. Every change needs a named approver and confirmation.
+5. The drill ends when business flow is back to normal or the deadline passes. You get a score and a debrief: timeline, time to detect / acknowledge / diagnose / recover, every tool query you ran, the signal to spot, why the obvious fix is wrong, and the runbook.
+
+## Investigation tools
+
+All tools read the live simulation, so what you find depends on what is actually broken. All are read-only.
+
+| Tool | What it does | Try |
+|---|---|---|
+| **Grafana** | Time-series panels for every component, with alert thresholds | Overview dashboard, or one component's dashboard |
+| **Splunk** | Search every component's logs. Fields `component=` `level=` `earliest=-15m`, `"phrases"`, `NOT`. Commands `stats count by component|level|pattern`, `top pattern` (groups lines that differ only by IDs and numbers), `timechart count`, `head` | `level=ERROR \| stats count by component` |
+| **Database** | SQL console on each database: `v$session`, `sessions` (FIX sessions and sequence numbers), `rejects`, `corporate_actions`, `instruments`, reference data load logs. `SELECT … WHERE … GROUP BY … ORDER BY … LIMIT`, `SHOW TABLES`, `DESCRIBE`. Anything that changes data is refused. | `SELECT * FROM sessions` |
+| **Unix** | Shell on each host the support team owns: `tail`, `grep`, `ps`, `free`, `kubectl get/describe pods`, `kafka-consumer-groups.sh --describe`, `curl` health, `cat` config, with pipes to `grep`, `tail`, `head`, `wc -l`, `sort`. `rm`, `kill`, `sudo`, restarts and other changes are refused. | `kubectl get pods \| grep Pending` |
+
+Participants' and vendors' own servers are deliberately not reachable, just as in real life.
+
+## Design your own
+
+The **Design** tab has two editors:
+
+1. **System**: write or edit a blueprint, check it, and save. It appears as a new system on the Drills tab.
+2. **Use case**: write a drill for the loaded system, starting from a template or a copy of an existing one. It appears under that system.
+
+A reference table lists every component of the loaded system with the faults it can have and the actions that fix them, so you can write use cases without reading code. Designs are saved in the browser; to keep them in the project, copy the YAML into `blueprints/` or `drills/` and run `python3 build.py`.
 
 ## How it works
 
@@ -10,93 +50,77 @@ Three layers keep it configurable:
 
 | Layer | Where | Changes when |
 |---|---|---|
-| **Component types**: how a kind of thing behaves, what it measures, how it fails, how it is fixed | `src/engine.js` (`TYPES`) | You need a new kind of building block (rare) |
-| **Blueprint**: which components a system has and how they connect | `blueprints/*.yaml` | You model a new system |
-| **Drill**: which fault hits which component, the right answer, scoring | `drills/*.yaml` | You write a new exercise |
+| **Component types**: how a kind of thing behaves, what it measures, how it fails and how it is fixed | `src/engine.js` (`TYPES`) | You need a new kind of building block (rare) |
+| **System blueprint**: components, flow, alert rules, flow diagram | `blueprints/*.yaml` | You model a new system |
+| **Use case (drill)**: fault and timing, correct answer, scoring, debrief | `drills/*.yaml` | You write a new exercise |
 
-Every simulated 5 seconds, work flows along the blueprint's chain. The source produces trades; each component takes what its capacity allows and passes it on. A fault only changes one component's rules (fewer instances, a blocked partition, stale reference data, an exhausted connection pool, an unavailable vendor). Backlogs, lag, alerts and the cut-off projection all follow from the flow.
-
-```
-oms ──► trades_topic ──► tam ──► ctm ──► settle
-         (Kafka)          │
-                     ┌────┴────┐
-                    ssi      tam_db
-              (ref data)   (database)
-```
-
-### Files
-
-| File | Job |
-|---|---|
-| `src/engine.js` | Component types, blueprint validation, the simulator (flow, metrics, logs, alerts, health, faults, actions). No screen code. |
-| `src/session.js` | Drill runner: schedules faults, records acknowledgement, root-cause declarations and approved actions, scores the result, builds the debrief. |
-| `src/app.js` | User interface. Draws state and turns clicks into engine calls. |
-| `src/style.css`, `src/index.template.html` | Page design and layout. |
-| `build.py` | Bundles everything (including the YAML files) into `dist/index.html`. |
-| `tests/drills.test.js` | Automated tests (Node's built-in runner). |
-| `vendor/js-yaml.min.js` | YAML parser (MIT licence, see `vendor/js-yaml.LICENSE`). |
-
-## Blueprint format
-
-```yaml
-id: trade-allocation-kafka
-system: Middle-office trade allocation
-clock: {start: "13:30", cutoff: "15:00"}
-business:
-  currency: "₹"
-  unit: "Cr"
-  avg_notional: 0.6            # per trade, to show impact in money
-  produced_at: oms
-  kpis:
-    - {label: "Unallocated", at: tam}
-    - {label: "Not yet affirmed", at: ctm, cutoff: true}
-components:
-  - {id: oms, type: source, name: Order Management, rate_per_min: 300}
-  - {id: trades_topic, type: kafka_topic, name: trades.executed, partitions: 6, consumer_group: tam-allocator}
-  - {id: tam, type: service, name: Allocation Engine, capacity_per_min: 420, instances: 4, uses: [ssi, tam_db]}
-  - {id: ssi, type: ref_data, name: SSI Reference Data, refresh_every_min: 15, stale_after_min: 20}
-  - {id: tam_db, type: database, name: Allocation DB, pool_size: 50}
-  - {id: ctm, type: external_party, name: Confirmation Platform (CTM), capacity_per_min: 520}
-  - {id: settle, type: external_party, name: Settlement (SWIFT), capacity_per_min: 600}
-flow:
-  - oms -> trades_topic -> tam -> ctm -> settle
-alerts:
-  - {name: "Kafka consumer lag high", on: trades_topic, metric: lag, above: 900, severity: P2}
-```
+The flow is a graph: many members can feed one gateway, and one matching engine can feed clearing, market data and drop copy at once. Every simulated 5 seconds, work moves through the graph in dependency order; each component takes what its capacity allows and passes it on. A fault only changes one component's rules (a member's session rejected, a flood of messages, a missed corporate action, a blocked partition, an exhausted connection pool, an unavailable vendor). Queues, lag, rejects, alerts and the deadline projection all follow from the flow, nothing is scripted.
 
 ### Component types
 
 | Type | Required | Metrics (for alert rules) | Faults | Fix actions |
 |---|---|---|---|---|
-| `source` | `rate_per_min` | `out_rate` | — | — |
-| `kafka_topic` | `partitions` | `lag`, `max_partition_lag`, `in_rate`, `out_rate`, `rebalances` | `poison_message`, `rebalance_storm` | `skip_poison_message`, `tune_consumer_timeout` |
-| `service` | `capacity_per_min` (+ optional `instances`, `uses`) | `in_rate`, `out_rate`, `backlog`, `reject_rate`, `error_rate`, `instances`, `latency_ms`, `rejected` | `instances_lost` | `scale_out`, `restart`, `reprocess_rejected` |
+| `source` (participant) | `rate_per_min` (+ `role`, `session`) | `out_rate`, `held` | `session_down`, `order_flood` | `reset_sequence`, `apply_throttle` |
+| `kafka_topic` | `partitions` (+ `consumer_group`) | `lag`, `max_partition_lag`, `in_rate`, `out_rate`, `rebalances` | `poison_message`, `rebalance_storm` | `skip_poison_message`, `tune_consumer_timeout` |
+| `service` | `capacity_per_min` (+ `instances`, `uses`, `rejects: queue\|return`) | `in_rate`, `out_rate`, `backlog`, `reject_rate`, `error_rate`, `instances`, `latency_ms`, `rejected`, `sessions_down` | `instances_lost` | `scale_out`, `restart`, `reprocess_rejected` |
 | `external_party` | `capacity_per_min` | `in_rate`, `out_rate`, `backlog`, `error_rate` | `unavailable` | `escalate_to_vendor`, `restart_adapter` |
 | `ref_data` | `refresh_every_min`, `stale_after_min` | `staleness_min` | `feed_failed` | `force_refresh` |
 | `database` | `pool_size` | `pool_used`, `pool_pct`, `wait_ms` | `pool_exhausted` | `kill_blocking_session` |
+| `issuer` | `feeds` (a `ref_data` id) (+ `symbol`) | `pending_announcements` | `announcement_missed` | `reload_announcement` |
 
-Rules the validator enforces: ids are lowercase; every flow starts with a `source`; a Kafka topic needs a consumer after it; reference data and databases attach to a service with `uses`, not the flow; alert rules name a metric the component actually has; at most one KPI is the cut-off KPI. Errors are reported in plain language with the offending line.
-
-**Inserting Kafka** between two systems is one new component and one changed flow line. With Kafka in between, a slow consumer no longer slows the producer, the early signal becomes consumer lag, and a single stuck partition becomes possible.
-
-## Drill format
+### Blueprint format (excerpt)
 
 ```yaml
-id: stuck-partition
-title: One partition stuck
-level: Medium
-summary: Overall flow looks almost normal, but part of the book is not being allocated.
+id: exchange
+system: Equity exchange trading platform
+clock: {start: "14:30", cutoff: "15:30", cutoff_label: Clearing cut-off}
+business:
+  unit_name: orders
+  avg_notional: 0.04
+  kpis:
+    - {label: "Orders waiting to match", at: matching}
+    - {label: "Trades not with clearing", at: clearing, cutoff: true}
+components:
+  - {id: broker_a, type: source, role: Broker, name: Kestrel Securities, session: KEST01, rate_per_min: 420}
+  - {id: fix_gateway, type: service, name: FIX Order Gateway, capacity_per_min: 2700, instances: 3}
+  - {id: risk, type: service, name: Pre-trade Risk Checks, capacity_per_min: 2800, uses: [instrument_master], rejects: return}
+  - {id: issuer_2, type: issuer, name: Konark Steel Ltd, symbol: KONSTL, feeds: instrument_master}
+  # ...
+flow:
+  - broker_a -> fix_gateway                 # fan-in: one line per member
+  - fix_gateway -> risk -> matching -> trade_bus -> clearing_feed -> clearing
+  - matching -> md_publisher -> md_vendors  # fan-out: matching feeds several systems
+alerts:
+  - {name: "Member session disconnected", on: fix_gateway, metric: sessions_down, above: 0, severity: P2}
+diagram:
+  groups:
+    - {label: "Members", ids: [broker_a, broker_b, broker_c, mm_1, mm_2]}
+  place:                                    # optional [column, row]; auto-layout otherwise
+    fix_gateway: [1, 2]
+  steps:                                    # numbered on the diagram, listed beneath it
+    - {from: broker_a, to: fix_gateway, text: "Brokers send client orders over FIX sessions."}
+```
+
+The validator explains problems in plain language: unknown types or components, loops in the flow, a Kafka topic without exactly one consuming service, alert rules on metrics a component does not have, diagram steps between components that are not connected, and more.
+
+### Use case format (excerpt)
+
+```yaml
+id: exch-member-cannot-log-in
+title: A broker cannot log in
+systems: [exchange]
+level: Easy
 brief: >
-  13:30. Everything looked fine at the start of the afternoon...
+  14:30, one hour before the clearing cut-off...
 faults:
-  - {at: "13:35", component: trades_topic, fault: poison_message, params: {partition: 3}}
-noise:                                   # optional unrelated alerts (red herrings)
-  - {at: "13:43", name: "Disk usage 82% on report-01", severity: P4}
-root_cause: {component: trades_topic, fault: poison_message}
-accepted_fixes: [trades_topic.skip_poison_message]
-risky_actions: [tam.restart]
+  - {at: "14:36", component: broker_b, fault: session_down}
+noise:                                   # optional red herrings
+  - {at: "14:43", name: "Disk usage 83% on md-node-1", severity: P4}
+root_cause: {component: broker_b, fault: session_down}
+accepted_fixes: [broker_b.reset_sequence]
+risky_actions: [fix_gateway.restart]
 hints:                                   # practice mode only, revealed over time
-  - {after_min: 4, text: "Is the lag spread evenly across partitions?"}
+  - {after_min: 2, text: "One member's order flow dropped to zero..."}
 debrief:
   what_happened: ...
   key_signal: ...
@@ -104,7 +128,7 @@ debrief:
   runbook: [step, step, step]
 ```
 
-A drill with `mystery: true` and a `pool:` of scenarios picks one at random. A drill is only offered on blueprints that have the components it needs.
+`mystery: true` with a `pool:` of scenarios picks one at random from those that fit the loaded system.
 
 ## Scoring (100 points)
 
@@ -113,16 +137,27 @@ A drill with `mystery: true` and a `pool:` of scenarios picks one at random. A d
 | Acknowledged promptly | 15 | Time from first real alert (noise excluded) to acknowledgement |
 | Correct root cause | 30 | 30 first time, 15 second time |
 | Applied the right fix | 25 | An accepted action, and the fault cleared |
-| Met the business cut-off | 20 | Flow back to normal before cut-off, or cut-off KPI within tolerance |
+| Met the business deadline | 20 | Flow back to normal before the deadline, or the deadline KPI within tolerance |
 | Safe operations | 10 | −5 per risky action, −3 per unnecessary action |
 
-Every action needs a named approver and confirmation; the session refuses it otherwise.
+## Files
+
+| File | Job |
+|---|---|
+| `src/engine.js` | Component types, blueprint validation, the simulator (flow graph, metrics, logs, alerts, health, faults, actions). No screen code. |
+| `src/session.js` | Drill runner: schedules faults, records acknowledgement, declarations, tool use and approved actions; scores; builds the debrief. |
+| `src/tools.js` | Splunk-style search, read-only SQL console, read-only Unix shell. |
+| `src/app.js` | User interface: system picker, flow diagram, live map, tools, design editors, debrief. |
+| `src/style.css`, `src/index.template.html` | Page design and layout. |
+| `build.py` | Bundles everything, including the YAML files, into `dist/index.html`. |
+| `tests/drills.test.js` | 92 automated tests (Node's built-in runner). |
+| `vendor/js-yaml.min.js` | YAML parser (MIT licence, see `vendor/js-yaml.LICENSE`). |
 
 ## Develop
 
 ```bash
-node --test tests/*.test.js    # 31 tests: validation, steady state, every drill with good and careless responders
+node --test tests/*.test.js    # validation, healthy steady state, every use case on every system it belongs to, tools
 python3 build.py               # rebuild dist/index.html after editing src/, blueprints/ or drills/
 ```
 
-The tests run each drill with a simulated responder who follows the runbook (must recover before cut-off and score at least 85) and one who acknowledges late and restarts the allocator (must score below 50).
+The tests run every use case with a simulated responder who follows the runbook (must recover before the deadline and score at least 85) and one who acknowledges late, guesses wrong and takes a risky action (must score below 50). Mystery drills are tested across ten random picks.

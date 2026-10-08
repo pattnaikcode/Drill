@@ -1,0 +1,41 @@
+id: exch-mystery
+title: Mystery incident on the exchange
+systems: [exchange]
+level: Hard
+summary: One of six real faults, chosen at random. No hints, no clues in the title.
+mystery: true
+brief: >
+  14:30. Something will go wrong before the 15:30 clearing cut-off. You do not know what or where.
+noise:
+  - {at: "14:41", name: "Disk usage 83% on md-node-1", severity: P4}
+pool:
+  - faults: [{at: "14:38", component: broker_c, fault: session_down}]
+    root_cause: {component: broker_c, fault: session_down}
+    accepted_fixes: [broker_c.reset_sequence]
+    risky_actions: [fix_gateway.restart]
+    debrief: {what_happened: "Bluewater Broking's session was rejected on a sequence number mismatch.", key_signal: "Member session disconnected; logon rejected in the gateway log."}
+  - faults: [{at: "14:38", component: mm_2, fault: order_flood, params: {multiplier: 4}}]
+    root_cause: {component: mm_2, fault: order_flood}
+    accepted_fixes: [mm_2.apply_throttle]
+    risky_actions: [fix_gateway.restart]
+    debrief: {what_happened: "Delta Quotes flooded the gateway.", key_signal: "Gateway inbound rate high; throttle warnings for one session."}
+  - faults: [{at: "14:38", component: issuer_1, fault: announcement_missed}]
+    root_cause: {component: issuer_1, fault: announcement_missed}
+    accepted_fixes: [issuer_1.reload_announcement, instrument_master.force_refresh]
+    risky_actions: [risk.restart]
+    debrief: {what_happened: "Mahanadi Power's corporate action was skipped; orders in MAHPWR were rejected.", key_signal: "Risk rejects for one symbol; skipped file in the instrument master log."}
+  - faults: [{at: "14:38", component: orderbook_db, fault: pool_exhausted}]
+    root_cause: {component: orderbook_db, fault: pool_exhausted}
+    accepted_fixes: [orderbook_db.kill_blocking_session]
+    risky_actions: [matching.restart]
+    debrief: {what_happened: "A report held the order book store's connections.", key_signal: "Pool at 100%, timeouts in matching."}
+  - faults: [{at: "14:38", component: clearing, fault: unavailable}]
+    root_cause: {component: clearing, fault: unavailable}
+    accepted_fixes: [clearing.escalate_to_vendor]
+    risky_actions: [clearing_feed.restart, clearing.restart_adapter]
+    debrief: {what_happened: "The clearing corporation was down.", key_signal: "Clearing backlog with 100% failed calls; exchange green."}
+  - faults: [{at: "14:38", component: trade_bus, fault: poison_message, params: {partition: 2}}]
+    root_cause: {component: trade_bus, fault: poison_message}
+    accepted_fixes: [trade_bus.skip_poison_message]
+    risky_actions: [clearing_feed.restart]
+    debrief: {what_happened: "A poison message blocked one trade bus partition.", key_signal: "Lag on one partition; repeating offset."}

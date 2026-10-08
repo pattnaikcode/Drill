@@ -1,5 +1,6 @@
 id: allocations-falling-behind
 title: Allocations falling behind
+systems: [trade-allocation-kafka, trade-allocation-direct]
 level: Easy
 summary: Allocations slow down mid-afternoon. Find out why before the affirmation cut-off.
 brief: >

@@ -9,34 +9,44 @@
   'use strict';
   const S = (typeof module === 'object' && module.exports) ? require('./engine.js') : root.OpsSim;
 
-  function validateDrill(drill, bp) {
+  // problems with one scenario (a normal drill is one scenario; a mystery drill has a pool)
+  function scenarioErrors(sc, bp, where) {
     const errors = [];
-    if (!drill || !drill.id || !drill.title) return ['Drill needs an "id" and a "title".'];
-    const scenarios = drill.mystery ? (drill.pool || []) : [drill];
-    if (drill.mystery && !scenarios.length) errors.push('Mystery drill needs a "pool" of scenarios.');
-    scenarios.forEach((sc, i) => {
-      const where = drill.mystery ? `pool[${i}]` : 'drill';
-      (sc.faults || []).forEach(f => {
-        const c = bp.byId[f.component];
-        if (!c) { errors.push(`${where}: needs component "${f.component}", which this blueprint does not have.`); return; }
-        if (!S.TYPES[c.type].faults[f.fault]) errors.push(`${where}: ${c.type} "${f.component}" has no fault "${f.fault}".`);
-        if (S.parseClock(f.at) === null) errors.push(`${where}: fault time "${f.at}" must look like "13:36".`);
-      });
-      if (!(sc.faults || []).length) errors.push(`${where}: needs at least one fault.`);
-      [...(sc.accepted_fixes || []), ...(sc.risky_actions || [])].forEach(a => {
-        const [cid, act] = String(a).split('.');
-        const c = bp.byId[cid];
-        if (!c) errors.push(`${where}: action "${a}" refers to missing component "${cid}".`);
-        else if (!S.TYPES[c.type].actions[act]) errors.push(`${where}: ${c.type} "${cid}" has no action "${act}".`);
-      });
+    (sc.faults || []).forEach(f => {
+      const c = bp.byId[f.component];
+      if (!c) { errors.push(`${where}: needs component "${f.component}", which this system does not have.`); return; }
+      if (!S.TYPES[c.type].faults[f.fault]) errors.push(`${where}: ${c.type} "${f.component}" has no fault "${f.fault}".`);
+      if (S.parseClock(f.at) === null) errors.push(`${where}: fault time "${f.at}" must look like "13:36".`);
     });
+    if (!(sc.faults || []).length) errors.push(`${where}: needs at least one fault.`);
+    [...(sc.accepted_fixes || []), ...(sc.risky_actions || [])].forEach(a => {
+      const [cid, act] = String(a).split('.');
+      const c = bp.byId[cid];
+      if (!c) errors.push(`${where}: action "${a}" refers to missing component "${cid}".`);
+      else if (!S.TYPES[c.type].actions[act]) errors.push(`${where}: ${c.type} "${cid}" has no action "${act}".`);
+    });
+    if (sc.root_cause && (!bp.byId[sc.root_cause.component] || !S.TYPES[bp.byId[sc.root_cause.component].type].faults[sc.root_cause.fault]))
+      errors.push(`${where}: root_cause must name a component of this system and one of its faults.`);
+    if ((sc.faults || []).some(f => bp.start !== undefined && S.parseClock(f.at) !== null && (S.parseClock(f.at) < bp.start || S.parseClock(f.at) >= bp.cutoff)))
+      errors.push(`${where}: fault times must fall between this system's start (${S.clockStr(bp.start)}) and cut-off (${S.clockStr(bp.cutoff)}).`);
     return errors;
   }
+  function validateDrill(drill, bp) {
+    if (!drill || !drill.id || !drill.title) return ['A use case needs an "id" and a "title".'];
+    if (!drill.mystery) return scenarioErrors(drill, bp, 'drill');
+    const pool = drill.pool || [];
+    if (!pool.length) return ['Mystery drill needs a "pool" of scenarios.'];
+    const errs = pool.map((sc, i) => scenarioErrors(sc, bp, `pool[${i}]`));
+    return errs.some(e => !e.length) ? [] : errs[0]; // usable if at least one scenario fits this system
+  }
+  // which systems a drill is meant for: listed in "systems", or any system it fits
+  function drillFor(drill, bp) { return Array.isArray(drill.systems) ? drill.systems.includes(bp.id) : !validateDrill(drill, bp).length; }
 
   function Session(sim, drill, opts) {
     opts = opts || {};
     this.sim = sim; this.drill = drill; this.mode = opts.mode || 'practice';
-    const pick = drill.mystery ? drill.pool[Math.floor(S.rng(opts.seed || Date.now())() * drill.pool.length)] : drill;
+    const usable = drill.mystery ? drill.pool.filter(sc => !scenarioErrors(sc, sim.bp, '').length) : [drill];
+    const pick = drill.mystery ? usable[Math.floor(S.rng(opts.seed || Date.now())() * usable.length)] : drill;
     this.sc = pick; // the scenario actually running (for mystery drills, hidden from the responder)
     this.state = 'running';
     this.faultPlan = (pick.faults || []).map(f => ({ ...f, t: S.parseClock(f.at), done: false }));
@@ -61,7 +71,7 @@
     });
     // recovered: every fault fixed, exception queues empty, business back within normal in-flight volume
     const allInjected = this.faultPlan.every(f => f.done);
-    if (allInjected && sim.t > this.lastFaultAt + 60 && !sim.activeFaults().length && sim.pendingRepair().rejected < 1) {
+    if (allInjected && sim.t > this.lastFaultAt + 60 && !sim.activeFaults().length && sim.pendingRepair().rejected < 1 && sim.pendingRepair().held < 1) {
       const k = sim.cutoffKpi();
       if (!k || k.trades <= sim.bp.business.tolerance_trades) {
         this.recoveredAt = sim.t;
@@ -73,7 +83,7 @@
     if (sim.t >= sim.bp.cutoff) {
       const k = sim.cutoffKpi();
       this.cutoffResult = k;
-      this.timeline.push({ t: sim.t, kind: 'cutoff', text: `Cut-off reached with ${S.fmtInt(k ? k.trades : 0)} trades ${k ? k.label.toLowerCase() : ''}` });
+      this.timeline.push({ t: sim.t, kind: 'cutoff', text: `${sim.bp.clockLabel} reached. ${k ? k.label + ': ' + S.fmtInt(k.trades) + ' ' + sim.bp.business.unit_name : ''}` });
       this.finish('cutoff');
     }
   };
@@ -125,6 +135,16 @@
     return r;
   };
 
+  // investigation tools used (Grafana, Splunk, SQL, shell): recorded for the debrief
+  Session.prototype.useTool = function (tool, detail) {
+    if (this.state !== 'running') return;
+    this.toolUse = this.toolUse || [];
+    const last = this.toolUse[this.toolUse.length - 1];
+    if (last && last.tool === tool && last.detail === detail) return;
+    this.toolUse.push({ t: this.sim.t, tool, detail });
+    this.timeline.push({ t: this.sim.t, kind: 'tool', text: `${tool}: ${detail}` });
+  };
+
   Session.prototype.visibleHints = function () {
     if (this.mode !== 'practice') return [];
     const mins = (this.sim.t - this.faultAt) / 60;
@@ -154,13 +174,13 @@
     // 4. business outcome
     const tol = sim.bp.business.tolerance_trades;
     let bizPts = 0, bizNote;
-    if (this.recoveredAt !== null) { bizPts = 20; bizNote = `Business flow normal at ${S.clockStr(this.recoveredAt)}, before the ${S.clockStr(sim.bp.cutoff)} cut-off`; }
+    if (this.recoveredAt !== null) { bizPts = 20; bizNote = `Business flow normal at ${S.clockStr(this.recoveredAt)}, before the ${S.clockStr(sim.bp.cutoff)} ${sim.bp.clockLabel.toLowerCase()}`; }
     else if (this.cutoffResult) {
       const k = this.cutoffResult;
       bizPts = k.trades <= tol ? 20 : k.trades <= tol * 3 ? 10 : 0;
-      bizNote = `${S.fmtInt(k.trades)} trades (${sim.bp.business.currency}${S.fmtInt(k.notional)} ${sim.bp.business.unit}) ${k.label.toLowerCase()} at cut-off`;
+      bizNote = `${k.label} at cut-off: ${S.fmtInt(k.trades)} ${sim.bp.business.unit_name} (${sim.bp.business.currency}${S.fmtInt(k.notional)} ${sim.bp.business.unit})`;
     } else bizNote = 'Drill ended before recovery or cut-off';
-    parts.push({ label: 'Met the business cut-off', pts: bizPts, max: 20, note: bizNote });
+    parts.push({ label: 'Met the business deadline', pts: bizPts, max: 20, note: bizNote });
     // 5. safe operations
     const risky = this.actions.filter(a => a.cls === 'risky').length, unnec = this.actions.filter(a => a.cls === 'unnecessary').length;
     const safePts = Math.max(0, 10 - risky * 5 - unnec * 3);
@@ -188,11 +208,11 @@
       answer: { component: c.def.name, fault: S.TYPES[c.type].faults[rc.fault].label },
       accepted: (this.sc.accepted_fixes || []).map(k => { const [cid, a] = k.split('.'); return `${S.TYPES[sim.c[cid].type].actions[a].label} on ${sim.c[cid].def.name}`; }),
       notes: this.sc.debrief || {}, actions: this.actions, declarations: this.declarations,
-      inspected: [...this.inspected].map(id => sim.c[id].def.name),
+      inspected: [...this.inspected].map(id => sim.c[id].def.name), tools: this.toolUse || [],
     };
   };
 
-  const OpsDrill = { Session, validateDrill };
+  const OpsDrill = { Session, validateDrill, drillFor };
   if (typeof module === 'object' && module.exports) module.exports = OpsDrill;
   else root.OpsDrill = OpsDrill;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

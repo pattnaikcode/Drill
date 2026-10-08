@@ -99,6 +99,10 @@ label.field > select, label.field > input { color: var(--ink); width: 100%; }
 
 /* run */
 .run { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 14px; align-items: start; }
+.run > .wide { grid-column: 1 / -1; }
+.pick { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; }
+.pick select { width: 100%; }
+.pick .btn { justify-self: start; }
 .map { overflow-x: auto; }
 .map svg { display: block; width: 100%; min-width: 640px; height: auto; }
 .node { cursor: pointer; }
@@ -165,6 +169,53 @@ code { font-family: var(--mono); font-size: 12.5px; background: var(--sunk); pad
 .cls.accepted { color: var(--ok); } .cls.risky { color: var(--bad); } .cls.unnecessary { color: var(--warn); }
 .empty { padding: 28px; text-align: center; color: var(--muted); }
 footer { max-width: 1440px; margin: 0 auto; padding: 0 16px 28px; color: var(--muted); font-size: 12.5px; }
+
+
+/* system diagram (shared by live map and flow diagram) */
+.grp { fill: var(--sunk); stroke: var(--line); stroke-dasharray: 5 4; }
+.grp-l { fill: var(--muted); font-family: var(--display); font-size: 12px; font-weight: 600; letter-spacing: .5px; text-transform: uppercase; }
+.arrowhead { fill: none; stroke: var(--muted); stroke-width: 1.6; }
+.edge.dep { stroke-dasharray: 5 4; }
+.edge.feed { stroke-dasharray: 1.5 4; stroke-width: 1.8; }
+.node.plain rect.bar { fill: var(--accent); }
+.node.plain.t-source rect.bar, .node.plain.t-issuer rect.bar, .node.plain.t-external_party rect.bar { fill: var(--muted); }
+.badge circle { fill: var(--accent); }
+.badge text { fill: var(--panel); font-family: var(--mono); font-size: 11px; font-weight: 500; }
+ol.steps { margin: 0; padding-left: 26px; display: grid; gap: 4px; font-size: 14px; max-width: 90ch; }
+ol.steps li::marker { font-family: var(--mono); color: var(--accent); font-weight: 500; }
+
+/* secondary tabs (map view, investigation tools) */
+.tabs2 { display: flex; gap: 2px; flex-wrap: wrap; border-bottom: 1px solid var(--line); }
+.tabs2 button { background: none; border: 0; border-bottom: 2px solid transparent; padding: 6px 12px; font-family: var(--display); font-weight: 600; font-size: 14.5px; color: var(--muted); }
+.tabs2 button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { border: 1px solid var(--line); background: var(--sunk); border-radius: 14px; padding: 2px 10px; font-family: var(--mono); font-size: 12px; color: var(--ink); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chip:hover { border-color: var(--accent); }
+input.grow { flex: 1 1 220px; }
+textarea.code.sql { min-height: 70px; }
+.err-box { margin: 0; padding: 8px 10px; border-radius: 6px; background: var(--bad-soft); color: var(--bad); font-family: var(--mono); font-size: 12.5px; }
+.tablewrap.res { max-height: 320px; overflow: auto; border: 1px solid var(--line); border-radius: 6px; }
+.tablewrap.res th { position: sticky; top: 0; background: var(--panel); }
+
+/* grafana-style panels */
+.ggrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 10px; }
+.gpanel { border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px 4px; background: var(--sunk); min-width: 0; }
+.gpanel svg { display: block; width: 100%; height: auto; }
+.gtitle { font-size: 13px; font-weight: 600; }
+.gval { font-family: var(--mono); font-size: 14px; }
+.gval.over { color: var(--bad); }
+.gpanel .grid { stroke: var(--line); stroke-width: 1; }
+.gpanel .thr { stroke: var(--bad); stroke-dasharray: 5 4; stroke-width: 1.2; }
+.gpanel .area { fill: var(--accent-soft); }
+.gpanel .ln { fill: none; stroke: var(--accent); stroke-width: 1.8; }
+.gpanel .dot { fill: var(--accent); }
+.ax { fill: var(--muted); font-family: var(--mono); font-size: 10.5px; }
+
+/* splunk-style histogram */
+.hist { display: block; width: 100%; max-width: 640px; height: auto; }
+.hist .hb { fill: var(--accent-soft); stroke: var(--accent); stroke-width: .6; }
+.hist .hbe { fill: var(--warn); opacity: .75; }
+.tl li.k-tool { color: var(--accent); }
 
 @media (max-width: 1080px) { .run, .bp { grid-template-columns: 1fr; } }
 @media (max-width: 640px) {

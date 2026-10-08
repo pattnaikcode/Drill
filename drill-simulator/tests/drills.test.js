@@ -1,4 +1,4 @@
-// Run with: node --test tests/
+// Run with: node --test tests/*.test.js
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
@@ -9,9 +9,12 @@ const D = require('../src/session.js');
 
 const dir = p => path.join(__dirname, '..', p);
 const bpText = f => fs.readFileSync(dir('blueprints/' + f), 'utf8');
+const BLUEPRINTS = Object.fromEntries(fs.readdirSync(dir('blueprints')).filter(f => f.endsWith('.yaml')).map(f => {
+  const r = S.parseBlueprint(bpText(f), yaml);
+  if (r.errors.length) throw new Error(f + ': ' + r.errors.join('; '));
+  return [r.blueprint.id, r.blueprint];
+}));
 const drills = fs.readdirSync(dir('drills')).sort().map(f => yaml.load(fs.readFileSync(dir('drills/' + f), 'utf8')));
-const KAFKA = S.parseBlueprint(bpText('trade-allocation-kafka.yaml'), yaml).blueprint;
-const DIRECT = S.parseBlueprint(bpText('trade-allocation-direct.yaml'), yaml).blueprint;
 
 function run(drill, bp, responder, seed) {
   const sim = new S.Simulator(bp, { seed: 11 });
@@ -21,80 +24,112 @@ function run(drill, bp, responder, seed) {
   return s;
 }
 
-// a responder who follows the runbook: acknowledge, diagnose, apply each accepted fix in order
+// follows the runbook: acknowledge, diagnose, apply each accepted fix in order, clear exception queues
 function good(s) {
   if (s.firstAlertAt() !== null && s.ackAt === null) s.acknowledge('Test responder');
   if (s.ackAt !== null && !s.declarations.length && s.sim.t >= s.firstAlertAt() + 120) s.declare(s.sc.root_cause.component, s.sc.root_cause.fault);
-  if (s.declarations.length) {
-    const next = s.sc.accepted_fixes.find(k => !s.actions.some(a => a.key === k));
-    if (next) {
-      const [c, a] = next.split('.');
-      if (a === 'reprocess_rejected' && s.sim.activeFaults().length) return; // fix the data first
-      s.requestAction(c, a, 'Approver', true);
-    } else if (s.sim.pendingRepair().rejected >= 1 && !s.sim.activeFaults().length) {
-      s.requestAction('tam', 'reprocess_rejected', 'Approver', true);
-    }
+  if (!s.declarations.length) return;
+  const next = s.sc.accepted_fixes.find(k => !s.actions.some(a => a.key === k));
+  if (next) {
+    const [c, a] = next.split('.');
+    if (a === 'reprocess_rejected' && s.sim.activeFaults().length) return; // fix the data first
+    s.requestAction(c, a, 'Approver', true);
+  } else if (!s.sim.activeFaults().length) {
+    Object.values(s.sim.c).filter(x => x.type === 'service' && x.rejected >= 1).forEach(x => s.requestAction(x.def.id, 'reprocess_rejected', 'Approver', true));
   }
 }
 
-// a responder who acknowledges late and restarts the allocator
-function bad(s) {
+// acknowledges late, guesses a wrong cause, and takes the first risky action
+function careless(s) {
   if (s.firstAlertAt() !== null && s.sim.t > s.firstAlertAt() + 1500 && s.ackAt === null) {
     s.acknowledge('Test responder');
-    s.declare('tam', 'instances_lost' === s.sc.root_cause.fault ? 'instances_lost' : 'instances_lost');
-    s.requestAction('tam', 'restart', 'Approver', true);
+    const wrong = Object.values(s.sim.c).find(x => x.def.id !== s.sc.root_cause.component && Object.keys(S.TYPES[x.type].faults).length);
+    s.declare(wrong.def.id, Object.keys(S.TYPES[wrong.type].faults)[0]);
+    const [c, a] = s.sc.risky_actions[0].split('.');
+    s.requestAction(c, a, 'Approver', true);
   }
 }
 
-test('both blueprints are valid', () => {
-  assert.ok(KAFKA && DIRECT);
-  assert.deepStrictEqual(KAFKA.chains, [['oms', 'trades_topic', 'tam', 'ctm', 'settle']]);
-  assert.deepStrictEqual(DIRECT.chains, [['oms', 'tam', 'ctm', 'settle']]);
+test('all blueprints are valid', () => {
+  assert.deepStrictEqual(Object.keys(BLUEPRINTS).sort(), ['exchange', 'trade-allocation-direct', 'trade-allocation-kafka']);
+  assert.strictEqual(BLUEPRINTS.exchange.ups.fix_gateway.length, 5, 'five members feed the gateway (fan-in)');
+  assert.deepStrictEqual(BLUEPRINTS.exchange.downs.matching.sort(), ['drop_copy', 'md_publisher', 'trade_bus'], 'matching feeds three systems (fan-out)');
 });
 
 test('blueprint validation catches common mistakes', () => {
   const errs = t => S.parseBlueprint(t, yaml).errors.join('\n');
-  assert.match(errs('system: x\ncomponents:\n  - {id: a, type: kafkaa}\nflow: [a -> b]'), /unknown type "kafkaa"/);
-  assert.match(errs(bpText('trade-allocation-kafka.yaml').replace('oms -> trades_topic', 'oms -> trades_tpoic')), /unknown component "trades_tpoic"/);
-  assert.match(errs(bpText('trade-allocation-kafka.yaml').replace('metric: lag,', 'metric: lagg,')), /no metric "lagg"/);
-  assert.match(errs(bpText('trade-allocation-kafka.yaml').replace('partitions: 6', 'partitions: 0')), /"partitions" is required/);
+  const k = bpText('trade-allocation-kafka.yaml');
+  assert.match(errs('system: x\ncomponents:\n  - {id: a, type: kafkaa, name: A}\nflow: [a -> b]'), /unknown type "kafkaa"/);
+  assert.match(errs(k.replace('trades_topic -> tam', 'trades_tpoic -> tam')), /unknown component "trades_tpoic"/);
+  assert.match(errs(k.replace('metric: lag,', 'metric: lagg,')), /no metric "lagg"/);
+  assert.match(errs(k.replace('partitions: 6', 'partitions: 0')), /"partitions" is required/);
+  assert.match(errs(k.replace('- trades_topic -> tam -> ctm -> settle', '- trades_topic -> tam -> ctm -> settle\n  - settle -> tam')), /loop/);
+  assert.match(errs(k.replace('{from: tam, to: ctm,', '{from: oms, to: settle,')), /not connected/);
   assert.match(errs('system: [unclosed'), /YAML syntax/);
 });
 
-test('steady state is healthy with no alerts', () => {
-  for (const bp of [KAFKA, DIRECT]) {
+test('every system is healthy with no alerts when nothing is broken', () => {
+  for (const bp of Object.values(BLUEPRINTS)) {
     const sim = new S.Simulator(bp, { seed: 3 });
-    for (let i = 0; i < 120; i++) sim.step(5);
-    assert.strictEqual(sim.alerts.length, 0, bp.id + ' should not alert when healthy');
-    assert.ok(Object.keys(sim.c).every(id => sim.health(id) === 'ok'));
+    for (let i = 0; i < 180; i++) sim.step(5);
+    assert.strictEqual(sim.alerts.length, 0, bp.id + ' alerted: ' + sim.alerts.map(a => a.name).join(', '));
+    const bad = Object.keys(sim.c).filter(id => sim.health(id) !== 'ok');
+    assert.deepStrictEqual(bad, [], bp.id + ' unhealthy: ' + bad.join(', '));
   }
 });
 
-test('Kafka-only drills are rejected on the blueprint without Kafka', () => {
+test('use cases are offered only on their systems', () => {
   const stuck = drills.find(d => d.id === 'stuck-partition');
-  assert.match(D.validateDrill(stuck, DIRECT).join(), /trades_topic/);
-  assert.deepStrictEqual(D.validateDrill(stuck, KAFKA), []);
+  assert.strictEqual(D.drillFor(stuck, BLUEPRINTS['trade-allocation-direct']), false);
+  assert.strictEqual(D.drillFor(stuck, BLUEPRINTS.exchange), false);
+  assert.match(D.validateDrill(stuck, BLUEPRINTS['trade-allocation-direct']).join(), /trades_topic/);
+  const exch = drills.filter(d => D.drillFor(d, BLUEPRINTS.exchange)).length;
+  assert.strictEqual(exch, 7);
 });
 
 for (const drill of drills) {
-  test(`drill "${drill.id}" is valid on the Kafka blueprint`, () => assert.deepStrictEqual(D.validateDrill(drill, KAFKA), []));
-  const seeds = drill.mystery ? [1, 2, 3, 4, 5, 6, 7, 8] : [1];
-  for (const seed of seeds) {
-    test(`drill "${drill.id}"${drill.mystery ? ' seed ' + seed : ''}: good responder recovers before cut-off`, () => {
-      const s = run(drill, KAFKA, good, seed);
-      const sc = s.score();
-      assert.strictEqual(s.endReason, 'recovered', `ended with ${s.endReason}; ${JSON.stringify(sc.parts)}`);
-      assert.ok(sc.total >= 85, `score ${sc.total}: ${JSON.stringify(sc.parts)}`);
+  for (const sysId of drill.systems) {
+    const bp = BLUEPRINTS[sysId];
+    test(`"${drill.id}" is valid on ${sysId}`, () => assert.deepStrictEqual(D.validateDrill(drill, bp), []));
+    const seeds = drill.mystery ? [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] : [1];
+    for (const seed of seeds) {
+      test(`"${drill.id}" on ${sysId}${drill.mystery ? ' seed ' + seed : ''}: runbook responder recovers before cut-off`, () => {
+        const s = run(drill, bp, good, seed);
+        const sc = s.score();
+        assert.strictEqual(s.endReason, 'recovered', `ended with ${s.endReason}; ${JSON.stringify(sc.parts)}`);
+        assert.ok(sc.total >= 85, `score ${sc.total}: ${JSON.stringify(sc.parts)}`);
+      });
+    }
+    test(`"${drill.id}" on ${sysId}: careless responder scores low`, () => {
+      const s = run(drill, bp, careless, 3);
+      assert.ok(s.score().total < 50, `score ${s.score().total}: ${JSON.stringify(s.score().parts)}`);
     });
   }
-  test(`drill "${drill.id}": careless responder scores low`, () => {
-    const s = run(drill, KAFKA, bad, 3);
-    assert.ok(s.score().total < 50, `score ${s.score().total}`);
-  });
 }
 
+test('restarting the gateway does not fix a member sequence mismatch, and disconnects everyone', () => {
+  const sim = new S.Simulator(BLUEPRINTS.exchange, { seed: 5 });
+  sim.injectFault('broker_b', 'session_down');
+  for (let i = 0; i < 24; i++) sim.step(5);
+  const r = sim.applyAction('fix_gateway', 'restart');
+  assert.match(r.message, /All 5 participant sessions were disconnected/);
+  for (let i = 0; i < 24; i++) sim.step(5);
+  assert.strictEqual(sim.metric('fix_gateway', 'sessions_down'), 1);
+  assert.ok(sim.c.broker_b.held > 100);
+});
+
+test('a missed corporate action rejects orders in one symbol, and rejects go back to the member', () => {
+  const sim = new S.Simulator(BLUEPRINTS.exchange, { seed: 5 });
+  sim.injectFault('issuer_2', 'announcement_missed');
+  for (let i = 0; i < 60; i++) sim.step(5);
+  assert.ok(sim.metric('risk', 'reject_rate') > 4);
+  assert.strictEqual(sim.c.risk.rejected, 0, 'returned rejects are not held for reprocessing');
+  assert.ok(sim.c.risk.logs.some(l => /KONSTL/.test(l.msg)));
+  assert.strictEqual(sim.health('issuer_2'), 'ok', 'the exchange cannot see inside an issuer');
+});
+
 test('restarting the consumer does not clear a poison message', () => {
-  const sim = new S.Simulator(KAFKA, { seed: 5 });
+  const sim = new S.Simulator(BLUEPRINTS['trade-allocation-kafka'], { seed: 5 });
   sim.injectFault('trades_topic', 'poison_message', { partition: 2 });
   for (let i = 0; i < 60; i++) sim.step(5);
   sim.applyAction('tam', 'restart');
@@ -104,9 +139,42 @@ test('restarting the consumer does not clear a poison message', () => {
 });
 
 test('actions need a named approver and confirmation', () => {
-  const sim = new S.Simulator(KAFKA, { seed: 5 });
-  const s = new D.Session(sim, drills[0], {});
+  const sim = new S.Simulator(BLUEPRINTS['trade-allocation-kafka'], { seed: 5 });
+  const s = new D.Session(sim, drills.find(d => d.id === 'allocations-falling-behind'), {});
   assert.strictEqual(s.requestAction('tam', 'scale_out', '', true).ok, false);
   assert.strictEqual(s.requestAction('tam', 'scale_out', 'Rahul', false).ok, false);
   assert.strictEqual(s.actions.length, 0);
+});
+
+// ---------------------------------------------------------------- investigation tools
+const T = require('../src/tools.js');
+test('tools: SQL console is read-only and finds the blocking session', () => {
+  const sim = new S.Simulator(BLUEPRINTS.exchange, { seed: 5 });
+  sim.injectFault('orderbook_db', 'pool_exhausted');
+  for (let i = 0; i < 24; i++) sim.step(5);
+  for (const bad of ["DELETE FROM sessions", "update sessions set status='X'", "ALTER SYSTEM KILL SESSION '482,1'", 'drop table rejects'])
+    assert.match(T.sql(sim, 'orderbook_db', bad).error, /read-only/);
+  const r = T.sql(sim, 'orderbook_db', 'SELECT sid, program, connections_held FROM v$session ORDER BY connections_held DESC LIMIT 1');
+  assert.deepStrictEqual(r.rows[0], [482, 'month_end_recon_report', 76]);
+  assert.match(T.sql(sim, 'orderbook_db', 'SELECT nope FROM sessions').error, /invalid identifier/);
+});
+test('tools: Splunk-style search groups errors and normalises patterns', () => {
+  const sim = new S.Simulator(BLUEPRINTS.exchange, { seed: 5 });
+  sim.injectFault('issuer_2', 'announcement_missed');
+  for (let i = 0; i < 60; i++) sim.step(5);
+  const r = T.search(sim, 'level=ERROR | stats count by component');
+  assert.strictEqual(r.table.rows[0][0], 'risk');
+  const top = T.search(sim, 'component=risk level=ERROR | top pattern');
+  assert.match(top.table.rows[0][0], /outside band for KONSTL/);
+  assert.ok(T.search(sim, '* | frobnicate').error);
+});
+test('tools: Unix shell is read-only and shows the real state', () => {
+  const sim = new S.Simulator(BLUEPRINTS['trade-allocation-kafka'], { seed: 5 });
+  sim.injectFault('tam', 'instances_lost');
+  for (let i = 0; i < 24; i++) sim.step(5);
+  for (const bad of ['rm -rf /var/log', 'kill -9 3120', 'sudo reboot', 'systemctl restart tam', 'kubectl delete pod tam-7f9c-3'])
+    assert.match(T.shell(sim, 'tam-node1', bad), /Permission denied/);
+  assert.strictEqual((T.shell(sim, 'tam-node1', 'kubectl get pods | grep Pending | wc -l')), '2');
+  assert.match(T.shell(sim, 'tam-node1', 'kubectl describe pod tam-7f9c-4'), /Insufficient memory/);
+  assert.match(T.shell(sim, 'nowhere', 'ls'), /Could not resolve/);
 });

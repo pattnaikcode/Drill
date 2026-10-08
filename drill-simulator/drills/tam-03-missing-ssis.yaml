@@ -1,5 +1,6 @@
 id: missing-ssis
 title: Missing settlement instructions
+systems: [trade-allocation-kafka, trade-allocation-direct]
 level: Medium
 summary: Some allocations are being rejected. The allocation engine itself looks healthy.
 brief: >

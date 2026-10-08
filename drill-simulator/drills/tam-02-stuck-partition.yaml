@@ -1,5 +1,6 @@
 id: stuck-partition
 title: One partition stuck
+systems: [trade-allocation-kafka]
 level: Medium
 summary: Overall flow looks almost normal, but part of the book is not being allocated.
 brief: >

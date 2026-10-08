@@ -1,5 +1,6 @@
 id: confirmation-platform-down
 title: Confirmations not matching
+systems: [trade-allocation-kafka, trade-allocation-direct]
 level: Medium
 summary: Allocations are fine, yet nothing is getting affirmed. Decide what is in your control.
 brief: >

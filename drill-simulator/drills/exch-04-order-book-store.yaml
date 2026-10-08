@@ -1,0 +1,31 @@
+id: exch-order-book-store
+title: Matching slows to a crawl
+systems: [exchange]
+level: Hard
+summary: Many alerts fire at once across the exchange. Find the one that is the cause.
+brief: >
+  14:30. Month-end. The surveillance team runs heavy reports in the afternoon. The clearing
+  cut-off is 15:30.
+faults:
+  - {at: "14:37", component: orderbook_db, fault: pool_exhausted}
+noise:
+  - {at: "14:39", name: "CPU 81% on gw-node-2", severity: P4}
+root_cause: {component: orderbook_db, fault: pool_exhausted}
+accepted_fixes: [orderbook_db.kill_blocking_session]
+risky_actions: [matching.restart, fix_gateway.restart]
+hints:
+  - {after_min: 2, text: "Matching throughput fell, but matching has all its instances. What does matching depend on?"}
+  - {after_min: 6, text: "Look at the Order Book Store's connections and who is holding them."}
+debrief:
+  what_happened: >
+    A month-end surveillance report ran a full table scan on ORDER_HIST and held 76 of 80 order
+    book store connections. Matching waited for connections and processed a fifth of its normal volume.
+  key_signal: Order book store pool at 100% and connection timeouts in the matching engine log.
+  why_not_restart: >
+    Restarting matching during trading is a market-wide event, and it would come back to the same
+    exhausted pool. Free the connections first.
+  runbook:
+    - Check the pool and the longest-running sessions on the order book store.
+    - Kill the blocking report session with approval and inform its owner.
+    - Watch matching throughput and the clearing projection recover.
+    - Raise a problem: move reports to a replica.

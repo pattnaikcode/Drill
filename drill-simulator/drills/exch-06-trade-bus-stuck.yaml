@@ -1,0 +1,26 @@
+id: exch-trade-bus-stuck
+title: Some trades never reach clearing
+systems: [exchange]
+level: Hard
+summary: Clearing receives trades, but a slice of them is missing. Total throughput looks almost normal.
+brief: >
+  14:30. A new release of the matching engine went live this morning. The clearing cut-off is 15:30.
+faults:
+  - {at: "14:35", component: trade_bus, fault: poison_message, params: {partition: 5}}
+root_cause: {component: trade_bus, fault: poison_message}
+accepted_fixes: [trade_bus.skip_poison_message]
+risky_actions: [clearing_feed.restart, matching.restart]
+hints:
+  - {after_min: 3, text: "Throughput to clearing dropped by only one-eighth. Is the trade bus lag even across partitions?"}
+  - {after_min: 8, text: "The clearing feed adapter's log repeats the same offset."}
+debrief:
+  what_happened: >
+    The new matching release published one trade with a field the clearing feed adapter could not
+    read. The adapter retried it forever, blocking partition 5 while the other seven kept flowing.
+  key_signal: Lag growing on a single trade bus partition and a repeating offset in the adapter log.
+  why_not_restart: Restarting the adapter re-reads the same message and gets stuck again.
+  runbook:
+    - Compare lag per partition, not just total lag.
+    - Find the offset in the adapter's error log.
+    - Park the message to the dead-letter topic with approval; repair and submit that trade manually.
+    - Raise a problem for schema compatibility checks in the release process.

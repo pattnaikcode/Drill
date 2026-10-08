@@ -1,0 +1,29 @@
+id: exch-member-cannot-log-in
+title: A broker cannot log in
+systems: [exchange]
+level: Easy
+summary: A member's desk says their orders are not reaching the exchange.
+brief: >
+  14:30, one hour before the clearing cut-off. You are on the exchange's market operations
+  support desk. Members call you when they cannot trade.
+faults:
+  - {at: "14:36", component: broker_b, fault: session_down}
+root_cause: {component: broker_b, fault: session_down}
+accepted_fixes: [broker_b.reset_sequence]
+risky_actions: [fix_gateway.restart]
+hints:
+  - {after_min: 2, text: "One member's order flow dropped to zero. Which session, and what does the gateway log say about its logon?"}
+  - {after_min: 6, text: "A sequence-number mismatch is agreed and reset with the member; it is not fixed by restarting the gateway."}
+debrief:
+  what_happened: >
+    Narmada Capital's FIX engine came back after a restart with an old sequence number. The gateway
+    rejected every logon as "MsgSeqNum too low", so their orders queued on their side.
+  key_signal: Member session disconnected alert, zero order flow from one session, and logon-rejected lines in the gateway log.
+  why_not_restart: >
+    Restarting the gateway disconnects all five members and halves capacity, and the broken
+    session still has the wrong sequence number when it comes back.
+  runbook:
+    - Identify the session from the gateway log (session id and member).
+    - Call the member, agree the sequence numbers, and reset them for that session only.
+    - Watch the member's queued orders resend and the gateway queue drain.
+    - Note the incident for the member's monthly connectivity report.

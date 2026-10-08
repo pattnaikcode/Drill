@@ -1,0 +1,28 @@
+id: exch-corporate-action-missed
+title: Orders rejected in one stock
+systems: [exchange]
+level: Medium
+summary: Members complain that orders in one symbol are rejected for price, even at the last traded price.
+brief: >
+  14:30. Konark Steel announced a stock split effective today. Trading looks normal overall.
+  The clearing cut-off is 15:30.
+faults:
+  - {at: "14:33", component: issuer_2, fault: announcement_missed}
+root_cause: {component: issuer_2, fault: announcement_missed}
+accepted_fixes: [issuer_2.reload_announcement, instrument_master.force_refresh]
+risky_actions: [risk.restart]
+hints:
+  - {after_min: 2, text: "Rejects are not a capacity problem. Which symbol do the rejected orders have in common?"}
+  - {after_min: 6, text: "Check the instrument master's load log. Was every corporate action file applied?"}
+debrief:
+  what_happened: >
+    Konark Steel's corporate action file used a new ISIN format and was skipped during the
+    instrument master load. Its price band still reflected the pre-split price, so risk checks
+    rejected valid orders in KONSTL.
+  key_signal: Risk reject rate above 2% with normal throughput, all rejects for one symbol, and a skipped file in the instrument master log.
+  why_not_restart: The risk service is working correctly on wrong data. Restarting it changes nothing.
+  runbook:
+    - Group rejected orders by symbol and reject reason.
+    - Check the instrument master load log for skipped corporate action files.
+    - Reprocess the issuer's corporate action (or reload the instrument master) with approval.
+    - Inform members that orders in the symbol can be re-entered.

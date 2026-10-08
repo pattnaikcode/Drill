@@ -1,0 +1,118 @@
+# An equity exchange: members (brokers and market makers) trade through the exchange's
+# gateway, risk checks and matching engine. Listed companies (issuers) keep the instrument
+# master current through corporate actions. Trades go to the clearing corporation over
+# an internal Kafka bus; market data and drop copies go out to subscribers and members.
+
+id: exchange
+system: Equity exchange trading platform
+description: >
+  Three brokers and two market makers connect over FIX. Orders pass session and throttle
+  checks at the gateway, pre-trade risk checks against the instrument master, and price-time
+  matching. Trades reach the clearing corporation before the clearing cut-off.
+
+clock:
+  start: "14:30"
+  cutoff: "15:30"
+  cutoff_label: Clearing cut-off
+
+business:
+  currency: "₹"
+  unit: "Cr"
+  unit_name: orders
+  avg_notional: 0.04          # about ₹4 lakh per order
+  kpis:
+    - {label: "Orders waiting to match", at: matching}
+    - {label: "Trades not with clearing", at: clearing, cutoff: true}
+
+components:
+  # members
+  - {id: broker_a, type: source, role: Broker, name: Kestrel Securities, session: KEST01, rate_per_min: 420}
+  - {id: broker_b, type: source, role: Broker, name: Narmada Capital, session: NRMD02, rate_per_min: 300}
+  - {id: broker_c, type: source, role: Broker, name: Bluewater Broking, session: BLUW03, rate_per_min: 230}
+  - {id: mm_1, type: source, role: Market maker, name: Arcline Markets, session: ARCL11, rate_per_min: 600}
+  - {id: mm_2, type: source, role: Market maker, name: Delta Quotes, session: DLTQ12, rate_per_min: 450}
+
+  # exchange trading system
+  - {id: fix_gateway, type: service, role: Exchange, name: FIX Order Gateway, capacity_per_min: 2700, instances: 3}
+  - {id: risk, type: service, role: Exchange, name: Pre-trade Risk Checks, capacity_per_min: 2800, instances: 4, uses: [instrument_master], rejects: return}
+  - {id: matching, type: service, role: Exchange, name: Matching Engine, capacity_per_min: 3000, instances: 2, uses: [orderbook_db]}
+  - {id: instrument_master, type: ref_data, name: Instrument Master, refresh_every_min: 10, stale_after_min: 30}
+  - {id: orderbook_db, type: database, name: Order Book Store, pool_size: 80, big_table: ORDER_HIST}
+
+  # listed companies
+  - {id: issuer_1, type: issuer, role: Issuer, name: Mahanadi Power Ltd, symbol: MAHPWR, feeds: instrument_master}
+  - {id: issuer_2, type: issuer, role: Issuer, name: Konark Steel Ltd, symbol: KONSTL, feeds: instrument_master}
+  - {id: issuer_3, type: issuer, role: Issuer, name: Chilika Foods Ltd, symbol: CHLKFD, feeds: instrument_master}
+
+  # post-trade
+  - {id: trade_bus, type: kafka_topic, name: trades.matched, partitions: 8, consumer_group: clearing-feed}
+  - {id: clearing_feed, type: service, role: Exchange, name: Clearing Feed Adapter, capacity_per_min: 2600, instances: 2}
+  - {id: clearing, type: external_party, role: Clearing corporation, name: Clearing Corporation, capacity_per_min: 3600}
+
+  # market data and drop copy
+  - {id: md_publisher, type: service, role: Exchange, name: Market Data Publisher, capacity_per_min: 3000, instances: 2}
+  - {id: md_vendors, type: external_party, role: Subscribers, name: Market Data Vendors, capacity_per_min: 3200}
+  - {id: drop_copy, type: service, role: Exchange, name: Drop Copy Service, capacity_per_min: 3000, instances: 2}
+
+flow:
+  - broker_a -> fix_gateway
+  - broker_b -> fix_gateway
+  - broker_c -> fix_gateway
+  - mm_1 -> fix_gateway
+  - mm_2 -> fix_gateway
+  - fix_gateway -> risk -> matching -> trade_bus -> clearing_feed -> clearing
+  - matching -> md_publisher -> md_vendors
+  - matching -> drop_copy
+
+alerts:
+  - {name: "Member session disconnected", on: fix_gateway, metric: sessions_down, above: 0, severity: P2}
+  - {name: "Gateway inbound rate high", on: fix_gateway, metric: in_rate, above: 2600, severity: P3}
+  - {name: "Gateway queue building", on: fix_gateway, metric: backlog, above: 1500, severity: P2}
+  - {name: "Risk reject rate high", on: risk, metric: reject_rate, above: 2, severity: P2}
+  - {name: "Matching throughput low", on: matching, metric: out_rate, below: 1400, severity: P2}
+  - {name: "Order book store pool saturated", on: orderbook_db, metric: pool_pct, above: 90, severity: P2}
+  - {name: "Trade bus partition lag", on: trade_bus, metric: max_partition_lag, above: 400, severity: P2}
+  - {name: "Clearing submissions backing up", on: clearing, metric: backlog, above: 2500, severity: P2}
+
+diagram:
+  notes: >
+    Members cannot see inside the exchange, and the exchange cannot see inside members or issuers.
+    Support works from the exchange's own gateway, risk, matching and post-trade signals.
+  groups:
+    - {label: "Members", ids: [broker_a, broker_b, broker_c, mm_1, mm_2]}
+    - {label: "Exchange trading system", ids: [fix_gateway, risk, matching, instrument_master, orderbook_db]}
+    - {label: "Listed companies (issuers)", ids: [issuer_1, issuer_2, issuer_3]}
+    - {label: "Post-trade", ids: [trade_bus, clearing_feed, clearing]}
+    - {label: "Market data and drop copy", ids: [md_publisher, md_vendors, drop_copy]}
+  place:
+    broker_a: [0, 0]
+    broker_b: [0, 1]
+    broker_c: [0, 2]
+    mm_1: [0, 3]
+    mm_2: [0, 4]
+    fix_gateway: [1, 2]
+    risk: [2, 2]
+    matching: [3, 2]
+    instrument_master: [2, 3.45]
+    orderbook_db: [3, 3.45]
+    issuer_1: [1.2, 4.9]
+    issuer_2: [2.2, 4.9]
+    issuer_3: [3.2, 4.9]
+    trade_bus: [4.3, 0.6]
+    clearing_feed: [5.3, 0.6]
+    clearing: [6.3, 0.6]
+    md_publisher: [4.3, 2.2]
+    md_vendors: [5.3, 2.2]
+    drop_copy: [4.3, 3.45]
+  steps:
+    - {from: broker_a, to: fix_gateway, text: "Brokers send client orders over FIX sessions, one session per member."}
+    - {from: mm_1, to: fix_gateway, text: "Market makers stream two-sided quotes to meet their quoting obligations."}
+    - {from: fix_gateway, to: risk, text: "The gateway checks the session (logon, sequence numbers) and each member's message throttle."}
+    - {from: risk, to: instrument_master, text: "Risk checks price bands, lot sizes and circuit limits from the instrument master. Failed orders are rejected back to the member."}
+    - {from: issuer_2, to: instrument_master, text: "Issuers announce corporate actions (splits, dividends, symbol changes) that change prices and bands."}
+    - {from: risk, to: matching, text: "Accepted orders enter the order book; matching runs price-time priority."}
+    - {from: matching, to: orderbook_db, text: "Order book state is persisted for recovery and audit."}
+    - {from: matching, to: trade_bus, text: "Every matched trade is published on the internal Kafka trade bus."}
+    - {from: clearing_feed, to: clearing, text: "Trades are submitted to the clearing corporation before the 15:30 clearing cut-off."}
+    - {from: matching, to: md_publisher, text: "Prices and depth are broadcast to market data vendors."}
+    - {from: matching, to: drop_copy, text: "Drop copies of every fill go back to members' risk systems."}

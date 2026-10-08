@@ -1,0 +1,31 @@
+id: exch-clearing-down
+title: Trades not reaching clearing
+systems: [exchange]
+level: Medium
+summary: Trading is normal, but trades are not being accepted by the clearing corporation.
+brief: >
+  14:30. Normal trading. Every trade must reach the clearing corporation before the 15:30
+  clearing cut-off.
+faults:
+  - {at: "14:40", component: clearing, fault: unavailable}
+noise:
+  - {at: "14:43", name: "Disk usage 83% on md-node-1", severity: P4}
+root_cause: {component: clearing, fault: unavailable}
+accepted_fixes: [clearing.escalate_to_vendor]
+risky_actions: [clearing_feed.restart, clearing.restart_adapter, matching.restart]
+hints:
+  - {after_min: 2, text: "Follow the flow left to right. Where does the queue start?"}
+  - {after_min: 6, text: "Is the failure in our clearing adapter, or at the clearing corporation?"}
+debrief:
+  what_happened: >
+    The clearing corporation's trade submission API returned HTTP 503. Trading carried on, so the
+    exchange looked healthy while unsubmitted trades piled up against the clearing cut-off.
+  key_signal: Clearing backlog growing with 100% failed calls, while gateway, risk and matching stay green.
+  why_not_restart: >
+    The fault is outside the exchange. Restarting our adapter adds a second outage. The fix is a fast
+    escalation and a clear plan for the cut-off.
+  runbook:
+    - Confirm the errors come from the clearing corporation (HTTP 5xx), not our adapter.
+    - Raise a P1 with the clearing corporation and record the reference.
+    - Agree a cut-off extension if recovery is late.
+    - Monitor the backlog until every trade is submitted.
