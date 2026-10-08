@@ -37,7 +37,9 @@ Participants' and vendors' own servers are deliberately not reachable, just as i
 
 ## Design your own
 
-The **Design** tab has two editors:
+**System Builder (no YAML typing):** open `dist/builder.html`. Add components from a list of types (each with a plain-language explanation), connect them, set business KPIs, alert rules, diagram groups and numbered steps. The YAML is written as you go and checked by the simulator's own validator, with every problem explained in plain language. You can start blank, from a built-in system, or from pasted YAML; renaming a component updates every reference to it. The page also explains how each part of the YAML works. Copy the result into the simulator's Design tab.
+
+The simulator's **Design** tab has two editors:
 
 1. **System**: write or edit a blueprint, check it, and save. It appears as a new system on the Drills tab.
 2. **Use case**: write a drill for the loaded system, starting from a template or a copy of an existing one. It appears under that system.
@@ -148,8 +150,9 @@ debrief:
 | `src/session.js` | Drill runner: schedules faults, records acknowledgement, declarations, tool use and approved actions; scores; builds the debrief. |
 | `src/tools.js` | Splunk-style search, read-only SQL console, read-only Unix shell. |
 | `src/app.js` | User interface: system picker, flow diagram, live map, tools, design editors, debrief. |
+| `src/builder.js`, `src/builder.template.html` | System Builder: forms that write and validate blueprint YAML. |
 | `src/style.css`, `src/index.template.html` | Page design and layout. |
-| `build.py` | Bundles everything, including the YAML files, into `dist/index.html`. |
+| `build.py` | Bundles everything, including the YAML files, into `dist/index.html` (simulator) and `dist/builder.html` (System Builder). |
 | `tests/drills.test.js` | 92 automated tests (Node's built-in runner). |
 | `vendor/js-yaml.min.js` | YAML parser (MIT licence, see `vendor/js-yaml.LICENSE`). |
 

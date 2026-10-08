@@ -1,0 +1,114 @@
+<title>OpsPilot System Builder</title>
+<meta name="description" content="Build an OpsPilot system blueprint with forms. Add components, connect them, set alerts and the flow diagram; the YAML is written and validated for you.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Semi+Condensed:wght@600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/*INLINE:src/style.css*/
+/* builder: forms on the left, the generated YAML pinned on the right */
+.bwrap { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 14px; align-items: start; }
+.out { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 12px); }
+.out pre { margin: 0; max-height: 62vh; overflow: auto; white-space: pre; background: var(--term); color: var(--term-ink); font-family: var(--mono); font-size: 12.3px; line-height: 1.55; padding: 12px; border-radius: 6px; }
+.fgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px 12px; }
+.fgrid .wide { grid-column: 1 / -1; }
+label.field > span:first-child { color: var(--ink); font-weight: 500; }
+label.field input, label.field textarea, label.field select { width: 100%; color: var(--ink); }
+label.field textarea { font: inherit; font-size: 14px; }
+.fhint { font-size: 12px; color: var(--muted); line-height: 1.35; }
+input[type=number], input[type=time] { background: var(--sunk); border: 1px solid var(--line); border-radius: 6px; padding: 6px 9px; min-width: 0; color: var(--ink); }
+.fgrid label.field { align-content: start; }
+.req { font-weight: 600; font-size: 11px; color: var(--warn); text-transform: uppercase; letter-spacing: .4px; }
+.ccard { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; background: var(--sunk); display: grid; gap: 8px; }
+.checks { display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.checks label { display: flex; gap: 5px; align-items: center; }
+.list { display: grid; gap: 6px; }
+.li { display: flex; justify-content: space-between; gap: 10px; align-items: center; border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; background: var(--panel); }
+.ok-t { color: var(--ok); margin: 0; font-size: 14px; } .bad-t { color: var(--bad); margin: 0; font-size: 14px; }
+.guide { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; }
+.guide pre { margin: 6px 0 0; white-space: pre-wrap; background: var(--sunk); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; font-family: var(--mono); font-size: 12.3px; }
+.guide p { margin: 4px 0 0; font-size: 14px; }
+.row > input.grow, .row > .field.grow { flex: 1 1 220px; }
+.row > select { flex: 1 1 180px; }
+ol.steps .btn { margin-left: 6px; }
+@media (max-width: 980px) { .bwrap { grid-template-columns: 1fr; } .out { position: static; } }
+</style>
+<header class="top">
+  <div class="top-in">
+    <div class="brand"><b>OpsPilot System Builder</b><span>Build a system with forms. The YAML is written and checked for you.</span></div>
+    <div class="grow"></div>
+    <label class="small muted row" style="gap:6px">Start from <select id="startFrom" aria-label="Start from"></select></label>
+  </div>
+</header>
+<main class="stack">
+  <section class="panel stack" id="pasteBox" hidden>
+    <h2>Paste an existing system</h2>
+    <textarea id="pasteText" class="code sql" spellcheck="false" aria-label="YAML to load" placeholder="Paste blueprint YAML here"></textarea>
+    <div class="row"><button class="btn primary" id="pasteLoad">Load into the forms</button></div>
+  </section>
+  <div class="bwrap">
+    <div class="stack" id="forms"></div>
+    <aside class="out stack">
+      <section class="panel stack">
+        <div class="row between"><h2>Your system as YAML</h2><button class="btn primary" id="copyBtn">Copy YAML</button></div>
+        <div id="status"></div>
+        <pre id="yaml" tabindex="0" aria-label="Generated YAML"></pre>
+        <p class="small muted" style="margin:0"><b>Next:</b> in OpsPilot Drills open <b>Design</b>, paste into <b>1. Design a system</b>, and press <b>Save and load system</b>. Then add use cases for it in <b>2. Add a use case</b>.</p>
+      </section>
+    </aside>
+  </div>
+
+  <section class="panel stack" id="guide">
+    <h2>How the YAML works</h2>
+    <p class="muted" style="margin:0;max-width:80ch">YAML is a plain-text format of <code>key: value</code> pairs. Indentation shows what belongs to what, and a line starting with <code>-</code> is one item in a list. The builder writes it for you; this is what each part means.</p>
+    <div class="guide">
+      <div><h3>The system</h3><pre>id: exchange
+system: Equity exchange trading platform</pre><p><code>id</code> is the short name use cases refer to; <code>system</code> is the name people see.</p></div>
+      <div><h3>The clock</h3><pre>clock:
+  start: "14:30"
+  cutoff: "15:30"
+  cutoff_label: Clearing cut-off</pre><p>The simulated window. Faults happen between start and cut-off; the drill is scored against the cut-off. Times are in quotes because a bare <code>14:30</code> confuses YAML.</p></div>
+      <div><h3>Business impact</h3><pre>business:
+  unit_name: orders
+  avg_notional: 0.04
+  kpis:
+    - {label: Trades not with clearing,
+       at: clearing, cutoff: true}</pre><p>A KPI counts work sent in but not yet past a component. <code>avg_notional</code> turns counts into money. The KPI marked <code>cutoff: true</code> decides whether the deadline was met.</p></div>
+      <div><h3>Components</h3><pre>components:
+  - {id: fix_gateway, type: service,
+     name: FIX Order Gateway,
+     capacity_per_min: 2700, instances: 3}</pre><p>One line per component, written in <code>{ }</code> braces. <code>type</code> decides how it behaves, which faults it can have and which actions fix it. Each type has its own settings, and the forms show them.</p></div>
+      <div><h3>Dependencies</h3><pre>  - {id: risk, type: service, ...,
+     uses: [instrument_master]}
+  - {id: issuer_2, type: issuer, ...,
+     feeds: instrument_master}</pre><p>Databases and reference data are not in the flow: a service lists them in <code>uses</code>. Issuers publish into reference data with <code>feeds</code>. Square brackets <code>[ ]</code> are a list.</p></div>
+      <div><h3>The flow</h3><pre>flow:
+  - broker_a -> fix_gateway
+  - fix_gateway -> risk -> matching
+  - matching -> md_publisher</pre><p>Each line is a path work travels along. A component can appear on several lines: five brokers into one gateway (fan-in), or matching out to several systems (fan-out). Every flow starts at a participant.</p></div>
+      <div><h3>Alert rules</h3><pre>alerts:
+  - {name: Gateway queue building,
+     on: fix_gateway, metric: backlog,
+     above: 1500, severity: P2}</pre><p>Fires when the metric stays past the threshold for one simulated minute. Use <code>above</code> or <code>below</code>. The metric must exist for that component type.</p></div>
+      <div><h3>Flow diagram</h3><pre>diagram:
+  groups:
+    - {label: Members, ids: [broker_a, mm_1]}
+  steps:
+    - {from: broker_a, to: fix_gateway,
+       text: Brokers send orders over FIX.}</pre><p>Groups draw a labelled box around components. Steps add numbered badges to links and a numbered list under the diagram. Optional <code>place</code> fixes positions as <code>[column, row]</code>.</p></div>
+    </div>
+  </section>
+</main>
+<footer>Runs entirely in your browser. Nothing you type leaves this page.</footer>
+<div id="toast" role="status" hidden style="position:fixed;left:50%;transform:translateX(-50%);bottom:calc(18px + env(safe-area-inset-bottom, 0px));background:var(--ink);color:var(--panel);padding:9px 16px;border-radius:8px;font-size:14px;z-index:30;max-width:90vw"></div>
+<script>
+/*INLINE:vendor/js-yaml.min.js*/
+</script>
+<script>
+/*CONTENT*/
+</script>
+<script>
+/*INLINE:src/engine.js*/
+</script>
+<script>
+/*INLINE:src/builder.js*/
+</script>

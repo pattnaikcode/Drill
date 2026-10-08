@@ -2096,7 +2096,7 @@ debrief:
     const comps = A.bp.components.filter(c => Object.keys(S.TYPES[c.type].faults).length || Object.keys(S.TYPES[c.type].actions).length);
     return `<div class="stack">
       <div class="bp">
-        <section class="panel stack"><div><h2>1. Design a system</h2><p class="small muted" style="margin:2px 0 0">Components, the flow between them, alert rules and the flow diagram. ${A.session ? '<b>Loading ends the current drill.</b>' : ''}</p></div>
+        <section class="panel stack"><div><h2>1. Design a system</h2><p class="small muted" style="margin:2px 0 0">Components, the flow between them, alert rules and the flow diagram. ${A.session ? '<b>Loading ends the current drill.</b>' : ''}</p><p class="small" style="margin:4px 0 0">Prefer forms to YAML? Use the <a href="builder.html">System Builder</a> (the <code>builder.html</code> file next to this one) to add components and copy the YAML here.</p></div>
           <div class="row"><label class="row small" style="gap:6px">Start from<select id="preset">${Object.entries(SYSTEMS).map(([id, s]) => `<option value="${id}"${id === A.sysId ? ' selected' : ''}>${esc(s.bp.system)}</option>`).join('')}</select></label></div>
           <textarea class="code" id="bpText" spellcheck="false" aria-label="System blueprint YAML">${esc(sysText)}</textarea>
           <div class="row"><button class="btn" id="bpCheck">Check</button><button class="btn primary" id="bpLoad">Save and load system</button><button class="btn" id="bpCopy">Copy YAML</button></div>

@@ -14,6 +14,8 @@ Support teams are judged on how they handle business incidents: trades not alloc
 
 **Drill simulator:** open `drill-simulator/dist/index.html` in a browser. Choose a system, read its flow diagram, pick a use case, press Start.
 
+**System Builder:** open `drill-simulator/dist/builder.html` to design a system with forms instead of writing YAML.
+
 **Command center:** open `command-center/index.html` and press *Start scenario*.
 
 **Linux lab:**
