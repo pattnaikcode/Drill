@@ -1,0 +1,31 @@
+id: database-pool-exhausted
+title: Allocation engine choking
+level: Hard
+summary: Several alerts fire at once. Separate the cause from the symptoms.
+brief: >
+  13:30. Month-end week. Finance has been running reconciliation reports today. The 15:00
+  affirmation cut-off applies.
+faults:
+  - {at: "13:37", component: tam_db, fault: pool_exhausted}
+noise:
+  - {at: "13:39", name: "CPU 78% on tam-allocator-2", severity: P4}
+root_cause: {component: tam_db, fault: pool_exhausted}
+accepted_fixes: [tam_db.kill_blocking_session]
+risky_actions: [tam.restart, tam.scale_out]
+hints:
+  - {after_min: 3, text: "Throughput, lag and the cut-off are all symptoms. Which alert is closest to the cause?"}
+  - {after_min: 7, text: "Look at the Allocation DB logs: who is holding the connections?"}
+debrief:
+  what_happened: >
+    A month-end reconciliation report ran a full table scan and held 46 of 50 database
+    connections. The allocator waited for connections and processed only a fifth of its
+    normal volume.
+  key_signal: DB pool at 100% and connection timeouts in the allocator logs.
+  why_not_restart: >
+    Restarting or scaling out the allocator adds more clients competing for the same
+    exhausted pool. Free the connections first.
+  runbook:
+    - Check pool usage and connection wait time.
+    - Identify the blocking session and its owner.
+    - Kill it with approval and inform the report owner.
+    - Raise a problem: move heavy reports to a replica.

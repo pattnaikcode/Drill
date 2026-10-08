@@ -1,0 +1,36 @@
+id: mystery
+title: Mystery incident
+level: Hard
+summary: One of five real faults, chosen at random. No hints, no clues in the title.
+mystery: true
+brief: >
+  13:30. Something will go wrong this afternoon. You do not know what or where.
+  The 15:00 affirmation cut-off applies.
+noise:
+  - {at: "13:41", name: "Disk usage 82% on report-01", severity: P4}
+pool:
+  - faults: [{at: "13:38", component: tam, fault: instances_lost, params: {remaining: 2}}]
+    root_cause: {component: tam, fault: instances_lost}
+    accepted_fixes: [tam.scale_out]
+    risky_actions: [tam.restart]
+    debrief: {what_happened: "Two allocator pods were evicted; throughput halved.", key_signal: "Healthy instances 2/4."}
+  - faults: [{at: "13:38", component: trades_topic, fault: poison_message, params: {partition: 1}}]
+    root_cause: {component: trades_topic, fault: poison_message}
+    accepted_fixes: [trades_topic.skip_poison_message]
+    risky_actions: [tam.restart]
+    debrief: {what_happened: "A poison message blocked one partition.", key_signal: "Lag on a single partition and a repeating offset in the logs."}
+  - faults: [{at: "13:38", component: ssi, fault: feed_failed, params: {last_refresh_minutes_ago: 19}}]
+    root_cause: {component: ssi, fault: feed_failed}
+    accepted_fixes: [ssi.force_refresh, tam.reprocess_rejected]
+    risky_actions: [tam.restart]
+    debrief: {what_happened: "The SSI feed failed; allocations for changed accounts were rejected.", key_signal: "Reject rate up, SSI staleness growing."}
+  - faults: [{at: "13:38", component: tam_db, fault: pool_exhausted}]
+    root_cause: {component: tam_db, fault: pool_exhausted}
+    accepted_fixes: [tam_db.kill_blocking_session]
+    risky_actions: [tam.restart, tam.scale_out]
+    debrief: {what_happened: "A report query held the DB connection pool.", key_signal: "Pool at 100%, connection timeouts."}
+  - faults: [{at: "13:38", component: ctm, fault: unavailable}]
+    root_cause: {component: ctm, fault: unavailable}
+    accepted_fixes: [ctm.escalate_to_vendor]
+    risky_actions: [tam.restart, ctm.restart_adapter]
+    debrief: {what_happened: "The confirmation platform was down on the vendor side.", key_signal: "100% failed calls to CTM; internal systems green."}

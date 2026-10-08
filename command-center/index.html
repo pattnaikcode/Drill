@@ -1,0 +1,828 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>OpsPilot · Operations Command Center</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --paper:#EEF1F5; --panel:#FFFFFF; --ink:#172033; --muted:#5B6577; --line:#D8DEE7; --soft:#F6F8FB;
+  --signal:#2F5BEA; --signal-soft:#E7EDFD;
+  --ok:#1F8A5B; --ok-soft:#E3F3EB; --warn:#B86E00; --warn-soft:#FBF0DC; --bad:#C2303A; --bad-soft:#FBE5E7;
+  --side:#18213A; --side-ink:#C9D2E3; --side-active:#2A365A;
+  --font:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  box-sizing:border-box; padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#10151F; --panel:#171E2B; --ink:#E4E9F2; --muted:#98A3B6; --line:#2A3446; --soft:#1C2433;
+    --signal:#7C9BFF; --signal-soft:#202C4A; --ok:#4CC28A; --ok-soft:#173326; --warn:#E3A33B; --warn-soft:#3A2C13;
+    --bad:#F06B74; --bad-soft:#3D1D22; --side:#0B1018; --side-ink:#AEB8CB; --side-active:#1E2840;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#10151F; --panel:#171E2B; --ink:#E4E9F2; --muted:#98A3B6; --line:#2A3446; --soft:#1C2433;
+  --signal:#7C9BFF; --signal-soft:#202C4A; --ok:#4CC28A; --ok-soft:#173326; --warn:#E3A33B; --warn-soft:#3A2C13;
+  --bad:#F06B74; --bad-soft:#3D1D22; --side:#0B1018; --side-ink:#AEB8CB; --side-active:#1E2840;
+}
+*,*::before,*::after{box-sizing:inherit}
+html{height:100%;scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;height:100%;background:var(--paper);color:var(--ink);font:15px/1.5 var(--font)}
+button,input,textarea,select{font:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:2px solid var(--signal);outline-offset:2px}
+.app{display:grid;grid-template-columns:232px 1fr;height:100%}
+/* sidebar */
+.side{background:var(--side);color:var(--side-ink);display:flex;flex-direction:column;overflow-y:auto}
+.brand{padding:20px 20px 14px;color:#fff}
+.brand b{display:block;font-size:18px;letter-spacing:.2px}
+.brand span{font-size:12.5px;color:var(--side-ink)}
+.nav{list-style:none;margin:0;padding:6px 10px 16px}
+.nav button{width:100%;text-align:left;background:none;border:0;color:var(--side-ink);padding:8px 12px;border-radius:6px;display:flex;justify-content:space-between;align-items:center;font-size:14px}
+.nav button:hover{background:var(--side-active)}
+.nav button[aria-current="page"]{background:var(--side-active);color:#fff;font-weight:600}
+.nav .count{font-size:12px;background:var(--bad);color:#fff;border-radius:10px;padding:0 7px;font-weight:600}
+.side .foot{margin-top:auto;padding:14px 20px;font-size:12px;border-top:1px solid #ffffff14}
+/* main */
+.main{display:flex;flex-direction:column;min-width:0;height:100%}
+.top{background:var(--panel);border-bottom:1px solid var(--line);padding:10px 22px;display:flex;flex-wrap:wrap;gap:12px;align-items:center}
+.sim{font-size:12.5px;background:var(--warn-soft);color:var(--warn);padding:3px 10px;border-radius:12px;font-weight:600}
+.clock{font-variant-numeric:tabular-nums;font-weight:600}
+.top .spacer{flex:1}
+.btn{border:1px solid var(--line);background:var(--panel);padding:7px 14px;border-radius:6px;font-weight:500;font-size:14px}
+.btn:hover{border-color:var(--signal)}
+.btn.primary{background:var(--signal);border-color:var(--signal);color:#fff}
+.btn.danger{background:var(--bad);border-color:var(--bad);color:#fff}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn.sm{padding:4px 10px;font-size:13px}
+/* loop ribbon: the signature element */
+.loop{display:flex;gap:0;background:var(--panel);border-bottom:1px solid var(--line);padding:0 22px;overflow-x:auto}
+.loop div{flex:1;min-width:104px;padding:9px 6px 8px;font-size:12.5px;color:var(--muted);border-bottom:3px solid transparent;position:relative;white-space:nowrap}
+.loop div b{display:block;font-size:13.5px;color:var(--muted);font-weight:600}
+.loop div.done{border-bottom-color:var(--ok)}
+.loop div.done b{color:var(--ink)}
+.loop div.now{border-bottom-color:var(--signal)}
+.loop div.now b{color:var(--signal)}
+.content{flex:1;overflow-y:auto;padding:22px}
+.wrap{max-width:1240px;margin:0 auto}
+h1{font-size:24px;margin:0 0 4px;font-weight:600;letter-spacing:-.2px}
+h2{font-size:16.5px;margin:0 0 10px;font-weight:600}
+h3{font-size:14.5px;margin:14px 0 6px;font-weight:600}
+.lede{color:var(--muted);margin:0 0 18px;max-width:72ch}
+.grid{display:grid;gap:16px}
+.g4{grid-template-columns:repeat(4,minmax(0,1fr))}
+.g3{grid-template-columns:repeat(3,minmax(0,1fr))}
+.g2{grid-template-columns:repeat(2,minmax(0,1fr))}
+.g21{grid-template-columns:2fr 1fr}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:16px 18px;min-width:0}
+.stat{display:flex;flex-direction:column;gap:2px}
+.stat .v{font-size:26px;font-weight:600;font-variant-numeric:tabular-nums;line-height:1.2}
+.stat .l{font-size:13px;color:var(--muted)}
+.stat .d{font-size:12.5px;color:var(--muted)}
+.pill{display:inline-block;font-size:12px;font-weight:600;padding:1px 9px;border-radius:10px;white-space:nowrap}
+.ok{background:var(--ok-soft);color:var(--ok)} .warn{background:var(--warn-soft);color:var(--warn)} .bad{background:var(--bad-soft);color:var(--bad)} .info{background:var(--signal-soft);color:var(--signal)} .mut{background:var(--soft);color:var(--muted)}
+.dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:7px;vertical-align:1px}
+.dot.ok{background:var(--ok)} .dot.warn{background:var(--warn)} .dot.bad{background:var(--bad)}
+.tablewrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th{text-align:left;font-weight:600;color:var(--muted);font-size:12.5px;padding:7px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+tr.click{cursor:pointer} tr.click:hover td{background:var(--soft)}
+.muted{color:var(--muted)} .small{font-size:13px}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.between{justify-content:space-between}
+.health{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px}
+.svc{border:1px solid var(--line);border-radius:6px;padding:10px 12px;background:var(--soft);cursor:pointer;text-align:left}
+.svc:hover{border-color:var(--signal)}
+.svc b{display:block;font-size:14px}
+.svc span{font-size:12.5px;color:var(--muted)}
+.svc.degraded{border-left:4px solid var(--warn)} .svc.down{border-left:4px solid var(--bad)} .svc.healthy{border-left:4px solid var(--ok)}
+.empty{padding:26px;text-align:center;color:var(--muted)}
+.log{font-family:var(--mono);font-size:12.5px;line-height:1.55;background:var(--soft);border:1px solid var(--line);border-radius:6px;padding:10px 12px;overflow-x:auto;white-space:pre;max-height:280px;overflow-y:auto}
+.log .e{color:var(--bad)} .log .w{color:var(--warn)}
+.tl{list-style:none;margin:0;padding:0;border-left:2px solid var(--line);margin-left:6px}
+.tl li{position:relative;padding:0 0 10px 16px;font-size:14px}
+.tl li::before{content:"";position:absolute;left:-6px;top:6px;width:10px;height:10px;border-radius:50%;background:var(--panel);border:2px solid var(--signal)}
+.tl li.ai::before{border-color:var(--warn)}
+.tl time{font-variant-numeric:tabular-nums;font-weight:600;margin-right:8px}
+.ev{border-left:3px solid var(--line);padding:6px 0 6px 12px;margin:8px 0}
+.ev .k{font-size:12px;font-weight:700;letter-spacing:.3px}
+.ev.fact{border-color:var(--signal)} .ev.fact .k{color:var(--signal)}
+.ev.obs{border-color:var(--muted)} .ev.obs .k{color:var(--muted)}
+.ev.inf{border-color:var(--warn)} .ev.inf .k{color:var(--warn)}
+.ev.rec{border-color:var(--ok)} .ev.rec .k{color:var(--ok)}
+.ev p{margin:2px 0 0}
+.src{font-size:12px;color:var(--muted)}
+.wf{display:grid;grid-template-columns:150px 1fr 70px;gap:6px 10px;align-items:center;font-size:13.5px}
+.wf .bar{height:14px;border-radius:3px;background:var(--signal)}
+.wf .bar.slow{background:var(--bad)}
+.steps{margin:0;padding-left:20px} .steps li{margin:4px 0}
+code{font-family:var(--mono);font-size:12.5px;background:var(--soft);padding:1px 5px;border-radius:4px}
+textarea{width:100%;border:1px solid var(--line);border-radius:6px;background:var(--soft);padding:10px;resize:vertical}
+textarea.mono{font-family:var(--mono);font-size:12.5px}
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:14px;overflow-x:auto}
+.tabs button{background:none;border:0;padding:8px 12px;border-bottom:2px solid transparent;color:var(--muted);font-weight:500;white-space:nowrap}
+.tabs button[aria-selected="true"]{border-color:var(--signal);color:var(--ink);font-weight:600}
+.barrow{display:grid;grid-template-columns:200px 1fr 60px;gap:10px;align-items:center;font-size:13.5px;margin:6px 0}
+.barrow .track{background:var(--soft);border-radius:3px;height:12px}
+.barrow .fill{background:var(--warn);height:12px;border-radius:3px}
+/* copilot drawer */
+.drawer{position:fixed;top:0;right:0;height:100%;width:min(460px,100%);background:var(--panel);border-left:1px solid var(--line);box-shadow:-8px 0 24px rgba(10,20,40,.12);transform:translateX(105%);transition:transform .22s ease;display:flex;flex-direction:column;z-index:20;padding-top:env(safe-area-inset-top,0px)}
+.drawer.open{transform:none}
+.drawer header{padding:14px 18px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center}
+.drawer .msgs{flex:1;overflow-y:auto;padding:14px 18px}
+.msg{margin:0 0 14px}
+.msg.u{background:var(--signal-soft);padding:8px 12px;border-radius:8px;font-weight:500}
+.chips{display:flex;flex-wrap:wrap;gap:6px;padding:10px 18px;border-top:1px solid var(--line)}
+.chips button{border:1px solid var(--line);background:var(--soft);border-radius:14px;padding:3px 11px;font-size:13px}
+.ask{display:flex;gap:8px;padding:10px 18px 14px}
+.ask input{flex:1;border:1px solid var(--line);border-radius:6px;padding:8px 10px;background:var(--soft)}
+/* modal */
+.scrim{position:fixed;inset:0;background:rgba(10,16,30,.45);display:none;align-items:center;justify-content:center;z-index:30;padding:16px}
+.scrim.open{display:flex}
+.modal{background:var(--panel);border-radius:10px;max-width:520px;width:100%;padding:20px 22px;border:1px solid var(--line)}
+.toast{position:fixed;bottom:calc(18px + env(safe-area-inset-bottom,0px));left:50%;transform:translateX(-50%);background:var(--ink);color:var(--panel);padding:9px 16px;border-radius:8px;font-size:14px;z-index:40;opacity:0;transition:opacity .2s;pointer-events:none}
+.toast.show{opacity:1}
+.chart svg{width:100%;height:auto;display:block}
+.flash{animation:flash 1.2s ease 1}
+@keyframes flash{0%{background:var(--warn-soft)}100%{background:transparent}}
+@media (prefers-reduced-motion: reduce){.drawer{transition:none}.flash{animation:none}}
+.menu-btn{display:none}
+@media (max-width:980px){
+  .g4{grid-template-columns:repeat(2,minmax(0,1fr))} .g3,.g21,.g2{grid-template-columns:1fr}
+}
+@media (max-width:760px){
+  .app{grid-template-columns:1fr}
+  .side{position:fixed;inset:0 auto 0 0;width:240px;z-index:25;transform:translateX(-100%);transition:transform .2s}
+  .side.open{transform:none}
+  .menu-btn{display:inline-block}
+  .content{padding:14px}
+  .wf{grid-template-columns:110px 1fr 56px}
+  .barrow{grid-template-columns:120px 1fr 50px}
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <nav class="side" id="side" aria-label="Main">
+    <div class="brand"><b>OpsPilot</b><span>Operations Command Center</span></div>
+    <ul class="nav" id="nav"></ul>
+    <div class="foot">Signed in as Support Lead<br>Demo tenant: Northbridge Capital</div>
+  </nav>
+  <div class="main">
+    <div class="top">
+      <button class="btn sm menu-btn" id="menuBtn" aria-label="Open menu">Menu</button>
+      <span class="sim">Simulation mode</span>
+      <span class="muted small">Production · Mumbai DC</span>
+      <span class="clock" id="clock">10:28</span>
+      <span class="spacer"></span>
+      <button class="btn" id="resetBtn">Reset</button>
+      <button class="btn primary" id="startBtn">Start scenario: API degradation</button>
+      <button class="btn" id="copilotBtn">AI copilot</button>
+    </div>
+    <div class="loop" id="loop" aria-label="Incident lifecycle"></div>
+    <main class="content" id="content"></main>
+  </div>
+</div>
+
+<aside class="drawer" id="drawer" aria-label="AI copilot">
+  <header><div><b>AI copilot</b><div class="src">Answers only from evidence in this workspace</div></div><button class="btn sm" id="closeCopilot">Close</button></header>
+  <div class="msgs" id="msgs"></div>
+  <div class="chips" id="chips"></div>
+  <form class="ask" id="askForm"><input id="askInput" placeholder="Ask about the current incident" aria-label="Ask the copilot"><button class="btn primary">Ask</button></form>
+</aside>
+
+<div class="scrim" id="scrim"><div class="modal" id="modal" role="dialog" aria-modal="true"></div></div>
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+/* ============ helpers ============ */
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const hhmm = m => { const h = 10 + Math.floor(m/60), mm = m%60; return String(h).padStart(2,'0')+':'+String(mm).padStart(2,'0'); };
+function toast(t){ const el=$('#toast'); el.textContent=t; el.classList.add('show'); clearTimeout(toast._t); toast._t=setTimeout(()=>el.classList.remove('show'),2400); }
+
+/* ============ static reference data ============ */
+const SERVICES = [
+  {id:'gw', name:'API Gateway', owner:'Platform Engineering', biz:'Head of Digital', group:'L2 Platform', crit:'Tier 1', deps:['auth','trading','oms'], sla:'99.95%'},
+  {id:'trading', name:'Trading API', owner:'Trading Apps', biz:'Head of Markets', group:'L2 Trading', crit:'Tier 1', deps:['oms','auth','refdata'], sla:'99.95%'},
+  {id:'oms', name:'Order Management', owner:'Trading Apps', biz:'Head of Markets', group:'L2 Trading', crit:'Tier 1', deps:['db','kafka','refdata','auth'], sla:'99.95%'},
+  {id:'refdata', name:'Reference Data', owner:'Data Platform', biz:'Head of Operations', group:'L2 Data', crit:'Tier 2', deps:['db'], sla:'99.9%'},
+  {id:'pay', name:'Payment Service', owner:'Payments', biz:'Head of Payments', group:'L2 Payments', crit:'Tier 1', deps:['auth','kafka'], sla:'99.95%'},
+  {id:'auth', name:'Authentication Service', owner:'Identity', biz:'CISO office', group:'L2 Platform', crit:'Tier 1', deps:[], sla:'99.99%'},
+  {id:'notify', name:'Notification Service', owner:'Platform Engineering', biz:'Head of Digital', group:'L2 Platform', crit:'Tier 3', deps:['kafka'], sla:'99.5%'},
+  {id:'report', name:'Reporting Service', owner:'Data Platform', biz:'Head of Operations', group:'L2 Data', crit:'Tier 3', deps:['db'], sla:'99.5%'},
+  {id:'db', name:'Orders DB (Oracle 19c)', owner:'DBA team', biz:'Head of Markets', group:'L3 DBA', crit:'Tier 1', deps:[], sla:'99.99%'},
+  {id:'kafka', name:'Kafka cluster', owner:'Platform Engineering', biz:'Head of Digital', group:'L3 Middleware', crit:'Tier 1', deps:[], sla:'99.95%'},
+];
+const svcName = id => (SERVICES.find(s=>s.id===id)||{}).name || id;
+
+const CHANGES = [
+  {id:'CHG-2034', desc:'Order Management v4.12: new order-enrichment query', svc:'oms', owner:'Trading Apps', risk:'Medium', window:'10:15–10:25 today', at:19, rollback:'Disable feature flag order_enrichment_v2', status:'Implemented'},
+  {id:'CHG-2031', desc:'Reporting nightly batch schedule moved to 02:00', svc:'report', owner:'Data Platform', risk:'Low', window:'Yesterday 18:00', at:-960, rollback:'Revert cron entry', status:'Implemented'},
+  {id:'CHG-2045', desc:'Kafka broker patch 3.7.1', svc:'kafka', owner:'Platform Engineering', risk:'Medium', window:'Tonight 02:00 UTC', at:null, rollback:'Rolling downgrade', status:'Approved'},
+];
+
+const HISTORY = [
+  {id:'INC-9871', date:'14 Aug', title:'Order placement slow after release', cause:'Orders DB connection pool exhausted by a new long-running query', fix:'Query rolled back; pool raised 150 → 200', mttr:'52m', match:92},
+  {id:'INC-9620', date:'2 Jul', title:'Order enrichment timeouts', cause:'Missing index on ORDER_ENRICHMENT.CLIENT_ID', fix:'Index added; query rewritten', mttr:'1h 40m', match:81},
+  {id:'INC-9402', date:'11 Jun', title:'Gateway latency spike', cause:'Network packet loss on core switch', fix:'Failover to secondary link', mttr:'38m', match:34},
+];
+
+const RUNBOOKS = [
+  {id:'RB-07', name:'Database connection exhaustion', svc:'Orders DB, Order Management', symptoms:['API latency rises sharply; HTTP 503/500 from dependent services','Connection pool utilisation above 90%','"Connection is not available" errors in application logs'],
+   checks:['Confirm pool utilisation and wait time in the DB dashboard','List active sessions and long-running SQL','Check changes deployed in the last 2 hours'],
+   cmds:["SELECT sid, sql_id, last_call_et FROM v$session WHERE status='ACTIVE' ORDER BY last_call_et DESC;","grep -c 'Connection is not available' /opt/app/logs/oms/app.log"],
+   decide:['A single new query dominates active sessions → roll back or disable it (approval required)','Load is broad and organic → raise pool size within DB session limits (approval required)','DB host itself is saturated → escalate to L3 DBA immediately'],
+   mitigate:'Disable the offending feature flag or roll back the change; do not restart the application first, as it drops in-flight orders.',
+   escalate:'Escalate to L3 DBA if not mitigated within 20 minutes or if DB CPU exceeds 90%.',
+   post:'Create a problem record; add a query-performance gate to the release checklist.'},
+  {id:'RB-02', name:'High API latency', svc:'All APIs', symptoms:['p95 latency above SLO for 5 minutes'], checks:['Use the trace view to find the slowest hop','Check dependency health','Check recent deployments'], cmds:['curl -w "%{time_total}" -s -o /dev/null https://oms.internal/health'], decide:['Slow hop is a dependency → follow that dependency\'s runbook'], mitigate:'Shift traffic or roll back the latest change.', escalate:'P1 if customer transactions fail.', post:'Review SLO burn rate.'},
+  {id:'RB-11', name:'Kafka consumer lag', svc:'Kafka consumers', symptoms:['Consumer lag growing for 10 minutes'], checks:['Check consumer group state','Check for rebalancing'], cmds:['kafka-consumer-groups.sh --describe --group oms-events'], decide:['Consumers stuck → restart one instance (approval required)'], mitigate:'Scale consumers.', escalate:'L3 Middleware after 30 minutes.', post:'Tune partitions.'},
+  {id:'RB-14', name:'Disk full', svc:'All Linux hosts', symptoms:['Filesystem above 90%'], checks:['df -h','du on /var/log and app log dirs'], cmds:['df -hP','du -xh --max-depth=1 /var/log'], decide:['Logs not rotating → fix logrotate, archive old logs (approval required)'], mitigate:'Clear archived logs older than 7 days.', escalate:'L3 if database volume.', post:'Add a disk growth alert.'},
+  {id:'RB-05', name:'HTTP 5xx spike', svc:'All APIs', symptoms:['5xx rate above 1%'], checks:['Split by endpoint and upstream','Check logs for the top error'], cmds:['grep " 5[0-9][0-9] " access.log | cut -d" " -f7 | sort | uniq -c | sort -rn | head'], decide:['Single upstream failing → follow its runbook'], mitigate:'Roll back or fail over.', escalate:'P1 if customer-facing.', post:'Add synthetic check.'},
+  {id:'RB-09', name:'Deployment failure', svc:'All services', symptoms:['Errors start right after a deployment'], checks:['Compare error rate before and after deploy time'], cmds:['kubectl rollout history deploy/oms'], decide:['Clear regression → roll back (approval required)'], mitigate:'Roll back.', escalate:'Release manager.', post:'Fix in next release.'},
+];
+
+const NOISY = [
+  {name:'API latency warning (p95 > 400ms)', n:1284, action:'Raise threshold to SLO-based burn-rate alert'},
+  {name:'Disk usage warning (> 80%)', n:842, action:'Fix log rotation on report-01/02, then suppress'},
+  {name:'Kafka consumer lag warning', n:723, action:'Deduplicate per consumer group; alert on trend, not spikes'},
+  {name:'Heartbeat flap: notify-03', n:410, action:'Fix underlying host NIC issue'},
+  {name:'CPU warning (> 70%)', n:388, action:'Change severity to informational'},
+];
+
+const TEAMS = [
+  {name:'APAC', shift:'On shift (06:00–15:00 IST)', eng:8, open:14, sla:1, esc:2, cap:'82%'},
+  {name:'EMEA', shift:'Next (14:30–23:30 IST)', eng:7, open:9, sla:0, esc:1, cap:'—'},
+  {name:'AMER', shift:'Off shift', eng:6, open:6, sla:0, esc:0, cap:'—'},
+  {name:'L3 Engineering', shift:'On call: DBA, Middleware', eng:5, open:4, sla:0, esc:3, cap:'64%'},
+];
+
+/* ============ state ============ */
+let S;
+function freshState(){
+  return {
+    page:'overview', running:false, t:28, stage:0,       // stage: 0 healthy,1 rising,2 alerts firing,3 incident open
+    alerts:[
+      {id:'ALERT-10198', src:'Prometheus', sev:'P4', svc:'report', metric:'Disk usage /data', cur:'81%', thr:'80%', at:4, status:'FIRING', group:null},
+      {id:'ALERT-10201', src:'Datadog', sev:'P4', svc:'notify', metric:'Consumer lag', cur:'1,240', thr:'1,000', at:12, status:'FIRING', group:null},
+    ],
+    inc:null, mitigatedAt:null, resolvedAt:null, rcaApproved:false, problem:null, handoverPublished:false,
+    custSent:[], audit:[], ai:[], diagDone:false, l3:false, tab:'summary',
+  };
+}
+S = freshState();
+
+function audit(action, target, detail){ S.audit.unshift({t:hhmm(S.t), who: detail && detail.who || 'Support Lead (you)', action, target, detail: detail && detail.text || ''}); }
+function tl(text, kind){ if(S.inc) S.inc.timeline.push({t:hhmm(S.t), text, kind}); }
+
+/* ============ simulated metrics ============ */
+function noise(t,k){ return Math.sin(t*1.7+k)*0.5+Math.sin(t*0.6+k*2)*0.5; }
+function metric(name, t){
+  const m = S.mitigatedAt, base = {lat:320, pool:62, err:0.3, tput:8400}[name];
+  const peak = {lat:2850, pool:98, err:4.2, tput:5100}[name];
+  let v;
+  if (t < 19) v = base;
+  else if (t < 29) v = base + (peak-base)*0.08*((t-19)/10);
+  else v = base + (peak-base)*Math.min(1, 0.08 + (t-29)/2*0.92);
+  if (m !== null && t > m){ const k = Math.min(1,(t-m)/4); v = v + (base - v)*k; }
+  const n = noise(t, name.length) * (name==='lat'?18 : name==='pool'?1.2 : name==='err'?0.05 : 120);
+  return Math.max(0, v + n);
+}
+const fmt = {lat:v=>Math.round(v).toLocaleString()+' ms', pool:v=>Math.round(v)+'%', err:v=>v.toFixed(1)+'%', tput:v=>Math.round(v).toLocaleString()+'/min'};
+
+function svcHealth(id){
+  const degradedNow = S.t >= 30 && (S.mitigatedAt===null || S.t < S.mitigatedAt+4);
+  if (!degradedNow) return 'healthy';
+  if (id==='oms' || id==='db') return 'degraded';
+  if (id==='trading' && S.t>=32) return 'degraded';
+  return 'healthy';
+}
+
+/* ============ scenario engine ============ */
+const SCENARIO_ALERTS = [
+  {at:31, id:'ALERT-10234', src:'Grafana', sev:'P2', svc:'oms', metric:'API latency p95', cur:'2.8 s', thr:'500 ms'},
+  {at:31, id:'ALERT-10235', src:'Prometheus', sev:'P2', svc:'db', metric:'Connection pool utilisation', cur:'98%', thr:'85%'},
+  {at:32, id:'ALERT-10237', src:'Datadog', sev:'P1', svc:'oms', metric:'HTTP 5xx rate', cur:'4.2%', thr:'1%'},
+  {at:32, id:'ALERT-10238', src:'Splunk', sev:'P2', svc:'trading', metric:'Transaction failures', cur:'312/min', thr:'50/min'},
+  {at:33, id:'ALERT-10240', src:'Synthetic', sev:'P2', svc:'trading', metric:'Synthetic order journey', cur:'3 of 5 failing', thr:'0 failing'},
+];
+let timer=null;
+function start(){
+  if (S.running || S.inc) { toast('Scenario already running. Reset to start again.'); return; }
+  S.running = true; S.stage = 1; audit('Scenario started','Demo mode');
+  timer = setInterval(tick, 1100); render();
+}
+function tick(){
+  S.t++;
+  SCENARIO_ALERTS.filter(a=>a.at===S.t).forEach(a=>{ S.alerts.unshift({...a, status:'FIRING', group:null}); S.stage=2; });
+  if (S.t===33){ correlate(); }
+  if (S.t>=33){ clearInterval(timer); timer=null; S.running=false; }
+  render();
+}
+function correlate(){
+  const ids = SCENARIO_ALERTS.map(a=>a.id);
+  S.alerts.forEach(a=>{ if(ids.includes(a.id)) a.group='COR-551'; });
+  S.inc = {
+    id:'INC-10342', title:'Order placement degraded: high latency and 5xx on Order Management',
+    sev:'P1', sevConfirmed:false, status:'New', svc:'oms', env:'Production', owner:'Unassigned', group:'L2 Trading',
+    custImpact:'Order placement failing or slow for ABC Bank, Meridian Securities and 4 other clients',
+    bizImpact:'~312 failed transactions/min; trading desk SLA at risk',
+    created:33, ack:null, resolved:null, alerts:ids, change:'CHG-2034', rootCause:'', resolution:'',
+    timeline:[
+      {t:'10:19', text:'CHG-2034 deployed to Order Management (v4.12)', kind:'chg'},
+      {t:'10:31', text:'ALERT-10234 latency and ALERT-10235 DB pool fired', kind:'alert'},
+      {t:'10:32', text:'ALERT-10237 5xx and ALERT-10238 transaction failures fired', kind:'alert'},
+      {t:'10:33', text:'5 alerts across 3 services correlated (COR-551); incident created automatically', kind:'ai'},
+    ],
+  };
+  S.stage = 3; S.page = 'incident'; S.tab='summary';
+  audit('Alerts correlated','COR-551',{who:'Correlation engine',text:'5 alerts, 3 services, 3-minute window, shared dependency path'});
+  audit('Incident created','INC-10342',{who:'Automation',text:'Severity suggested P1 (Tier 1 service, customer transactions failing)'});
+  toast('5 alerts correlated into incident INC-10342');
+}
+function advance(min){ S.t += min; }
+
+function ack(){
+  const i=S.inc; advance(1); i.ack=S.t; i.status='Investigating'; i.sevConfirmed=true; i.owner='Support Lead (you)';
+  tl('Acknowledged; severity P1 confirmed by Support Lead'); tl('Status: Investigating');
+  audit('Acknowledged and confirmed P1','INC-10342'); render();
+}
+function diag(){
+  advance(3); S.diagDone=true;
+  tl('Diagnostic: DB session snapshot collected (read-only)');
+  tl('Top active SQL: order-enrichment query (sql_id 7gq2m1), avg 4.8 s, 142 of 150 sessions', 'ai');
+  audit('Ran read-only diagnostic','Orders DB',{text:'Session snapshot via approved check "oracle_active_sessions"'}); render(); toast('Diagnostic complete: one query holds 142 of 150 connections');
+}
+function engageL3(){ advance(2); S.l3=true; tl('L3 DBA engaged (on-call: DBA team)'); audit('Engaged L3','DBA on-call'); render(); }
+function askApproval(){
+  openModal(`<h2>Approve production action</h2>
+   <p><b>Disable feature flag <code>order_enrichment_v2</code></b> on Order Management. This reverts the behaviour introduced by CHG-2034.</p>
+   <p class="small muted">Proposed by: AI copilot, from runbook RB-07. Blast radius: Order Management only. Rollback: re-enable the flag.</p>
+   <label class="small">Approver<select id="apprBy" style="display:block;width:100%;margin:4px 0 10px;padding:6px;border:1px solid var(--line);border-radius:6px;background:var(--soft)"><option>Rahul Mehta, Support Manager</option><option>Anita Rao, Incident Manager</option></select></label>
+   <label class="small row"><input type="checkbox" id="apprChk"> I confirm this changes production (simulated in demo mode)</label>
+   <div class="row" style="margin-top:14px;justify-content:flex-end"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn danger" id="apprGo" disabled>Approve and run</button></div>`);
+  $('#apprChk').onchange = e => $('#apprGo').disabled = !e.target.checked;
+  $('#apprGo').onclick = () => { const who=$('#apprBy').value; closeModal(); mitigate(who); };
+}
+function mitigate(who){
+  const i=S.inc; advance(S.l3?3:5); S.mitigatedAt=S.t; i.status='Mitigating';
+  tl(`Action approved by ${who}: feature flag order_enrichment_v2 disabled`); tl('Status: Mitigating');
+  audit('Approved action','Order Management',{who, text:'Disable flag order_enrichment_v2 (simulated)'});
+  audit('Automation executed','Order Management',{who:'Runner',text:'set_feature_flag(order_enrichment_v2=false) — simulated'});
+  render(); let n=0;
+  timer = setInterval(()=>{ S.t++; n++;
+    if(n===3){ tl('Error rate back below 1%; latency p95 410 ms'); }
+    if(n===5){ clearInterval(timer); timer=null; i.status='Monitoring'; S.alerts.forEach(a=>{ if(a.group==='COR-551') a.status='RESOLVED'; }); tl('Metrics normal for 2 minutes. Status: Monitoring'); audit('Status changed','INC-10342',{who:'Automation',text:'Mitigating → Monitoring (metrics within threshold)'}); toast('Metrics recovered. Incident in Monitoring.'); }
+    render(); }, 900);
+}
+function resolve(){
+  const i=S.inc; advance(5); i.resolved=S.t; S.resolvedAt=S.t; i.status='Resolved';
+  i.rootCause='CHG-2034 introduced an order-enrichment query averaging 4.8 s, which held 142 of 150 Orders DB connections and exhausted the pool.';
+  i.resolution='Disabled feature flag order_enrichment_v2 (approved). Query fix to be re-released with an index and load test.';
+  S.alerts.forEach(a=>{ if(a.group==='COR-551') a.status='RESOLVED'; });
+  tl('Incident resolved. RCA draft generated for review', 'ai');
+  audit('Resolved','INC-10342'); render(); toast('Resolved. RCA draft is ready for review.');
+}
+function approveRca(){ S.rcaApproved=true; tl('RCA approved by Support Manager'); audit('RCA approved','INC-10342',{who:'Rahul Mehta, Support Manager'}); render(); }
+function createProblem(){
+  S.problem={id:'PRB-10034', title:'Recurring Orders DB connection exhaustion after Order Management releases', incs:['INC-9620','INC-9871','INC-10342'], cause:'Release process lacks query-performance testing against production-like data', fix:'Add query-plan check and load test gate to release pipeline; raise pool alert to warn at 80%', status:'In progress', owner:'Trading Apps + DBA'};
+  audit('Problem created','PRB-10034',{text:'Linked 3 incidents'}); render(); toast('Problem PRB-10034 created');
+}
+
+/* ============ derived ============ */
+function loopStage(){
+  const st=[!!S.alerts.find(a=>a.group), !!S.inc, !!(S.inc&&S.inc.ack), S.mitigatedAt!==null, !!S.resolvedAt, S.rcaApproved, !!S.problem];
+  return st;
+}
+const LOOP=[['Observe','Alerts fire'],['Correlate','One incident'],['Investigate','Evidence'],['Act','Approved fix'],['Resolve','Service back'],['Learn','RCA'],['Prevent','Problem fix']];
+function kpis(){
+  const base={inc:142,p1:3,p2:18,mtta:7,mttr:134,sla:96.4};
+  if(!S.resolvedAt) return {...base, open: S.inc?1:0};
+  const mtta=S.inc.ack-S.inc.created, mttr=S.inc.resolved-S.inc.created;
+  return {inc:143,p1:4,p2:18,mtta:Math.round((base.mtta*142+mtta)/143*10)/10,mttr:Math.round((base.mttr*142+mttr)/143),sla:96.4,open:0,thisMtta:mtta,thisMttr:mttr};
+}
+const dur = m => m>=60 ? `${Math.floor(m/60)}h ${m%60}m` : `${m}m`;
+
+/* ============ charts ============ */
+function lineChart(name, label, thr){
+  const W=600,H=170,pl=46,pr=10,pt=12,pb=24, t0=14, t1=Math.max(S.t,34);
+  const pts=[]; for(let t=t0;t<=S.t;t++) pts.push([t,metric(name,t)]);
+  const maxV=Math.max(thr*1.15, ...pts.map(p=>p[1]))*1.08;
+  const x=t=>pl+(t-t0)/(t1-t0)*(W-pl-pr), y=v=>pt+(1-v/maxV)*(H-pt-pb);
+  const d=pts.map((p,i)=>(i?'L':'M')+x(p[0]).toFixed(1)+' '+y(p[1]).toFixed(1)).join(' ');
+  const last=pts[pts.length-1][1], over=last>thr;
+  let g=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(label)} over time">`;
+  for(let k=0;k<=3;k++){ const v=maxV*k/3; g+=`<line x1="${pl}" x2="${W-pr}" y1="${y(v)}" y2="${y(v)}" stroke="var(--line)"/><text x="${pl-6}" y="${y(v)+4}" text-anchor="end" font-size="11" fill="var(--muted)">${name==='err'?v.toFixed(1):Math.round(v)}</text>`; }
+  for(let t=t0;t<=t1;t+=5) g+=`<text x="${x(t)}" y="${H-6}" text-anchor="middle" font-size="11" fill="var(--muted)">${hhmm(t)}</text>`;
+  g+=`<line x1="${pl}" x2="${W-pr}" y1="${y(thr)}" y2="${y(thr)}" stroke="var(--bad)" stroke-dasharray="4 4"/><text x="${pl+4}" y="${y(thr)-4}" font-size="11" fill="var(--bad)">threshold</text>`;
+  if(S.t>=19){ g+=`<line x1="${x(19)}" x2="${x(19)}" y1="${pt}" y2="${H-pb}" stroke="var(--warn)" stroke-dasharray="2 3"/><text x="${x(19)+4}" y="${pt+10}" font-size="11" fill="var(--warn)">CHG-2034</text>`; }
+  if(S.mitigatedAt!==null){ g+=`<line x1="${x(S.mitigatedAt)}" x2="${x(S.mitigatedAt)}" y1="${pt}" y2="${H-pb}" stroke="var(--ok)" stroke-dasharray="2 3"/><text x="${x(S.mitigatedAt)+4}" y="${pt+22}" font-size="11" fill="var(--ok)">fix applied</text>`; }
+  g+=`<path d="${d}" fill="none" stroke="${over?'var(--bad)':'var(--signal)'}" stroke-width="2.2"/></svg>`;
+  return `<div class="chart"><div class="row between"><b class="small">${esc(label)}</b><span class="pill ${over?'bad':'ok'}">${fmt[name](last)}</span></div>${g}</div>`;
+}
+function waterfall(){
+  const slow = svcHealth('db')!=='healthy';
+  const hops=[['API Gateway',82],['Trading API',64],['Order Management',120],['Reference Data',95],['Orders DB',slow?2410:140]];
+  const max=Math.max(...hops.map(h=>h[1]));
+  return `<div class="wf">${hops.map(h=>`<span>${h[0]}</span><div><div class="bar ${h[1]>1000?'slow':''}" style="width:${Math.max(3,h[1]/max*100)}%"></div></div><span style="text-align:right;font-variant-numeric:tabular-nums">${h[1].toLocaleString()} ms</span>`).join('')}</div>
+   <p class="small muted" style="margin:8px 0 0">${slow?'Orders DB accounts for 87% of request time. Slow component highlighted.':'All hops within normal range.'}</p>`;
+}
+function incidentLogs(){
+  const lines = S.t<30 ? [
+    [ 'I','10:27:58 INFO  [oms-7f9c] Order 88301 accepted in 211ms'],[ 'I','10:28:02 INFO  [oms-2b1d] Order 88302 accepted in 198ms']]
+  : [
+    ['W','10:30:41 WARN  [oms-7f9c] Slow query 4,812ms sql_id=7gq2m1 (order_enrichment)'],
+    ['E','10:31:02 ERROR [oms-7f9c] HikariPool-1 - Connection is not available, request timed out after 30000ms (order_id=88421)'],
+    ['E','10:31:03 ERROR [oms-2b1d] HikariPool-1 - Connection is not available, request timed out after 30000ms (order_id=88426)'],
+    ['E','10:31:05 ERROR [gw-01] Upstream 503 from order-management path=/v2/orders req=7c1e9a02'],
+    ['W','10:31:09 WARN  [oms-2b1d] Slow query 5,104ms sql_id=7gq2m1 (order_enrichment)'],
+    ['E','10:31:12 ERROR [trading-03] Order submission failed for client=ABC-BANK reason=UPSTREAM_TIMEOUT'],
+    ['E','10:32:20 ERROR [oms-7f9c] HikariPool-1 - Connection is not available, request timed out after 30000ms (order_id=88502)'],
+  ];
+  if(S.mitigatedAt!==null) lines.push(['I',`${hhmm(S.mitigatedAt)}:05 INFO  [oms-7f9c] Feature flag order_enrichment_v2 = false`],['I',`${hhmm(S.mitigatedAt+3)}:40 INFO  [oms-7f9c] Order 88911 accepted in 236ms`]);
+  return `<div class="log">${lines.map(([k,l])=>`<span class="${k==='E'?'e':k==='W'?'w':''}">${esc(l)}</span>`).join('\n')}</div>`;
+}
+
+/* ============ copilot (grounded answers) ============ */
+function ev(kind,label,text,src){ return `<div class="ev ${kind}"><div class="k">${label}</div><p>${text}</p>${src?`<div class="src">Source: ${src}</div>`:''}</div>`; }
+const F=(t,s)=>ev('fact','Fact',t,s), O=(t,s)=>ev('obs','Observation',t,s), I=(t,s)=>ev('inf','Inference',t,s), R=(t,s)=>ev('rec','Recommendation',t,s);
+function answer(q){
+  q=q.toLowerCase(); const i=S.inc;
+  if(!i) return F('All 10 services are healthy. 2 low-severity alerts are firing (disk usage on Reporting, consumer lag on Notification) and are not linked to any incident.','Service health, alert feed') + R('No action needed. Start the scenario to see an incident investigation.');
+  const lat=fmt.lat(metric('lat',Math.min(S.t,33))), pool=fmt.pool(metric('pool',Math.min(S.t,33)));
+  if(/rca|root cause analysis/.test(q) && i.resolved) return O('Drafted the RCA from the incident timeline, evidence and the approved action. Open the RCA tab to review and approve it.') + R('A human must approve the RCA before it is shared.');
+  if(/handover|shift/.test(q)) return O('Drafted the APAC → EMEA handover from open incidents, escalations and upcoming changes.','Shift handover page') + R('Review and edit it on the Shift handover page before publishing.');
+  if(/customer|update|email/.test(q)) return O('Drafted an update for ABC Bank using the confirmed impact and the next update time. It is not sent until you approve it.','Customers page') + R('Open Customers to review the draft.');
+  if(/change|deploy/.test(q)) return F('CHG-2034 (Order Management v4.12, new order-enrichment query) was implemented at 10:19, 12 minutes before the first alert.','Change calendar') + F('No other changes touched Order Management, Orders DB or Trading API in the last 24 hours.','Change calendar') + I('Potential correlation with CHG-2034: high. This is timing and scope correlation, not proven causation.');
+  if(/before|similar|history|seen/.test(q)) return F('INC-9871 (14 Aug): Orders DB pool exhausted by a new long-running query after a release. Fixed by rolling back the query. MTTR 52m.','Incident history, 92% similarity') + F('INC-9620 (2 Jul): order-enrichment timeouts from a missing index.','Incident history, 81% similarity') + O('The DB pool alert fired 17 times in the last 30 days, mostly on Mondays 09:00–11:00.','Alert history') + R('This is a repeat pattern. After resolution, create a problem record.');
+  if(/runbook|procedure/.test(q)) return O('Best match: RB-07 Database connection exhaustion (symptoms match 3 of 3).','Runbook library') + R('Follow RB-07 decision step 1: if a single new query dominates sessions, disable or roll it back with approval. Do not restart the service first; that drops in-flight orders.','RB-07');
+  if(/next|should i|do now|action/.test(q)){
+    if(!i.ack) return R('Acknowledge the incident and confirm severity. The SLA response clock for P1 is 15 minutes.','SLA policy P1');
+    if(!S.diagDone) return R('Run the read-only DB session snapshot to confirm which SQL holds the connections.','RB-07 initial checks');
+    if(S.mitigatedAt===null) return R('Request approval to disable feature flag order_enrichment_v2. Engage L3 DBA in parallel if not mitigated in 20 minutes.','RB-07 decision step 1');
+    if(!i.resolved) return O('Error rate and latency are back within thresholds since the fix.') + R('Keep it in Monitoring for 10 minutes, then resolve. Send the customer a recovery update.');
+    return R('Approve the RCA and create a problem record so the release process gets a query-performance gate.');
+  }
+  // default: what is happening / root cause / evidence / summarize
+  let out = F(`Order Management p95 latency rose from 320 ms to ${lat} between 10:29 and 10:31.`,'Grafana · ALERT-10234')
+    + F(`Orders DB connection pool utilisation reached ${pool} at 10:31.`,'Prometheus · ALERT-10235')
+    + F('5xx rate on Order Management reached 4.2%; Trading API transaction failures reached 312/min.','Datadog · Splunk')
+    + O('The latency rise began within 30 seconds of the pool saturating. Traces show Orders DB accounts for 87% of request time.','Trace view')
+    + O('CHG-2034 added a new order-enrichment query 12 minutes before the first alert.','Change calendar');
+  if(S.diagDone) out += F('The order-enrichment query (sql_id 7gq2m1) holds 142 of 150 DB connections, averaging 4.8 s.','DB session snapshot');
+  out += I(S.diagDone ? 'Strong evidence that the new order-enrichment query from CHG-2034 exhausted the DB connection pool, causing the latency and failures.' : 'Database connection exhaustion is the most likely contributing factor. The new query from CHG-2034 is the leading suspect; confirm with the DB session snapshot.');
+  out += R(S.diagDone ? 'Disable feature flag order_enrichment_v2 (approval required) rather than restarting the service.' : 'Run the read-only DB session snapshot before taking any action.','RB-07');
+  return out;
+}
+const CHIPS=['What is happening?','What changed?','Have we seen this before?','Which runbook should I use?','What should I do next?','Draft a customer update','Generate a shift handover'];
+function ask(q){
+  S.ai.push({q, a:answer(q)});
+  audit('AI copilot answered', S.inc?S.inc.id:'Workspace', {who:'AI copilot', text:q});
+  renderCopilot(); const m=$('#msgs'); m.scrollTop=m.scrollHeight;
+}
+function renderCopilot(){
+  $('#msgs').innerHTML = S.ai.length ? S.ai.map(x=>`<div class="msg u">${esc(x.q)}</div><div class="msg">${x.a}</div>`).join('') :
+   `<p class="muted small">I answer only from alerts, metrics, logs, changes, runbooks and incident history in this workspace. Every answer separates facts from inferences and names its sources. I can recommend, draft and summarise. I cannot execute actions, change severity, close incidents or send messages without a human.</p>`;
+  $('#chips').innerHTML = CHIPS.map(c=>`<button type="button">${c}</button>`).join('');
+  $('#chips').querySelectorAll('button').forEach(b=>b.onclick=()=>ask(b.textContent));
+}
+
+/* ============ pages ============ */
+const NAV=[['overview','Overview'],['incident','Incident command'],['alerts','Alerts'],['services','Services'],['observability','Observability'],['logs','Log analyzer'],['runbooks','Runbooks & knowledge'],['changes','Changes & problems'],['sla','SLA & KPIs'],['handover','Shift handover'],['customers','Customers'],['automation','Automation'],['audit','Audit']];
+
+function pageOverview(){
+  const k=kpis(), counts={healthy:0,degraded:0,down:0}; SERVICES.forEach(s=>counts[svcHealth(s.id)]++);
+  const firing=S.alerts.filter(a=>a.status==='FIRING');
+  const i=S.inc;
+  const elapsed = i ? (i.resolved||S.t)-i.created : 0;
+  return `<div class="wrap">
+   <h1>What is happening in production</h1>
+   <p class="lede">${!i ? 'All Tier 1 services are healthy. Two low-severity alerts are firing and need no action.' : i.resolved ? (S.problem&&S.rcaApproved ? `INC-10342 was resolved in ${dur(i.resolved-i.created)}. RCA approved and problem ${S.problem.id} opened to prevent recurrence.` : `INC-10342 was resolved in ${dur(i.resolved-i.created)}. Review the RCA and create a problem record.`) : `<b>P1 incident open:</b> order placement degraded on Order Management for ${dur(elapsed)}. ${i.status}.`}</p>
+   <div class="grid g4">
+     <div class="panel stat"><span class="l">Services</span><span class="v">${counts.healthy}<span class="muted" style="font-size:16px"> / ${SERVICES.length} healthy</span></span><span class="d">${counts.degraded} degraded · ${counts.down} down</span></div>
+     <div class="panel stat"><span class="l">Active incidents</span><span class="v">${i&&!i.resolved?1:0}</span><span class="d">${i&&!i.resolved?'1 P1 · 0 P2 · 0 P3':'No P1 or P2 open'}</span></div>
+     <div class="panel stat"><span class="l">Firing alerts</span><span class="v">${firing.length}</span><span class="d">${firing.filter(a=>a.group).length} correlated into incidents</span></div>
+     <div class="panel stat"><span class="l">SLA compliance (30 days)</span><span class="v">${k.sla}%</span><span class="d">${i&&!i.resolved?'1 incident at risk':'None at risk'}</span></div>
+   </div>
+   <div class="grid g21" style="margin-top:16px">
+     <div class="panel"><div class="row between"><h2>Service health</h2><button class="btn sm" onclick="go('services')">Service catalog</button></div>
+       <div class="health">${SERVICES.map(s=>{const h=svcHealth(s.id);return `<button class="svc ${h}" onclick="openSvc('${s.id}')"><b><span class="dot ${h==='healthy'?'ok':h==='degraded'?'warn':'bad'}"></span>${s.name}</b><span>${s.crit} · ${h}</span></button>`}).join('')}</div>
+     </div>
+     <div class="panel"><h2>Operations</h2>
+       <table><tbody>
+       <tr><td>MTTA (30 days)</td><td style="text-align:right"><b>${k.mtta}m</b></td></tr>
+       <tr><td>MTTR (30 days)</td><td style="text-align:right"><b>${dur(k.mttr)}</b></td></tr>
+       <tr><td>Incidents (30 days)</td><td style="text-align:right"><b>${k.inc}</b></td></tr>
+       <tr><td>Unassigned incidents</td><td style="text-align:right"><b>${i&&!i.ack?1:0}</b></td></tr>
+       <tr><td>Engineering escalations</td><td style="text-align:right"><b>${S.l3?1:0}</b></td></tr>
+       <tr><td>Repeat incident patterns</td><td style="text-align:right"><b>${i?12:11}</b></td></tr>
+       </tbody></table></div>
+   </div>
+   <div class="grid g2" style="margin-top:16px">
+     <div class="panel"><h2>Recent alerts</h2>${alertTable(S.alerts.slice(0,6),true)}</div>
+     <div class="panel"><h2>Recent changes</h2><table><tbody>${CHANGES.map(c=>`<tr><td><b>${c.id}</b><div class="small muted">${esc(c.desc)}</div></td><td class="small">${c.window}</td><td><span class="pill ${c.status==='Implemented'?'mut':'info'}">${c.status}</span></td></tr>`).join('')}</tbody></table></div>
+   </div></div>`;
+}
+
+function alertTable(list, compact){
+  if(!list.length) return '<div class="empty">No alerts.</div>';
+  const sev=a=>`<span class="pill ${a.sev==='P1'?'bad':a.sev==='P2'?'warn':'mut'}">${a.sev}</span>`, st=a=>`<span class="pill ${a.status==='FIRING'?'bad':'ok'}">${a.status}</span>`;
+  if(compact) return `<div class="tablewrap"><table><thead><tr><th>Alert</th><th>Sev</th><th>Service</th><th>Time</th><th>Status</th></tr></thead><tbody>
+  ${list.map(a=>`<tr><td><b style="white-space:nowrap">${a.id}</b><div class="small muted">${a.metric}${a.group?' · <span style="color:var(--signal)">INC-10342</span>':''}</div></td><td>${sev(a)}</td><td>${svcName(a.svc)}</td><td>${hhmm(a.at)}</td><td>${st(a)}</td></tr>`).join('')}</tbody></table></div>`;
+  return `<div class="tablewrap"><table><thead><tr><th>Alert</th><th>Source</th><th>Sev</th><th>Service</th><th>Metric</th><th>Current / threshold</th><th>Time</th><th>Status</th></tr></thead><tbody>
+  ${list.map(a=>`<tr><td><b style="white-space:nowrap">${a.id}</b>${a.group?`<div class="small" style="color:var(--signal);white-space:nowrap">${a.group} → INC-10342</div>`:''}</td><td>${a.src}</td><td>${sev(a)}</td><td>${svcName(a.svc)}</td><td>${a.metric}</td><td>${a.cur} / ${a.thr}</td><td>${hhmm(a.at)}</td><td>${st(a)}</td></tr>`).join('')}</tbody></table></div>`;
+}
+
+function pageAlerts(){
+  const grouped=S.alerts.filter(a=>a.group);
+  return `<div class="wrap"><h1>Alerts</h1><p class="lede">Alerts arrive from Grafana, Prometheus, Datadog, Splunk and synthetic monitoring. The correlation engine groups alerts that fire close together on services that depend on each other.</p>
+   ${grouped.length?`<div class="panel" style="margin-bottom:16px"><div class="row between"><h2>Correlation COR-551: ${grouped.length} alerts · 3 services · 1 incident</h2><button class="btn sm primary" onclick="go('incident')">Open INC-10342</button></div>
+    <p class="small" style="margin:0 0 6px">Why these were grouped:</p>
+    <ul class="small" style="margin:0;padding-left:18px"><li>All fired within a 3-minute window (10:31–10:33)</li><li>Dependency path links them: Trading API → Order Management → Orders DB</li><li>Symptoms match a known pattern: latency + pool saturation + 5xx</li></ul>
+    <p class="small muted" style="margin:8px 0 0">Not grouped: ALERT-10198 (Reporting disk) and ALERT-10201 (Notification lag) share no dependency path and started earlier.</p></div>`:''}
+   <div class="panel">${alertTable(S.alerts)}</div></div>`;
+}
+
+function pageServices(sel){
+  const s = SERVICES.find(x=>x.id===sel);
+  return `<div class="wrap"><h1>Service catalog</h1><p class="lede">Every service has an owner, support group, criticality, SLA and dependencies. Select a service to see its health.</p>
+  ${s?svcDetail(s):''}
+  <div class="panel"><div class="tablewrap"><table><thead><tr><th>Service</th><th>Health</th><th>Criticality</th><th>Owner</th><th>Support group</th><th>SLA</th><th>Depends on</th></tr></thead><tbody>
+  ${SERVICES.map(x=>{const h=svcHealth(x.id);return `<tr class="click" onclick="openSvc('${x.id}')"><td><b>${x.name}</b></td><td><span class="pill ${h==='healthy'?'ok':'warn'}">${h}</span></td><td>${x.crit}</td><td>${x.owner}</td><td>${x.group}</td><td>${x.sla}</td><td class="small">${x.deps.map(svcName).join(', ')||'—'}</td></tr>`}).join('')}
+  </tbody></table></div></div></div>`;
+}
+function svcDetail(s){
+  const h=svcHealth(s.id), isOms=s.id==='oms'||s.id==='db'||s.id==='trading';
+  const m = isOms ? {lat:fmt.lat(metric('lat',S.t)), err:fmt.err(metric('err',S.t)), tput:fmt.tput(metric('tput',S.t))} : {lat:'180 ms', err:'0.1%', tput:'2,140/min'};
+  return `<div class="panel" style="margin-bottom:16px"><div class="row between"><h2>${s.name}</h2><span class="pill ${h==='healthy'?'ok':'warn'}">${h.toUpperCase()}</span></div>
+   <div class="grid g4" style="margin:8px 0 12px"><div class="stat"><span class="l">Latency p95</span><span class="v" style="font-size:20px">${m.lat}</span></div><div class="stat"><span class="l">Error rate</span><span class="v" style="font-size:20px">${m.err}</span></div><div class="stat"><span class="l">Throughput</span><span class="v" style="font-size:20px">${m.tput}</span></div><div class="stat"><span class="l">CPU · memory</span><span class="v" style="font-size:20px">${isOms&&h!=='healthy'?'71% · 64%':'38% · 52%'}</span></div></div>
+   <div class="grid g2"><div><h3>Dependencies</h3><table><tbody>${s.deps.length?s.deps.map(d=>{const dh=svcHealth(d);return `<tr><td>${svcName(d)}</td><td><span class="pill ${dh==='healthy'?'ok':'warn'}">${dh}</span></td></tr>`}).join(''):'<tr><td class="muted">No upstream dependencies</td></tr>'}</tbody></table></div>
+   <div><h3>Ownership</h3><table><tbody><tr><td>Owner</td><td>${s.owner}</td></tr><tr><td>Business owner</td><td>${s.biz}</td></tr><tr><td>Support group</td><td>${s.group}</td></tr><tr><td>SLA</td><td>${s.sla}</td></tr><tr><td>Recent change</td><td>${CHANGES.filter(c=>c.svc===s.id).map(c=>c.id).join(', ')||'None'}</td></tr></tbody></table></div></div></div>`;
+}
+
+function pageObservability(){
+  return `<div class="wrap"><h1>Observability</h1><p class="lede">Metrics, a request trace and logs for Order Management in one place. In production these come from Prometheus, Grafana, Splunk and tracing; here they are simulated.</p>
+   <div class="grid g2">
+     <div class="panel">${lineChart('lat','Order Management latency p95 (ms)',500)}</div>
+     <div class="panel">${lineChart('pool','Orders DB connection pool (%)',85)}</div>
+     <div class="panel">${lineChart('err','Order Management 5xx rate (%)',1)}</div>
+     <div class="panel"><h2>Request trace: POST /v2/orders</h2>${waterfall()}</div>
+   </div>
+   <div class="panel" style="margin-top:16px"><h2>Recent logs: Order Management, API Gateway, Trading API</h2>${incidentLogs()}</div></div>`;
+}
+
+function pageIncident(){
+  const i=S.inc;
+  if(!i) return `<div class="wrap"><h1>Incident command</h1><div class="panel empty">No incident is open. Press <b>Start scenario</b> to simulate a production API degradation.</div></div>`;
+  const slaTarget=15, resp = i.ack!==null ? i.ack-i.created : S.t-i.created;
+  const tabs=[['summary','Summary'],['evidence','Evidence'],['ai','AI investigation'],['runbook','Runbook'],['timeline','Timeline'],['rca','RCA']];
+  let body='';
+  if(S.tab==='summary') body=`<div class="grid g2"><div>
+     <h3>What happened</h3><p style="margin:0">${i.resolved?esc(i.rootCause):'Order Management latency and errors rose sharply from 10:29. Orders DB connections are saturated. Trading API order submissions are failing.'}</p>
+     <h3>Impact</h3><p style="margin:0"><b>Customers:</b> ${esc(i.custImpact)}<br><b>Business:</b> ${esc(i.bizImpact)}</p>
+     <h3>Correlated alerts</h3><p class="small" style="margin:0">${i.alerts.join(', ')}</p></div>
+     <div><h3>Similar incidents</h3><table><tbody>${HISTORY.map(h=>`<tr><td><b>${h.id}</b> <span class="small muted">${h.date}</span><div class="small">${esc(h.cause)}</div></td><td><span class="pill ${h.match>80?'info':'mut'}">${h.match}% match</span></td></tr>`).join('')}</tbody></table>
+     <h3>Change correlation</h3><p class="small" style="margin:0"><b>CHG-2034</b> deployed 12 minutes before the first alert to the affected service. <span class="pill warn">Potential correlation: high</span><br><span class="muted">Timing and scope match. Not proven causation.</span></p></div></div>`;
+  if(S.tab==='evidence') body=`<div class="grid g2"><div>${lineChart('lat','Latency p95 (ms)',500)}</div><div>${lineChart('pool','DB connection pool (%)',85)}</div></div><h3>Request trace</h3>${waterfall()}<h3>Logs</h3>${incidentLogs()}
+    <h3>Dependencies</h3><p class="small" style="margin:0">Trading API → Order Management → <b>Orders DB</b> (${svcHealth('db')}) · Kafka (healthy) · Reference Data (healthy) · Authentication (healthy)</p>`;
+  if(S.tab==='ai') body=`<p class="small muted" style="margin-top:0">Generated from incident evidence only. Facts cite their source; inferences are labelled.</p>${answer('what is happening')}${answer('what should i do next')}`;
+  if(S.tab==='runbook'){ const r=RUNBOOKS[0]; body=runbookView(r,true); }
+  if(S.tab==='timeline') body=`<ul class="tl">${i.timeline.map(e=>`<li class="${e.kind==='ai'?'ai':''}"><time>${e.t}</time>${esc(e.text)}</li>`).join('')}</ul>
+    <p class="small muted">MTTA and MTTR are calculated from this timeline: created ${hhmm(i.created)}${i.ack!==null?`, acknowledged ${hhmm(i.ack)} (MTTA ${i.ack-i.created}m)`:''}${i.resolved?`, resolved ${hhmm(i.resolved)} (MTTR ${dur(i.resolved-i.created)})`:''}.</p>`;
+  if(S.tab==='rca') body=rcaView();
+  const sevPill = `<span class="pill bad">${i.sev}${i.sevConfirmed?'':' · suggested'}</span>`;
+  const stPill = `<span class="pill ${i.status==='Resolved'?'ok':i.status==='Monitoring'?'info':'warn'}">${i.status}</span>`;
+  return `<div class="wrap">
+   <div class="row between"><div><h1>${i.id}: ${esc(i.title)}</h1><div class="row small">${sevPill}${stPill}<span class="muted">Service: Order Management · Owner: ${i.owner} · Group: ${i.group}</span></div></div></div>
+   <div class="grid g4" style="margin:14px 0">
+     <div class="panel stat"><span class="l">Open for</span><span class="v">${dur((i.resolved||S.t)-i.created)}</span><span class="d">Created ${hhmm(i.created)}</span></div>
+     <div class="panel stat"><span class="l">P1 response SLA (15m)</span><span class="v" style="color:${resp>slaTarget?'var(--bad)':'var(--ok)'}">${resp}m</span><span class="d">${i.ack!==null?'Met':'Clock running'}</span></div>
+     <div class="panel stat"><span class="l">Latency p95 now</span><span class="v">${fmt.lat(metric('lat',S.t))}</span><span class="d">Threshold 500 ms</span></div>
+     <div class="panel stat"><span class="l">Error rate now</span><span class="v">${fmt.err(metric('err',S.t))}</span><span class="d">Threshold 1%</span></div>
+   </div>
+   <div class="panel" style="margin-bottom:16px"><h2>Next actions</h2><div class="row">
+     <button class="btn primary" onclick="ack()" ${i.ack!==null?'disabled':''}>Acknowledge and confirm P1</button>
+     <button class="btn" onclick="diag()" ${i.ack===null||S.diagDone?'disabled':''}>Run DB session snapshot (read-only)</button>
+     <button class="btn" onclick="engageL3()" ${i.ack===null||S.l3?'disabled':''}>Engage L3 DBA</button>
+     <button class="btn danger" onclick="askApproval()" ${!S.diagDone||S.mitigatedAt!==null?'disabled':''}>Request approval: disable query flag</button>
+     <button class="btn" onclick="resolve()" ${i.status!=='Monitoring'?'disabled':''}>Resolve incident</button>
+     <button class="btn" onclick="openCopilot()">Ask AI copilot</button>
+   </div><p class="small muted" style="margin:8px 0 0">${nextHint()}</p></div>
+   <div class="panel"><div class="tabs" role="tablist">${tabs.map(t=>`<button role="tab" aria-selected="${S.tab===t[0]}" onclick="S.tab='${t[0]}';render()">${t[1]}</button>`).join('')}</div>${body}</div></div>`;
+}
+function nextHint(){
+  const i=S.inc;
+  if(i.ack===null) return 'Severity P1 was suggested automatically. A human confirms it on acknowledgement.';
+  if(!S.diagDone) return 'Next: confirm which SQL holds the DB connections with a read-only check.';
+  if(S.mitigatedAt===null) return 'Evidence points to the CHG-2034 query. Disabling its feature flag needs approval.';
+  if(i.status==='Mitigating') return 'Fix applied. Watching metrics recover…';
+  if(i.status==='Monitoring') return 'Metrics are normal. Resolve when satisfied.';
+  if(!S.rcaApproved) return 'Resolved. Review and approve the RCA draft in the RCA tab.';
+  if(!S.problem) return 'Create a problem record on the Changes & problems page to prevent recurrence.';
+  return 'Lifecycle complete: observed, correlated, investigated, acted, resolved, learned, prevented.';
+}
+function runbookView(r, inIncident){
+  return `<h2 style="margin-top:0">${r.id}: ${r.name}</h2><p class="small muted">Applies to: ${r.svc}</p>
+  <div class="grid g2"><div><h3>Symptoms</h3><ul class="steps">${r.symptoms.map(x=>`<li>${esc(x)}</li>`).join('')}</ul>
+  <h3>Initial checks</h3><ol class="steps">${r.checks.map(x=>`<li>${esc(x)}</li>`).join('')}</ol>
+  <h3>Diagnostic commands</h3>${r.cmds.map(c=>`<div class="log" style="margin-bottom:6px">${esc(c)}</div>`).join('')}</div>
+  <div><h3>Decision</h3><ul class="steps">${r.decide.map(x=>`<li>${esc(x)}</li>`).join('')}</ul>
+  <h3>Mitigation</h3><p style="margin:0">${esc(r.mitigate)}</p><h3>Escalation</h3><p style="margin:0">${esc(r.escalate)}</p><h3>After the incident</h3><p style="margin:0">${esc(r.post)}</p>
+  ${inIncident?'<p class="small" style="margin-top:12px;color:var(--ok)">Matched to this incident: symptoms 3 of 3.</p>':''}</div></div>`;
+}
+function rcaView(){
+  const i=S.inc;
+  if(!i.resolved) return '<div class="empty">The RCA draft is generated when the incident is resolved.</div>';
+  const rows=[
+    ['Executive summary',`Between ${hhmm(30)} and ${hhmm(S.mitigatedAt+4)}, order placement was degraded for 6 clients. A new database query released in CHG-2034 exhausted the Orders DB connection pool. Disabling the query restored service. Total duration ${dur(i.resolved-i.created)}.`],
+    ['Business impact','Approximately 312 failed order submissions per minute at peak for about 14 minutes. ABC Bank and Meridian Securities raised escalations.'],
+    ['Technical impact','Order Management p95 latency 2.8 s (normal 320 ms); 5xx 4.2%; Orders DB pool 98%.'],
+    ['Detection','Grafana latency alert at 10:31, 12 minutes after the change. Correlation engine created the incident at 10:33.'],
+    ['Root cause',i.rootCause],
+    ['Contributing factors','No query-performance test against production-sized data before release. Pool alert threshold (85%) gave no early warning.'],
+    ['Why not detected earlier','Degradation was gradual for 10 minutes and stayed under alert thresholds.'],
+    ['Resolution',i.resolution],
+    ['Corrective actions','Re-release the query with an index on CLIENT_ID and a load test (owner: Trading Apps, due in 2 weeks).'],
+    ['Preventive actions','Add a query-plan gate to the release pipeline; add an early-warning pool alert at 80% (owner: DBA team, due in 3 weeks).'],
+    ['Lessons learned','This is the third DB-pool incident linked to a release in 90 days. Track it as a problem.'],
+  ];
+  return `<div class="row between"><p class="small muted" style="margin:0">Draft generated by the AI copilot from the timeline and evidence. ${S.rcaApproved?'<b style="color:var(--ok)">Approved by Rahul Mehta, Support Manager.</b>':'Requires human approval before sharing.'}</p><button class="btn primary sm" onclick="approveRca()" ${S.rcaApproved?'disabled':''}>Approve RCA</button></div>
+   <table style="margin-top:8px"><tbody>${rows.map(r=>`<tr><td style="width:200px"><b>${r[0]}</b></td><td>${esc(r[1])}</td></tr>`).join('')}</tbody></table>`;
+}
+
+/* ---- log analyzer: a real, working tool ---- */
+const SAMPLE_LOG = (()=>{ const out=[], users=[123,456,789,1042,2210,318], ips=['10.2.4.11','10.2.4.19','10.2.7.3'];
+  let s=0; const ts=(m,sec)=>`2026-10-07 10:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
+  for(let m=20;m<36;m++){ const spike=m>=31&&m<=33; const n= spike?140:28;
+    for(let k=0;k<n;k++){ s=(s*7+11)%60; const r=(m*31+k*17)%10;
+      if(r<4) out.push(`${ts(m,s)} ERROR Connection failed for user ${users[(m+k)%6]} from ${ips[k%3]}`);
+      else if(r<6) out.push(`${ts(m,s)} ERROR HikariPool-1 - Connection is not available, request timed out after 30000ms (order_id=${88000+m*10+k})`);
+      else if(r<8) out.push(`${ts(m,s)} WARN Slow query ${4000+((m*k*97)%1500)}ms sql_id=7gq2m1`);
+      else out.push(`${ts(m,s)} ERROR Authentication failure for session ${(0xabc123+m*k*4099).toString(16)}`); } }
+  return out.sort().join('\n'); })();
+let LOGSTATE={text:SAMPLE_LOG, result:null};
+function normalize(line){
+  return line
+    .replace(/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?\s*/,'')
+    .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi,'<UUID>')
+    .replace(/\b\d{1,3}(?:\.\d{1,3}){3}\b/g,'<IP>')
+    .replace(/\b(user|session|req|request|client)([ =:]+)[A-Za-z_-]*\d[A-Za-z0-9_-]*/gi,'$1$2<ID>')
+    .replace(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g,'<EMAIL>')
+    .replace(/\b0x[0-9a-f]+\b|\b(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{6,}\b/gi,'<HEX>')
+    .replace(/\b\d+(?:\.\d+)?(ms|s)\b/g,'<N>$1')
+    .replace(/\b\d+\b/g,'<N>')
+    .replace(/\s+/g,' ').trim();
+}
+function analyzeLogs(){
+  const lines=LOGSTATE.text.split(/\r?\n/).filter(l=>l.trim());
+  const groups=new Map(), perMin=new Map();
+  for(const l of lines){ const key=normalize(l); const tm=(l.match(/\d{2}:\d{2}(?=:\d{2})/)||[])[0];
+    const g=groups.get(key)||{key,count:0,first:tm,last:tm,level:(l.match(/\b(ERROR|WARN|INFO|DEBUG|FATAL)\b/)||[])[1]||'—',example:l};
+    g.count++; if(tm){g.last=tm; if(!g.first) g.first=tm;} groups.set(key,g);
+    if(tm) perMin.set(tm,(perMin.get(tm)||0)+1); }
+  const list=[...groups.values()].sort((a,b)=>b.count-a.count);
+  const mins=[...perMin.entries()].sort();
+  const avg=mins.length?lines.length/mins.length:0;
+  const spikes=mins.filter(([,c])=>c>avg*2).map(([m])=>m);
+  LOGSTATE.result={total:lines.length, unique:list.length, list, mins, spikes};
+  audit('Logs analysed','Log analyzer',{text:`${lines.length} lines → ${list.length} patterns`});
+  render();
+}
+function pageLogs(){
+  const r=LOGSTATE.result;
+  return `<div class="wrap"><h1>Log analyzer</h1><p class="lede">Paste or upload logs. Lines that differ only by IDs, IPs, timestamps or numbers are grouped into one pattern, so you see the few problems behind thousands of lines.</p>
+   <div class="panel"><div class="row between" style="margin-bottom:8px"><b>Input</b><div class="row"><label class="btn sm">Upload file<input type="file" id="logFile" accept=".log,.txt" hidden></label><button class="btn sm" onclick="LOGSTATE.text=SAMPLE_LOG;LOGSTATE.result=null;render()">Load sample</button><button class="btn sm primary" onclick="LOGSTATE.text=$('#logText').value;analyzeLogs()">Analyze logs</button></div></div>
+   <textarea id="logText" class="mono" rows="8" spellcheck="false">${esc(LOGSTATE.text)}</textarea></div>
+   ${r?`<div class="grid g3" style="margin-top:16px"><div class="panel stat"><span class="l">Lines analysed</span><span class="v">${r.total.toLocaleString()}</span></div><div class="panel stat"><span class="l">Distinct patterns</span><span class="v">${r.unique}</span><span class="d">${Math.round((1-r.unique/r.total)*100)}% reduction</span></div><div class="panel stat"><span class="l">Spike minutes</span><span class="v">${r.spikes.length}</span><span class="d">${r.spikes.length?r.spikes[0]+'–'+r.spikes[r.spikes.length-1]:'None'} (over 2× average)</span></div></div>
+   <div class="panel" style="margin-top:16px"><h2>Top recurring patterns</h2><div class="tablewrap"><table><thead><tr><th>#</th><th>Pattern</th><th>Level</th><th style="text-align:right">Count</th><th>First</th><th>Last</th></tr></thead><tbody>
+   ${r.list.slice(0,10).map((g,n)=>`<tr><td>${n+1}</td><td><code>${esc(g.key)}</code><div class="small muted" style="margin-top:3px">e.g. ${esc(g.example.slice(0,110))}</div></td><td><span class="pill ${g.level==='ERROR'||g.level==='FATAL'?'bad':g.level==='WARN'?'warn':'mut'}">${g.level}</span></td><td style="text-align:right"><b>${g.count}</b></td><td>${g.first||'—'}</td><td>${g.last||'—'}</td></tr>`).join('')}
+   </tbody></table></div></div>
+   <div class="panel" style="margin-top:16px"><h2>Volume per minute</h2>${minuteBars(r)}</div>`:''}</div>`;
+}
+function minuteBars(r){
+  if(!r.mins.length) return '<div class="empty">No timestamps found in these lines.</div>';
+  const max=Math.max(...r.mins.map(m=>m[1])), W=900,H=160,pb=22,bw=(W-20)/r.mins.length;
+  return `<div class="chart"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Log lines per minute">${r.mins.map(([m,c],k)=>{const h=(c/max)*(H-pb-10);const sp=r.spikes.includes(m);return `<rect x="${10+k*bw+2}" y="${H-pb-h}" width="${Math.max(2,bw-4)}" height="${h}" rx="2" fill="${sp?'var(--bad)':'var(--signal)'}"/>${k%3===0?`<text x="${10+k*bw+bw/2}" y="${H-6}" text-anchor="middle" font-size="11" fill="var(--muted)">${m}</text>`:''}`}).join('')}</svg></div>`;
+}
+
+function pageRunbooks(){
+  return `<div class="wrap"><h1>Runbooks & knowledge</h1><p class="lede">Runbooks and past incidents are the copilot's knowledge source. It retrieves the matching runbook and similar incidents instead of guessing.</p>
+   <div class="grid g21"><div class="panel">${runbookView(RUNBOOKS[S.rb||0])}</div>
+   <div class="panel"><h2>Runbook library</h2><table><tbody>${RUNBOOKS.map((r,n)=>`<tr class="click" onclick="S.rb=${n};render()"><td><b>${r.id}</b> ${r.name}</td></tr>`).join('')}</tbody></table>
+   <h2 style="margin-top:16px">Past incidents</h2><table><tbody>${HISTORY.map(h=>`<tr><td><b>${h.id}</b> <span class="small muted">${h.date} · MTTR ${h.mttr}</span><div class="small">${esc(h.title)}. Fix: ${esc(h.fix)}</div></td></tr>`).join('')}</tbody></table></div></div></div>`;
+}
+
+function pageChanges(){
+  const p=S.problem, i=S.inc;
+  return `<div class="wrap"><h1>Changes & problems</h1><p class="lede">Every incident is checked against recent changes. Repeat incidents become problem records with a permanent fix.</p>
+   <div class="panel"><h2>Change calendar</h2><div class="tablewrap"><table><thead><tr><th>Change</th><th>Service</th><th>Owner</th><th>Risk</th><th>Window</th><th>Rollback plan</th><th>Status</th></tr></thead><tbody>
+   ${CHANGES.map(c=>`<tr><td><b>${c.id}</b><div class="small">${esc(c.desc)}</div>${c.id==='CHG-2034'&&i?'<span class="pill warn" style="margin-top:4px">Potential correlation with INC-10342: high</span>':''}</td><td>${svcName(c.svc)}</td><td>${c.owner}</td><td>${c.risk}</td><td class="small">${c.window}</td><td class="small">${esc(c.rollback)}</td><td><span class="pill ${c.status==='Implemented'?'mut':'info'}">${c.status}</span></td></tr>`).join('')}</tbody></table></div></div>
+   <div class="panel" style="margin-top:16px"><div class="row between"><h2>Problem management</h2><button class="btn primary sm" onclick="createProblem()" ${!S.resolvedAt||p?'disabled':''}>Create problem from repeat incidents</button></div>
+   ${p?`<table><tbody><tr><td style="width:180px"><b>${p.id}</b></td><td>${esc(p.title)}</td></tr><tr><td>Related incidents</td><td>${p.incs.join(', ')}</td></tr><tr><td>Root cause</td><td>${esc(p.cause)}</td></tr><tr><td>Permanent fix</td><td>${esc(p.fix)}</td></tr><tr><td>Owner</td><td>${p.owner}</td></tr><tr><td>Status</td><td><span class="pill warn">${p.status}</span></td></tr></tbody></table>`
+   :`<p class="muted" style="margin:0">${S.resolvedAt?'INC-10342 matches INC-9871 and INC-9620. Create a problem record to fix the cause permanently.':'Problem records are suggested when incidents repeat. Resolve the open incident first.'}</p>`}</div></div>`;
+}
+
+function pageSla(){
+  const k=kpis(); const max=NOISY[0].n;
+  return `<div class="wrap"><h1>SLA & KPIs</h1><p class="lede">Last 30 days across all support groups.${k.thisMttr!==undefined?` INC-10342 is included: MTTA ${k.thisMtta}m, MTTR ${dur(k.thisMttr)}.`:''}</p>
+   <div class="grid g4">
+    <div class="panel stat"><span class="l">Incidents</span><span class="v">${k.inc}</span><span class="d">P1 ${k.p1} · P2 ${k.p2}</span></div>
+    <div class="panel stat"><span class="l">MTTA</span><span class="v">${k.mtta}m</span><span class="d">Target 10m</span></div>
+    <div class="panel stat"><span class="l">MTTR</span><span class="v">${dur(k.mttr)}</span><span class="d">Target 4h for P1</span></div>
+    <div class="panel stat"><span class="l">SLA compliance</span><span class="v">${k.sla}%</span><span class="d">5 breaches · ${S.inc&&!S.inc.resolved?1:0} at risk</span></div>
+    <div class="panel stat"><span class="l">Resolution rate</span><span class="v">93%</span><span class="d">Within SLA</span></div>
+    <div class="panel stat"><span class="l">Escalation rate</span><span class="v">18%</span><span class="d">To L3 engineering</span></div>
+    <div class="panel stat"><span class="l">Repeat incidents</span><span class="v">${S.inc?12:11}</span><span class="d">Same pattern within 90 days</span></div>
+    <div class="panel stat"><span class="l">Automation rate</span><span class="v">22%</span><span class="d">Diagnostics run automatically</span></div>
+   </div>
+   <div class="grid g2" style="margin-top:16px">
+    <div class="panel"><h2>Top noisy alerts</h2>${NOISY.map(a=>`<div class="barrow"><span>${esc(a.name)}</span><div class="track"><div class="fill" style="width:${a.n/max*100}%"></div></div><b style="text-align:right">${a.n.toLocaleString()}</b></div>`).join('')}
+     <h3>Suggested actions</h3><table><tbody>${NOISY.map(a=>`<tr><td class="small">${esc(a.name)}</td><td class="small">${esc(a.action)}</td></tr>`).join('')}</tbody></table></div>
+    <div class="panel"><h2>Support teams</h2><div class="tablewrap"><table><thead><tr><th>Team</th><th>Shift</th><th>Eng.</th><th>Open</th><th>SLA risk</th><th>Esc.</th></tr></thead><tbody>${TEAMS.map(t=>`<tr><td><b>${t.name}</b></td><td class="small">${t.shift}</td><td>${t.eng}</td><td>${t.open+(t.name==='APAC'&&S.inc&&!S.inc.resolved?1:0)}</td><td>${t.sla+(t.name==='APAC'&&S.inc&&!S.inc.resolved?1:0)}</td><td>${t.esc+(t.name==='L3 Engineering'&&S.l3?1:0)}</td></tr>`).join('')}</tbody></table></div>
+     <h3>Top problematic services</h3><ol class="steps"><li>Order Management: 9 incidents, 4 linked to releases</li><li>Reporting Service: 6 incidents, mostly disk</li><li>Notification Service: 5 incidents, consumer lag</li></ol></div>
+   </div></div>`;
+}
+
+function handoverText(){
+  const i=S.inc;
+  let t=`APAC → EMEA handover · ${hhmm(S.t)} IST\n\n`;
+  if(i&&!i.resolved) t+=`OPEN P1\n${i.id}: ${i.title}\nStatus: ${i.status}. Owner: ${i.owner}.\n${S.diagDone?'Cause confirmed: CHG-2034 order-enrichment query exhausting Orders DB pool.\n':''}${S.mitigatedAt!==null?'Fix applied (flag disabled). Watch latency and 5xx for 30 min.\n':'Next step: approval to disable feature flag order_enrichment_v2.\n'}${S.l3?'L3 DBA engaged.\n':''}Next customer update due ${hhmm(S.t+30)}.\n\n`;
+  else if(i) t+=`RESOLVED THIS SHIFT\n${i.id}: order placement degraded, ${dur(i.resolved-i.created)}. Cause: CHG-2034 query. Fix: flag disabled.\nFollow-up: RCA ${S.rcaApproved?'approved':'awaiting approval'}; ${S.problem?S.problem.id+' opened':'problem record to be created'}.\n\n`;
+  else t+='No P1/P2 incidents open.\n\n';
+  t+=`CUSTOMER ESCALATIONS\nABC Bank: ${i?(i.resolved?'awaiting confirmation of recovery':'order failures, updates every 30 min'):'none'}\n\nWATCH LIST\nALERT-10198 Reporting disk at 81% (log rotation issue, low risk)\nALERT-10201 Notification consumer lag (noisy, tuning planned)\n\nUPCOMING CHANGES\nCHG-2045 Kafka broker patch 3.7.1, tonight 02:00 UTC\n`;
+  return t;
+}
+function pageHandover(){
+  if(!S.hoDraft || !S.hoEdited) S.hoDraft=handoverText();
+  return `<div class="wrap"><h1>Shift handover</h1><p class="lede">Generated from open incidents, escalations, alerts and changes. Edit it before publishing; nothing is sent automatically.</p>
+   <div class="panel"><textarea id="hoText" rows="18" class="mono" oninput="S.hoEdited=true;S.hoDraft=this.value">${esc(S.hoDraft)}</textarea>
+   <div class="row" style="margin-top:10px;justify-content:flex-end"><button class="btn" onclick="S.hoEdited=false;render()">Regenerate</button><button class="btn primary" onclick="S.handoverPublished=true;audit('Handover published','APAC → EMEA');toast('Handover published to EMEA');render()">${S.handoverPublished?'Published':'Publish to EMEA'}</button></div></div></div>`;
+}
+
+function custDraft(){
+  const i=S.inc;
+  if(!i) return '';
+  if(i.resolved) return `Subject: Resolved – order placement delays (${i.id})\n\nDear ABC Bank team,\n\nThe issue affecting order placement between ${hhmm(30)} and ${hhmm(S.mitigatedAt+4)} IST has been resolved. Service has been stable since ${hhmm(S.mitigatedAt+4)}.\n\nCause: a database query introduced in a recent release consumed most database connections. We disabled it and service recovered immediately.\n\nA full root cause analysis will follow within 3 business days.\n\nRegards,\nProduction Support`;
+  return `Subject: Update – order placement delays (${i.id})\n\nDear ABC Bank team,\n\nSince ${hhmm(30)} IST some order submissions are failing or slow. Our team is actively working on it${S.diagDone?' and has identified the likely cause in a recent release':''}.\n\n${S.mitigatedAt!==null?'A fix has been applied and service is recovering. We are monitoring closely.':'We will apply a fix as soon as it is verified.'}\n\nNext update by ${hhmm(S.t+30)} IST.\n\nRegards,\nProduction Support`;
+}
+function pageCustomers(){
+  const i=S.inc;
+  return `<div class="wrap"><h1>Customers</h1><p class="lede">Open issues, SLA and communication per customer. The copilot drafts updates; a person approves before anything is sent.</p>
+   <div class="grid g21"><div class="panel"><div class="row between"><h2>ABC Bank</h2><span class="pill ${i&&!i.resolved?'bad':'ok'}">${i&&!i.resolved?'Impacted':'No open impact'}</span></div>
+     <table><tbody><tr><td>Open incidents</td><td>${i&&!i.resolved?'INC-10342 (P1)':'None'}</td></tr><tr><td>Contract SLA</td><td>P1 response 15m, update every 30m, resolution 4h</td></tr><tr><td>Related services</td><td>Trading API, Order Management</td></tr><tr><td>Account manager</td><td>Kavya S.</td></tr></tbody></table>
+     ${i?`<h3>Draft ${i.resolved?'resolution':'progress'} update</h3><textarea id="custText" rows="12" class="mono">${esc(custDraft())}</textarea>
+     <div class="row" style="margin-top:10px;justify-content:flex-end"><button class="btn primary" onclick="S.custSent.push({t:hhmm(S.t),kind:'${i.resolved?'Resolution':'Progress'} update'});audit('Customer update approved and sent','ABC Bank',{text:'Approved by Support Lead (simulated send)'});toast('Update approved and sent (simulated)');render()">Approve and send</button></div>`:'<p class="muted">No active incident for this customer.</p>'}</div>
+   <div class="panel"><h2>Communication history</h2>${S.custSent.length?`<ul class="tl">${S.custSent.map(c=>`<li><time>${c.t}</time>${c.kind} sent</li>`).join('')}</ul>`:'<p class="muted small">No messages sent yet.</p>'}
+    <h2 style="margin-top:16px">Other impacted customers</h2><p class="small muted">${i&&!i.resolved?'Meridian Securities, Eastline Wealth and 3 others.':'None.'}</p></div></div></div>`;
+}
+
+function pageAutomation(){
+  const acts=[['Run health check','Read-only','No approval'],['Collect diagnostic bundle','Read-only','No approval'],['DB session snapshot','Read-only','No approval'],['Disable feature flag','Changes production','Support Manager approval'],['Restart service','Changes production','Support Manager approval'],['Scale service','Changes production','Support Manager approval'],['Clear temp files older than 7 days','Changes production','Support Lead approval'],['Retry failed job','Changes production','Support Lead approval']];
+  return `<div class="wrap"><h1>Automation</h1><p class="lede">Every automation is a named, pre-approved action. The AI can recommend one but never runs a production-changing action without a person approving it. All actions here are simulated.</p>
+   <div class="panel"><div class="tablewrap"><table><thead><tr><th>Action</th><th>Type</th><th>Control</th><th></th></tr></thead><tbody>${acts.map(a=>`<tr><td><b>${a[0]}</b></td><td><span class="pill ${a[1]==='Read-only'?'ok':'warn'}">${a[1]}</span></td><td class="small">${a[2]} · audited · RBAC</td><td><button class="btn sm" onclick="${a[1]==='Read-only'?`audit('Automation executed','${a[0]}',{who:'Runner',text:'Simulated read-only run'});toast('${a[0]}: completed (simulated)')`:`toast('Requires approval. Start it from an incident.')`}">Run</button></td></tr>`).join('')}</tbody></table></div>
+   <h3>Guardrails</h3><p class="small" style="margin:0">The AI never invents metrics or incidents, never executes destructive actions, never changes severity or closes incidents, and never sends customer messages on its own. It summarises, correlates, retrieves, recommends and drafts.</p></div></div>`;
+}
+
+function pageAudit(){
+  return `<div class="wrap"><h1>Audit trail</h1><p class="lede">Who did what, when, and to which incident or service, including every AI answer, approval and automation.</p>
+   <div class="panel">${S.audit.length?`<div class="tablewrap"><table><thead><tr><th>Time</th><th>Who</th><th>Action</th><th>Target</th><th>Detail</th></tr></thead><tbody>${S.audit.map(a=>`<tr><td>${a.t}</td><td>${esc(a.who)}</td><td>${esc(a.action)}</td><td>${esc(a.target)}</td><td class="small">${esc(a.detail)}</td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">No activity yet. Start the scenario.</div>'}</div></div>`;
+}
+
+/* ============ render ============ */
+function go(p){ S.page=p; S.svc=null; $('#side').classList.remove('open'); render(); $('#content').scrollTop=0; }
+function openSvc(id){ S.page='services'; S.svc=id; render(); $('#content').scrollTop=0; }
+function render(){
+  $('#clock').textContent = hhmm(S.t);
+  const firing=S.alerts.filter(a=>a.status==='FIRING').length;
+  $('#nav').innerHTML = NAV.map(([k,l])=>`<li><button ${S.page===k?'aria-current="page"':''} onclick="go('${k}')"><span>${l}</span>${k==='alerts'&&firing?`<span class="count">${firing}</span>`:''}${k==='incident'&&S.inc&&!S.inc.resolved?'<span class="count">P1</span>':''}</button></li>`).join('');
+  const st=loopStage(); const nowIdx=st.indexOf(false);
+  $('#loop').innerHTML = LOOP.map((l,n)=>`<div class="${st[n]?'done':(n===nowIdx&&S.stage>0?'now':'')}"><b>${l[0]}</b>${l[1]}</div>`).join('');
+  $('#startBtn').disabled = S.running || !!S.inc;
+  const pages={overview:pageOverview,incident:pageIncident,alerts:pageAlerts,services:()=>pageServices(S.svc),observability:pageObservability,logs:pageLogs,runbooks:pageRunbooks,changes:pageChanges,sla:pageSla,handover:pageHandover,customers:pageCustomers,automation:pageAutomation,audit:pageAudit};
+  const active=document.activeElement && document.activeElement.id;
+  $('#content').innerHTML = pages[S.page]();
+  if(S.page==='logs'){ const f=$('#logFile'); if(f) f.onchange=e=>{const file=e.target.files[0]; if(!file) return; file.text().then(t=>{LOGSTATE.text=t; analyzeLogs();});}; }
+  if(active==='hoText'){ const el=$('#hoText'); if(el){ el.focus(); el.selectionStart=el.selectionEnd=el.value.length; } }
+}
+
+/* ============ wiring ============ */
+function openCopilot(){ $('#drawer').classList.add('open'); renderCopilot(); $('#askInput').focus(); }
+function openModal(html){ $('#modal').innerHTML=html; $('#scrim').classList.add('open'); }
+function closeModal(){ $('#scrim').classList.remove('open'); }
+$('#startBtn').onclick=start;
+$('#resetBtn').onclick=()=>{ if(timer){clearInterval(timer);timer=null;} S=freshState(); LOGSTATE.result=null; renderCopilot(); render(); toast('Reset to a healthy production state'); };
+$('#copilotBtn').onclick=openCopilot;
+$('#closeCopilot').onclick=()=>$('#drawer').classList.remove('open');
+$('#askForm').onsubmit=e=>{ e.preventDefault(); const q=$('#askInput').value.trim(); if(q){ ask(q); $('#askInput').value=''; } };
+$('#menuBtn').onclick=()=>$('#side').classList.toggle('open');
+$('#scrim').onclick=e=>{ if(e.target.id==='scrim') closeModal(); };
+document.addEventListener('keydown',e=>{ if(e.key==='Escape'){ closeModal(); $('#drawer').classList.remove('open'); } });
+render(); renderCopilot();
+</script>
+</body>
+</html>

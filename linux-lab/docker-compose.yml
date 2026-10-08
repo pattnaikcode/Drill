@@ -1,0 +1,10 @@
+services:
+  lab:
+    build: .
+    container_name: opspilot-lab
+    ports:
+      - "8080:8080"
+    tmpfs:
+      - /data:size=100m        # small dedicated disk so the disk-full fault is safe
+    mem_limit: 768m            # memory leak stays inside the lab
+    cpus: 1.0                  # runaway CPU stays inside the lab

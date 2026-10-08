@@ -1,0 +1,41 @@
+# The same system WITHOUT Kafka: the OMS calls the allocation engine directly.
+# Compare with trade-allocation-kafka.yaml — the only differences are one component,
+# one flow line and the alerts that watch it.
+
+id: trade-allocation-direct
+system: Middle-office trade allocation (direct, no Kafka)
+description: >
+  The OMS hands fills straight to the allocation engine's queue. Without Kafka there is
+  no consumer lag to watch: a slow allocation engine shows up as its own backlog.
+
+clock:
+  start: "13:30"
+  cutoff: "15:00"
+
+business:
+  currency: "₹"
+  unit: "Cr"
+  avg_notional: 0.6
+  produced_at: oms
+  kpis:
+    - {label: "Unallocated", at: tam}
+    - {label: "Not yet affirmed", at: ctm, cutoff: true}
+
+components:
+  - {id: oms, type: source, name: Order Management, rate_per_min: 300}
+  - {id: tam, type: service, name: Allocation Engine, capacity_per_min: 420, instances: 4, uses: [ssi, tam_db]}
+  - {id: ssi, type: ref_data, name: SSI Reference Data, refresh_every_min: 15, stale_after_min: 20}
+  - {id: tam_db, type: database, name: Allocation DB, pool_size: 50}
+  - {id: ctm, type: external_party, name: Confirmation Platform (CTM), capacity_per_min: 520}
+  - {id: settle, type: external_party, name: Settlement (SWIFT), capacity_per_min: 600}
+
+flow:
+  - oms -> tam -> ctm -> settle
+
+alerts:
+  - {name: "Allocation backlog high", on: tam, metric: backlog, above: 900, severity: P2}
+  - {name: "Allocation throughput low", on: tam, metric: out_rate, below: 235, severity: P3}
+  - {name: "Allocation reject rate high", on: tam, metric: reject_rate, above: 2, severity: P2}
+  - {name: "DB connection pool saturated", on: tam_db, metric: pool_pct, above: 90, severity: P2}
+  - {name: "SSI data stale", on: ssi, metric: staleness_min, above: 25, severity: P3}
+  - {name: "Unmatched confirmations", on: ctm, metric: backlog, above: 900, severity: P2}

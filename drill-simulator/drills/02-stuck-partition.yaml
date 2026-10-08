@@ -1,0 +1,29 @@
+id: stuck-partition
+title: One partition stuck
+level: Medium
+summary: Overall flow looks almost normal, but part of the book is not being allocated.
+brief: >
+  13:30. Everything looked fine at the start of the afternoon. Watch the allocation flow
+  through to the 15:00 affirmation cut-off.
+faults:
+  - {at: "13:35", component: trades_topic, fault: poison_message, params: {partition: 3}}
+root_cause: {component: trades_topic, fault: poison_message}
+accepted_fixes: [trades_topic.skip_poison_message]
+risky_actions: [tam.restart]
+hints:
+  - {after_min: 4, text: "Total throughput is only slightly lower. Is the lag spread evenly across partitions?"}
+  - {after_min: 9, text: "Search the Allocation Engine logs for errors that repeat the same offset."}
+debrief:
+  what_happened: >
+    A message with a new field (allocRatioV2) could not be deserialised. The consumer retried
+    it forever, so partition 3 stopped while the other five partitions kept flowing. Throughput
+    fell by only one-sixth, which is easy to miss.
+  key_signal: Lag growing on one partition only, and the same offset repeating in the error log.
+  why_not_restart: >
+    Restarting the consumer re-reads the same message and gets stuck again. The message must be
+    parked to a dead-letter topic and repaired separately.
+  runbook:
+    - Compare lag per partition, not just total lag.
+    - Find the offset in the consumer error log.
+    - Park the message to the DLQ with approval, then repair and replay it.
+    - Raise a problem record for schema compatibility between OMS and the allocator.

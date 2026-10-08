@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpsPilot</title>
+<meta name="description" content="Incident drills and investigation tooling for production support teams in capital markets.">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Semi+Condensed:wght@600;700&display=swap">
+<style>
+:root { --bg:#F1F3F6; --panel:#FFFFFF; --ink:#18202B; --muted:#5A6577; --line:#D9DEE6; --accent:#1F5FBF;
+  --display:"Barlow Semi Condensed","Arial Narrow",system-ui,sans-serif; --body:"Barlow",system-ui,-apple-system,"Segoe UI",sans-serif; }
+@media (prefers-color-scheme: dark) { :root { --bg:#0E131A; --panel:#151C26; --ink:#E3E8F0; --muted:#96A1B3; --line:#283244; --accent:#7EA6F2; color-scheme: dark; } }
+body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.55 var(--body); }
+main { max-width:900px; margin:0 auto; padding-block:56px 40px; padding-inline:16px; display:grid; gap:28px; }
+h1 { font-family:var(--display); font-size:44px; line-height:1.05; margin:0; }
+h2 { font-family:var(--display); font-size:21px; margin:0; }
+p { margin:0; } .lede { color:var(--muted); max-width:62ch; font-size:17px; }
+.grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); gap:14px; }
+a.card { display:grid; gap:8px; align-content:start; background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:18px; color:inherit; text-decoration:none; }
+a.card:hover, a.card:focus-visible { border-color:var(--accent); outline:none; }
+.go { color:var(--accent); font-weight:600; font-size:14px; }
+.tag { font-family:var(--display); font-size:12.5px; letter-spacing:.6px; text-transform:uppercase; color:var(--muted); font-weight:600; }
+footer { color:var(--muted); font-size:13px; }
+</style>
+</head>
+<body>
+<main>
+  <div style="display:grid;gap:10px">
+    <span class="tag">Production support · capital markets</span>
+    <h1>OpsPilot</h1>
+    <p class="lede">Practise the incidents that actually hurt trading operations — a stuck Kafka partition, missing settlement instructions, a vendor outage before the affirmation cut-off — on a simulated system, with scoring and a debrief.</p>
+  </div>
+  <div class="grid">
+    <a class="card" href="drill-simulator/dist/index.html"><span class="tag">Runs in the browser</span><h2>Drill simulator</h2><p>Configurable system blueprints, six scored drills, sandbox mode and a debrief for every run.</p><span class="go">Open the simulator →</span></a>
+    <a class="card" href="command-center/index.html"><span class="tag">Runs in the browser</span><h2>Operations command center</h2><p>Alert correlation, incident lifecycle, evidence-based copilot, RCA, shift handover and SLA KPIs.</p><span class="go">Open the demo →</span></a>
+    <a class="card" href="https://github.com/pattnaikcode/Drill/tree/main/linux-lab"><span class="tag">Runs with Docker</span><h2>Linux lab</h2><p>A real machine you can break. Investigation runs only approved read-only checks; every fix needs an approver.</p><span class="go">See the lab →</span></a>
+  </div>
+  <footer>Simulated environments with synthetic data only. Source and documentation on <a href="https://github.com/pattnaikcode/Drill" style="color:inherit">GitHub</a>.</footer>
+</main>
+</body>
+</html>

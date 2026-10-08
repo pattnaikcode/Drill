@@ -1,0 +1,19 @@
+name: CI
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: "22"}
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: Drill simulator tests
+        run: node --test drill-simulator/tests/*.test.js
+      - name: Bundle is up to date
+        run: |
+          cd drill-simulator && python3 build.py
+          git diff --exit-code dist/ || (echo "Run python3 build.py and commit dist/" && exit 1)
+      - name: Linux lab compiles
+        run: python3 -m py_compile linux-lab/app/*.py

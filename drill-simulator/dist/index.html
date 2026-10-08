@@ -1,0 +1,1546 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>OpsPilot Drills</title>
+<meta name="description" content="Incident drill simulator for production support teams: configurable system blueprints, real fault propagation, scoring and debriefs.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Semi+Condensed:wght@600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one operations console. Header carries the clock and business impact; the system map
+   is the centre of attention; response controls sit beside it; the inspector reads beneath. */
+:root {
+  --bg: #F1F3F6;
+  --panel: #FFFFFF;
+  --sunk: #F6F8FA;
+  --ink: #18202B;
+  --muted: #5A6577;
+  --line: #D9DEE6;
+  --accent: #1F5FBF;
+  --accent-soft: #E4ECF8;
+  --ok: #1D7F52; --ok-soft: #E1F2E9;
+  --warn: #A86300; --warn-soft: #FBEFD9;
+  --bad: #BE2F3A; --bad-soft: #FBE4E6; --on-bad: #FFFFFF;
+  --term: #111821; --term-ink: #CBD5E3;
+  --display: "Barlow Semi Condensed", "Arial Narrow", system-ui, sans-serif;
+  --body: "Barlow", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0E131A; --panel: #151C26; --sunk: #1A2230; --ink: #E3E8F0; --muted: #96A1B3; --line: #283244;
+    --accent: #7EA6F2; --accent-soft: #1D2A44;
+    --ok: #4FC48C; --ok-soft: #12301F; --warn: #E6A645; --warn-soft: #36280F; --bad: #F06D77; --bad-soft: #3A1A1F; --on-bad: #2A0C10;
+    --term: #0A0E14; --term-ink: #C3CEDD; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0E131A; --panel: #151C26; --sunk: #1A2230; --ink: #E3E8F0; --muted: #96A1B3; --line: #283244;
+  --accent: #7EA6F2; --accent-soft: #1D2A44;
+  --ok: #4FC48C; --ok-soft: #12301F; --warn: #E6A645; --warn-soft: #36280F; --bad: #F06D77; --bad-soft: #3A1A1F; --on-bad: #2A0C10;
+  --term: #0A0E14; --term-ink: #C3CEDD; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--ink); font: 15px/1.5 var(--body); }
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+h1, h2, h3 { font-family: var(--display); font-weight: 600; letter-spacing: .2px; text-wrap: balance; margin: 0; }
+h2 { font-size: 19px; }
+h3 { font-size: 15.5px; }
+.muted { color: var(--muted); }
+.small { font-size: 13px; }
+.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.label { font-family: var(--display); font-size: 12.5px; letter-spacing: .6px; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+
+/* header */
+.top { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 10; background: var(--panel); border-bottom: 1px solid var(--line); }
+.top-in { max-width: 1440px; margin: 0 auto; padding: 10px 16px; display: flex; flex-wrap: wrap; gap: 10px 22px; align-items: center; }
+.brand b { font-family: var(--display); font-size: 20px; font-weight: 700; display: block; line-height: 1.1; }
+.brand span { font-size: 12.5px; color: var(--muted); }
+.clock { display: flex; flex-direction: column; }
+.clock .t { font-family: var(--mono); font-size: 26px; font-weight: 500; line-height: 1.1; }
+.kpi { display: flex; flex-direction: column; min-width: 120px; }
+.kpi .v { font-family: var(--mono); font-size: 17px; font-weight: 500; }
+.kpi .v.warn { color: var(--warn); } .kpi .v.bad { color: var(--bad); }
+.grow { flex: 1; }
+.controls { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.state-chip { font-size: 12.5px; font-weight: 600; padding: 2px 10px; border-radius: 12px; background: var(--sunk); color: var(--muted); border: 1px solid var(--line); }
+.state-chip.live { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+
+.tabs { max-width: 1440px; margin: 0 auto; padding: 0 16px; display: flex; gap: 2px; overflow-x: auto; }
+.tabs button { background: none; border: 0; border-bottom: 3px solid transparent; padding: 8px 14px; font-family: var(--display); font-weight: 600; font-size: 15px; color: var(--muted); white-space: nowrap; }
+.tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); }
+
+main { max-width: 1440px; margin: 0 auto; padding-block: 18px 40px; padding-inline: 16px; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; min-width: 0; }
+.stack { display: grid; gap: 14px; align-content: start; min-width: 0; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.row > select { flex: 1 1 150px; max-width: 100%; }
+.controls select { flex: none; }
+.between { justify-content: space-between; }
+
+.btn { border: 1px solid var(--line); background: var(--panel); padding: 6px 13px; border-radius: 6px; font-weight: 500; font-size: 14px; }
+.btn:hover:not(:disabled) { border-color: var(--accent); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--panel); }
+.btn.danger { background: var(--bad); border-color: var(--bad); color: var(--on-bad); }
+.btn.sm { padding: 3px 10px; font-size: 13px; }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+select, input[type=text], textarea { background: var(--sunk); border: 1px solid var(--line); border-radius: 6px; padding: 6px 9px; min-width: 0; }
+label.field { display: grid; gap: 4px; font-size: 13px; color: var(--muted); }
+label.field > select, label.field > input { color: var(--ink); width: 100%; }
+
+.pill { display: inline-block; font-size: 12px; font-weight: 600; padding: 1px 9px; border-radius: 10px; white-space: nowrap; }
+.pill.ok { background: var(--ok-soft); color: var(--ok); }
+.pill.warn { background: var(--warn-soft); color: var(--warn); }
+.pill.bad { background: var(--bad-soft); color: var(--bad); }
+.pill.mut { background: var(--sunk); color: var(--muted); }
+.pill.info { background: var(--accent-soft); color: var(--accent); }
+
+/* drill library */
+.lib { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; display: grid; gap: 6px; align-content: start; text-align: left; }
+.card[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.card:disabled { opacity: .55; }
+.card h3 { font-size: 17px; }
+.setup { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; align-items: end; }
+
+/* run */
+.run { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 14px; align-items: start; }
+.map { overflow-x: auto; }
+.map svg { display: block; width: 100%; min-width: 640px; height: auto; }
+.node { cursor: pointer; }
+.node rect.box { fill: var(--panel); stroke: var(--line); stroke-width: 1.2; }
+.node.sel rect.box { stroke: var(--accent); stroke-width: 2.4; }
+.node.ok rect.bar { fill: var(--ok); } .node.warn rect.bar { fill: var(--warn); } .node.bad rect.bar { fill: var(--bad); }
+.node text { fill: var(--ink); font-family: var(--body); }
+.node text.k { fill: var(--muted); font-size: 11.5px; }
+.node text.m { font-family: var(--mono); font-size: 12px; }
+.edge { stroke: var(--muted); stroke-width: 1.4; fill: none; }
+.edge.dep { stroke-dasharray: 4 4; }
+.edge-l { fill: var(--muted); font-family: var(--mono); font-size: 11px; }
+.pbar { fill: var(--accent); } .pbar.hot { fill: var(--bad); } .ptrack { fill: var(--sunk); }
+
+.alerts { display: grid; gap: 6px; max-height: 250px; overflow-y: auto; }
+.alert { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: center; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; font-size: 13.5px; background: var(--panel); text-align: left; width: 100%; }
+.alert.resolved { opacity: .6; }
+.alert .when { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+
+.brief { font-size: 14px; }
+.hint { border-left: 3px solid var(--accent); padding: 4px 10px; font-size: 13.5px; background: var(--accent-soft); border-radius: 0; }
+.feed { display: grid; gap: 6px; font-size: 13px; max-height: 200px; overflow-y: auto; }
+.feed div { border-left: 3px solid var(--line); padding-left: 8px; }
+.feed div.ok { border-color: var(--ok); } .feed div.bad { border-color: var(--bad); }
+.approve { border: 1px dashed var(--bad); border-radius: 6px; padding: 10px; display: grid; gap: 8px; background: var(--bad-soft); }
+.approve .err { color: var(--bad); font-size: 13px; font-weight: 600; }
+
+/* inspector */
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(165px, 1fr)); gap: 10px; }
+.tile { border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; background: var(--sunk); }
+.tile .v { font-family: var(--mono); font-size: 18px; font-weight: 500; }
+.tile svg { display: block; width: 100%; height: 34px; margin-top: 4px; }
+.spark-l { fill: none; stroke: var(--accent); stroke-width: 1.6; }
+.spark-a { fill: var(--accent-soft); stroke: none; }
+.spark-d { fill: var(--accent); }
+.term { background: var(--term); color: var(--term-ink); font-family: var(--mono); font-size: 12.3px; line-height: 1.55; border-radius: 6px; padding: 10px 12px; height: 240px; overflow: auto; white-space: pre; }
+.term .E { color: #FF8A93; } .term .W { color: #F2BE6B; }
+
+/* blueprint */
+.bp { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 14px; align-items: start; }
+textarea.code { width: 100%; min-height: 560px; font-family: var(--mono); font-size: 12.5px; line-height: 1.55; tab-size: 2; color: var(--ink); }
+.errors { color: var(--bad); font-size: 13.5px; margin: 0; padding-left: 18px; }
+.okmsg { color: var(--ok); font-size: 13.5px; font-weight: 600; }
+.tablewrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+th { text-align: left; color: var(--muted); font-weight: 600; font-size: 12.5px; padding: 6px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+td { padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+code { font-family: var(--mono); font-size: 12.5px; background: var(--sunk); padding: 0 4px; border-radius: 3px; }
+
+/* debrief */
+.score { display: grid; grid-template-columns: auto 1fr; gap: 20px; align-items: center; }
+.score .big { font-family: var(--display); font-size: 64px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
+.parts { display: grid; gap: 8px; }
+.part { display: grid; grid-template-columns: 190px 1fr 56px; gap: 10px; align-items: center; font-size: 14px; }
+.part .track { height: 10px; background: var(--sunk); border-radius: 5px; overflow: hidden; border: 1px solid var(--line); }
+.part .fill { height: 100%; background: var(--accent); }
+.part .note { grid-column: 2 / -1; font-size: 12.5px; color: var(--muted); margin-top: -6px; }
+.times { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
+.tl { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; font-size: 13.5px; }
+.tl li { display: grid; grid-template-columns: 52px 1fr; gap: 8px; }
+.tl li time { font-family: var(--mono); color: var(--muted); }
+.tl li.k-fault { color: var(--bad); font-weight: 600; } .tl li.k-fixed, .tl li.k-recovered { color: var(--ok); font-weight: 600; } .tl li.k-alert { color: var(--warn); }
+.cls { font-size: 12px; font-weight: 600; }
+.cls.accepted { color: var(--ok); } .cls.risky { color: var(--bad); } .cls.unnecessary { color: var(--warn); }
+.empty { padding: 28px; text-align: center; color: var(--muted); }
+footer { max-width: 1440px; margin: 0 auto; padding: 0 16px 28px; color: var(--muted); font-size: 12.5px; }
+
+@media (max-width: 1080px) { .run, .bp { grid-template-columns: 1fr; } }
+@media (max-width: 640px) {
+  .part { grid-template-columns: 1fr 48px; } .part .track { grid-column: 1 / -1; grid-row: 2; } .part .note { grid-column: 1 / -1; margin-top: 0; }
+  .score { grid-template-columns: 1fr; }
+  .clock .t { font-size: 22px; }
+}
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="top-in">
+    <div class="brand"><b>OpsPilot Drills</b><span>Incident drills on a simulated system</span></div>
+    <div class="clock"><span class="label">Simulated time</span><span class="t" id="clock">13:30:00</span><span class="small muted" id="cutoff"></span></div>
+    <div class="row" id="kpis" style="gap:22px"></div>
+    <div class="grow"></div>
+    <div class="controls">
+      <span class="state-chip" id="stateChip">Sandbox</span>
+      <button class="btn sm" id="pauseBtn">Pause</button>
+      <label class="small muted row" style="gap:4px">Speed
+        <select id="speed" aria-label="Simulation speed"><option value="1">1×</option><option value="2" selected>2×</option><option value="4">4×</option><option value="8">8×</option></select></label>
+    </div>
+  </div>
+  <nav class="tabs" role="tablist" aria-label="Views">
+    <button role="tab" data-tab="drills">Drills</button>
+    <button role="tab" data-tab="run">System</button>
+    <button role="tab" data-tab="blueprint">Blueprint</button>
+    <button role="tab" data-tab="debrief">Debrief</button>
+  </nav>
+</header>
+<main id="main"></main>
+<footer>Simulated environment: synthetic trades only, no real systems or client data. Blueprints and drills are plain YAML.</footer>
+<div id="toast" role="status" hidden style="position:fixed;left:50%;transform:translateX(-50%);bottom:calc(18px + env(safe-area-inset-bottom, 0px));background:var(--ink);color:var(--panel);padding:9px 16px;border-radius:8px;font-size:14px;z-index:30;max-width:90vw"></div>
+<script>
+/*! js-yaml 4.1.0 https://github.com/nodeca/js-yaml @license MIT */
+!function(e,t){"object"==typeof exports&&"undefined"!=typeof module?t(exports):"function"==typeof define&&define.amd?define(["exports"],t):t((e="undefined"!=typeof globalThis?globalThis:e||self).jsyaml={})}(this,(function(e){"use strict";function t(e){return null==e}var n={isNothing:t,isObject:function(e){return"object"==typeof e&&null!==e},toArray:function(e){return Array.isArray(e)?e:t(e)?[]:[e]},repeat:function(e,t){var n,i="";for(n=0;n<t;n+=1)i+=e;return i},isNegativeZero:function(e){return 0===e&&Number.NEGATIVE_INFINITY===1/e},extend:function(e,t){var n,i,r,o;if(t)for(n=0,i=(o=Object.keys(t)).length;n<i;n+=1)e[r=o[n]]=t[r];return e}};function i(e,t){var n="",i=e.reason||"(unknown reason)";return e.mark?(e.mark.name&&(n+='in "'+e.mark.name+'" '),n+="("+(e.mark.line+1)+":"+(e.mark.column+1)+")",!t&&e.mark.snippet&&(n+="\n\n"+e.mark.snippet),i+" "+n):i}function r(e,t){Error.call(this),this.name="YAMLException",this.reason=e,this.mark=t,this.message=i(this,!1),Error.captureStackTrace?Error.captureStackTrace(this,this.constructor):this.stack=(new Error).stack||""}r.prototype=Object.create(Error.prototype),r.prototype.constructor=r,r.prototype.toString=function(e){return this.name+": "+i(this,e)};var o=r;function a(e,t,n,i,r){var o="",a="",l=Math.floor(r/2)-1;return i-t>l&&(t=i-l+(o=" ... ").length),n-i>l&&(n=i+l-(a=" ...").length),{str:o+e.slice(t,n).replace(/\t/g,"→")+a,pos:i-t+o.length}}function l(e,t){return n.repeat(" ",t-e.length)+e}var c=function(e,t){if(t=Object.create(t||null),!e.buffer)return null;t.maxLength||(t.maxLength=79),"number"!=typeof t.indent&&(t.indent=1),"number"!=typeof t.linesBefore&&(t.linesBefore=3),"number"!=typeof t.linesAfter&&(t.linesAfter=2);for(var i,r=/\r?\n|\r|\0/g,o=[0],c=[],s=-1;i=r.exec(e.buffer);)c.push(i.index),o.push(i.index+i[0].length),e.position<=i.index&&s<0&&(s=o.length-2);s<0&&(s=o.length-1);var u,p,f="",d=Math.min(e.line+t.linesAfter,c.length).toString().length,h=t.maxLength-(t.indent+d+3);for(u=1;u<=t.linesBefore&&!(s-u<0);u++)p=a(e.buffer,o[s-u],c[s-u],e.position-(o[s]-o[s-u]),h),f=n.repeat(" ",t.indent)+l((e.line-u+1).toString(),d)+" | "+p.str+"\n"+f;for(p=a(e.buffer,o[s],c[s],e.position,h),f+=n.repeat(" ",t.indent)+l((e.line+1).toString(),d)+" | "+p.str+"\n",f+=n.repeat("-",t.indent+d+3+p.pos)+"^\n",u=1;u<=t.linesAfter&&!(s+u>=c.length);u++)p=a(e.buffer,o[s+u],c[s+u],e.position-(o[s]-o[s+u]),h),f+=n.repeat(" ",t.indent)+l((e.line+u+1).toString(),d)+" | "+p.str+"\n";return f.replace(/\n$/,"")},s=["kind","multi","resolve","construct","instanceOf","predicate","represent","representName","defaultStyle","styleAliases"],u=["scalar","sequence","mapping"];var p=function(e,t){if(t=t||{},Object.keys(t).forEach((function(t){if(-1===s.indexOf(t))throw new o('Unknown option "'+t+'" is met in definition of "'+e+'" YAML type.')})),this.options=t,this.tag=e,this.kind=t.kind||null,this.resolve=t.resolve||function(){return!0},this.construct=t.construct||function(e){return e},this.instanceOf=t.instanceOf||null,this.predicate=t.predicate||null,this.represent=t.represent||null,this.representName=t.representName||null,this.defaultStyle=t.defaultStyle||null,this.multi=t.multi||!1,this.styleAliases=function(e){var t={};return null!==e&&Object.keys(e).forEach((function(n){e[n].forEach((function(e){t[String(e)]=n}))})),t}(t.styleAliases||null),-1===u.indexOf(this.kind))throw new o('Unknown kind "'+this.kind+'" is specified for "'+e+'" YAML type.')};function f(e,t){var n=[];return e[t].forEach((function(e){var t=n.length;n.forEach((function(n,i){n.tag===e.tag&&n.kind===e.kind&&n.multi===e.multi&&(t=i)})),n[t]=e})),n}function d(e){return this.extend(e)}d.prototype.extend=function(e){var t=[],n=[];if(e instanceof p)n.push(e);else if(Array.isArray(e))n=n.concat(e);else{if(!e||!Array.isArray(e.implicit)&&!Array.isArray(e.explicit))throw new o("Schema.extend argument should be a Type, [ Type ], or a schema definition ({ implicit: [...], explicit: [...] })");e.implicit&&(t=t.concat(e.implicit)),e.explicit&&(n=n.concat(e.explicit))}t.forEach((function(e){if(!(e instanceof p))throw new o("Specified list of YAML types (or a single Type object) contains a non-Type object.");if(e.loadKind&&"scalar"!==e.loadKind)throw new o("There is a non-scalar type in the implicit list of a schema. Implicit resolving of such types is not supported.");if(e.multi)throw new o("There is a multi type in the implicit list of a schema. Multi tags can only be listed as explicit.")})),n.forEach((function(e){if(!(e instanceof p))throw new o("Specified list of YAML types (or a single Type object) contains a non-Type object.")}));var i=Object.create(d.prototype);return i.implicit=(this.implicit||[]).concat(t),i.explicit=(this.explicit||[]).concat(n),i.compiledImplicit=f(i,"implicit"),i.compiledExplicit=f(i,"explicit"),i.compiledTypeMap=function(){var e,t,n={scalar:{},sequence:{},mapping:{},fallback:{},multi:{scalar:[],sequence:[],mapping:[],fallback:[]}};function i(e){e.multi?(n.multi[e.kind].push(e),n.multi.fallback.push(e)):n[e.kind][e.tag]=n.fallback[e.tag]=e}for(e=0,t=arguments.length;e<t;e+=1)arguments[e].forEach(i);return n}(i.compiledImplicit,i.compiledExplicit),i};var h=d,g=new p("tag:yaml.org,2002:str",{kind:"scalar",construct:function(e){return null!==e?e:""}}),m=new p("tag:yaml.org,2002:seq",{kind:"sequence",construct:function(e){return null!==e?e:[]}}),y=new p("tag:yaml.org,2002:map",{kind:"mapping",construct:function(e){return null!==e?e:{}}}),b=new h({explicit:[g,m,y]});var A=new p("tag:yaml.org,2002:null",{kind:"scalar",resolve:function(e){if(null===e)return!0;var t=e.length;return 1===t&&"~"===e||4===t&&("null"===e||"Null"===e||"NULL"===e)},construct:function(){return null},predicate:function(e){return null===e},represent:{canonical:function(){return"~"},lowercase:function(){return"null"},uppercase:function(){return"NULL"},camelcase:function(){return"Null"},empty:function(){return""}},defaultStyle:"lowercase"});var v=new p("tag:yaml.org,2002:bool",{kind:"scalar",resolve:function(e){if(null===e)return!1;var t=e.length;return 4===t&&("true"===e||"True"===e||"TRUE"===e)||5===t&&("false"===e||"False"===e||"FALSE"===e)},construct:function(e){return"true"===e||"True"===e||"TRUE"===e},predicate:function(e){return"[object Boolean]"===Object.prototype.toString.call(e)},represent:{lowercase:function(e){return e?"true":"false"},uppercase:function(e){return e?"TRUE":"FALSE"},camelcase:function(e){return e?"True":"False"}},defaultStyle:"lowercase"});function w(e){return 48<=e&&e<=55}function k(e){return 48<=e&&e<=57}var C=new p("tag:yaml.org,2002:int",{kind:"scalar",resolve:function(e){if(null===e)return!1;var t,n,i=e.length,r=0,o=!1;if(!i)return!1;if("-"!==(t=e[r])&&"+"!==t||(t=e[++r]),"0"===t){if(r+1===i)return!0;if("b"===(t=e[++r])){for(r++;r<i;r++)if("_"!==(t=e[r])){if("0"!==t&&"1"!==t)return!1;o=!0}return o&&"_"!==t}if("x"===t){for(r++;r<i;r++)if("_"!==(t=e[r])){if(!(48<=(n=e.charCodeAt(r))&&n<=57||65<=n&&n<=70||97<=n&&n<=102))return!1;o=!0}return o&&"_"!==t}if("o"===t){for(r++;r<i;r++)if("_"!==(t=e[r])){if(!w(e.charCodeAt(r)))return!1;o=!0}return o&&"_"!==t}}if("_"===t)return!1;for(;r<i;r++)if("_"!==(t=e[r])){if(!k(e.charCodeAt(r)))return!1;o=!0}return!(!o||"_"===t)},construct:function(e){var t,n=e,i=1;if(-1!==n.indexOf("_")&&(n=n.replace(/_/g,"")),"-"!==(t=n[0])&&"+"!==t||("-"===t&&(i=-1),t=(n=n.slice(1))[0]),"0"===n)return 0;if("0"===t){if("b"===n[1])return i*parseInt(n.slice(2),2);if("x"===n[1])return i*parseInt(n.slice(2),16);if("o"===n[1])return i*parseInt(n.slice(2),8)}return i*parseInt(n,10)},predicate:function(e){return"[object Number]"===Object.prototype.toString.call(e)&&e%1==0&&!n.isNegativeZero(e)},represent:{binary:function(e){return e>=0?"0b"+e.toString(2):"-0b"+e.toString(2).slice(1)},octal:function(e){return e>=0?"0o"+e.toString(8):"-0o"+e.toString(8).slice(1)},decimal:function(e){return e.toString(10)},hexadecimal:function(e){return e>=0?"0x"+e.toString(16).toUpperCase():"-0x"+e.toString(16).toUpperCase().slice(1)}},defaultStyle:"decimal",styleAliases:{binary:[2,"bin"],octal:[8,"oct"],decimal:[10,"dec"],hexadecimal:[16,"hex"]}}),x=new RegExp("^(?:[-+]?(?:[0-9][0-9_]*)(?:\\.[0-9_]*)?(?:[eE][-+]?[0-9]+)?|\\.[0-9_]+(?:[eE][-+]?[0-9]+)?|[-+]?\\.(?:inf|Inf|INF)|\\.(?:nan|NaN|NAN))$");var I=/^[-+]?[0-9]+e/;var S=new p("tag:yaml.org,2002:float",{kind:"scalar",resolve:function(e){return null!==e&&!(!x.test(e)||"_"===e[e.length-1])},construct:function(e){var t,n;return n="-"===(t=e.replace(/_/g,"").toLowerCase())[0]?-1:1,"+-".indexOf(t[0])>=0&&(t=t.slice(1)),".inf"===t?1===n?Number.POSITIVE_INFINITY:Number.NEGATIVE_INFINITY:".nan"===t?NaN:n*parseFloat(t,10)},predicate:function(e){return"[object Number]"===Object.prototype.toString.call(e)&&(e%1!=0||n.isNegativeZero(e))},represent:function(e,t){var i;if(isNaN(e))switch(t){case"lowercase":return".nan";case"uppercase":return".NAN";case"camelcase":return".NaN"}else if(Number.POSITIVE_INFINITY===e)switch(t){case"lowercase":return".inf";case"uppercase":return".INF";case"camelcase":return".Inf"}else if(Number.NEGATIVE_INFINITY===e)switch(t){case"lowercase":return"-.inf";case"uppercase":return"-.INF";case"camelcase":return"-.Inf"}else if(n.isNegativeZero(e))return"-0.0";return i=e.toString(10),I.test(i)?i.replace("e",".e"):i},defaultStyle:"lowercase"}),O=b.extend({implicit:[A,v,C,S]}),j=O,T=new RegExp("^([0-9][0-9][0-9][0-9])-([0-9][0-9])-([0-9][0-9])$"),N=new RegExp("^([0-9][0-9][0-9][0-9])-([0-9][0-9]?)-([0-9][0-9]?)(?:[Tt]|[ \\t]+)([0-9][0-9]?):([0-9][0-9]):([0-9][0-9])(?:\\.([0-9]*))?(?:[ \\t]*(Z|([-+])([0-9][0-9]?)(?::([0-9][0-9]))?))?$");var F=new p("tag:yaml.org,2002:timestamp",{kind:"scalar",resolve:function(e){return null!==e&&(null!==T.exec(e)||null!==N.exec(e))},construct:function(e){var t,n,i,r,o,a,l,c,s=0,u=null;if(null===(t=T.exec(e))&&(t=N.exec(e)),null===t)throw new Error("Date resolve error");if(n=+t[1],i=+t[2]-1,r=+t[3],!t[4])return new Date(Date.UTC(n,i,r));if(o=+t[4],a=+t[5],l=+t[6],t[7]){for(s=t[7].slice(0,3);s.length<3;)s+="0";s=+s}return t[9]&&(u=6e4*(60*+t[10]+ +(t[11]||0)),"-"===t[9]&&(u=-u)),c=new Date(Date.UTC(n,i,r,o,a,l,s)),u&&c.setTime(c.getTime()-u),c},instanceOf:Date,represent:function(e){return e.toISOString()}});var E=new p("tag:yaml.org,2002:merge",{kind:"scalar",resolve:function(e){return"<<"===e||null===e}}),M="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=\n\r";var L=new p("tag:yaml.org,2002:binary",{kind:"scalar",resolve:function(e){if(null===e)return!1;var t,n,i=0,r=e.length,o=M;for(n=0;n<r;n++)if(!((t=o.indexOf(e.charAt(n)))>64)){if(t<0)return!1;i+=6}return i%8==0},construct:function(e){var t,n,i=e.replace(/[\r\n=]/g,""),r=i.length,o=M,a=0,l=[];for(t=0;t<r;t++)t%4==0&&t&&(l.push(a>>16&255),l.push(a>>8&255),l.push(255&a)),a=a<<6|o.indexOf(i.charAt(t));return 0===(n=r%4*6)?(l.push(a>>16&255),l.push(a>>8&255),l.push(255&a)):18===n?(l.push(a>>10&255),l.push(a>>2&255)):12===n&&l.push(a>>4&255),new Uint8Array(l)},predicate:function(e){return"[object Uint8Array]"===Object.prototype.toString.call(e)},represent:function(e){var t,n,i="",r=0,o=e.length,a=M;for(t=0;t<o;t++)t%3==0&&t&&(i+=a[r>>18&63],i+=a[r>>12&63],i+=a[r>>6&63],i+=a[63&r]),r=(r<<8)+e[t];return 0===(n=o%3)?(i+=a[r>>18&63],i+=a[r>>12&63],i+=a[r>>6&63],i+=a[63&r]):2===n?(i+=a[r>>10&63],i+=a[r>>4&63],i+=a[r<<2&63],i+=a[64]):1===n&&(i+=a[r>>2&63],i+=a[r<<4&63],i+=a[64],i+=a[64]),i}}),_=Object.prototype.hasOwnProperty,D=Object.prototype.toString;var U=new p("tag:yaml.org,2002:omap",{kind:"sequence",resolve:function(e){if(null===e)return!0;var t,n,i,r,o,a=[],l=e;for(t=0,n=l.length;t<n;t+=1){if(i=l[t],o=!1,"[object Object]"!==D.call(i))return!1;for(r in i)if(_.call(i,r)){if(o)return!1;o=!0}if(!o)return!1;if(-1!==a.indexOf(r))return!1;a.push(r)}return!0},construct:function(e){return null!==e?e:[]}}),q=Object.prototype.toString;var Y=new p("tag:yaml.org,2002:pairs",{kind:"sequence",resolve:function(e){if(null===e)return!0;var t,n,i,r,o,a=e;for(o=new Array(a.length),t=0,n=a.length;t<n;t+=1){if(i=a[t],"[object Object]"!==q.call(i))return!1;if(1!==(r=Object.keys(i)).length)return!1;o[t]=[r[0],i[r[0]]]}return!0},construct:function(e){if(null===e)return[];var t,n,i,r,o,a=e;for(o=new Array(a.length),t=0,n=a.length;t<n;t+=1)i=a[t],r=Object.keys(i),o[t]=[r[0],i[r[0]]];return o}}),R=Object.prototype.hasOwnProperty;var B=new p("tag:yaml.org,2002:set",{kind:"mapping",resolve:function(e){if(null===e)return!0;var t,n=e;for(t in n)if(R.call(n,t)&&null!==n[t])return!1;return!0},construct:function(e){return null!==e?e:{}}}),K=j.extend({implicit:[F,E],explicit:[L,U,Y,B]}),P=Object.prototype.hasOwnProperty,W=/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x84\x86-\x9F\uFFFE\uFFFF]|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?:[^\uD800-\uDBFF]|^)[\uDC00-\uDFFF]/,H=/[\x85\u2028\u2029]/,$=/[,\[\]\{\}]/,G=/^(?:!|!!|![a-z\-]+!)$/i,V=/^(?:!|[^,\[\]\{\}])(?:%[0-9a-f]{2}|[0-9a-z\-#;\/\?:@&=\+\$,_\.!~\*'\(\)\[\]])*$/i;function Z(e){return Object.prototype.toString.call(e)}function J(e){return 10===e||13===e}function Q(e){return 9===e||32===e}function z(e){return 9===e||32===e||10===e||13===e}function X(e){return 44===e||91===e||93===e||123===e||125===e}function ee(e){var t;return 48<=e&&e<=57?e-48:97<=(t=32|e)&&t<=102?t-97+10:-1}function te(e){return 48===e?"\0":97===e?"":98===e?"\b":116===e||9===e?"\t":110===e?"\n":118===e?"\v":102===e?"\f":114===e?"\r":101===e?"":32===e?" ":34===e?'"':47===e?"/":92===e?"\\":78===e?"":95===e?" ":76===e?"\u2028":80===e?"\u2029":""}function ne(e){return e<=65535?String.fromCharCode(e):String.fromCharCode(55296+(e-65536>>10),56320+(e-65536&1023))}for(var ie=new Array(256),re=new Array(256),oe=0;oe<256;oe++)ie[oe]=te(oe)?1:0,re[oe]=te(oe);function ae(e,t){this.input=e,this.filename=t.filename||null,this.schema=t.schema||K,this.onWarning=t.onWarning||null,this.legacy=t.legacy||!1,this.json=t.json||!1,this.listener=t.listener||null,this.implicitTypes=this.schema.compiledImplicit,this.typeMap=this.schema.compiledTypeMap,this.length=e.length,this.position=0,this.line=0,this.lineStart=0,this.lineIndent=0,this.firstTabInLine=-1,this.documents=[]}function le(e,t){var n={name:e.filename,buffer:e.input.slice(0,-1),position:e.position,line:e.line,column:e.position-e.lineStart};return n.snippet=c(n),new o(t,n)}function ce(e,t){throw le(e,t)}function se(e,t){e.onWarning&&e.onWarning.call(null,le(e,t))}var ue={YAML:function(e,t,n){var i,r,o;null!==e.version&&ce(e,"duplication of %YAML directive"),1!==n.length&&ce(e,"YAML directive accepts exactly one argument"),null===(i=/^([0-9]+)\.([0-9]+)$/.exec(n[0]))&&ce(e,"ill-formed argument of the YAML directive"),r=parseInt(i[1],10),o=parseInt(i[2],10),1!==r&&ce(e,"unacceptable YAML version of the document"),e.version=n[0],e.checkLineBreaks=o<2,1!==o&&2!==o&&se(e,"unsupported YAML version of the document")},TAG:function(e,t,n){var i,r;2!==n.length&&ce(e,"TAG directive accepts exactly two arguments"),i=n[0],r=n[1],G.test(i)||ce(e,"ill-formed tag handle (first argument) of the TAG directive"),P.call(e.tagMap,i)&&ce(e,'there is a previously declared suffix for "'+i+'" tag handle'),V.test(r)||ce(e,"ill-formed tag prefix (second argument) of the TAG directive");try{r=decodeURIComponent(r)}catch(t){ce(e,"tag prefix is malformed: "+r)}e.tagMap[i]=r}};function pe(e,t,n,i){var r,o,a,l;if(t<n){if(l=e.input.slice(t,n),i)for(r=0,o=l.length;r<o;r+=1)9===(a=l.charCodeAt(r))||32<=a&&a<=1114111||ce(e,"expected valid JSON character");else W.test(l)&&ce(e,"the stream contains non-printable characters");e.result+=l}}function fe(e,t,i,r){var o,a,l,c;for(n.isObject(i)||ce(e,"cannot merge mappings; the provided source object is unacceptable"),l=0,c=(o=Object.keys(i)).length;l<c;l+=1)a=o[l],P.call(t,a)||(t[a]=i[a],r[a]=!0)}function de(e,t,n,i,r,o,a,l,c){var s,u;if(Array.isArray(r))for(s=0,u=(r=Array.prototype.slice.call(r)).length;s<u;s+=1)Array.isArray(r[s])&&ce(e,"nested arrays are not supported inside keys"),"object"==typeof r&&"[object Object]"===Z(r[s])&&(r[s]="[object Object]");if("object"==typeof r&&"[object Object]"===Z(r)&&(r="[object Object]"),r=String(r),null===t&&(t={}),"tag:yaml.org,2002:merge"===i)if(Array.isArray(o))for(s=0,u=o.length;s<u;s+=1)fe(e,t,o[s],n);else fe(e,t,o,n);else e.json||P.call(n,r)||!P.call(t,r)||(e.line=a||e.line,e.lineStart=l||e.lineStart,e.position=c||e.position,ce(e,"duplicated mapping key")),"__proto__"===r?Object.defineProperty(t,r,{configurable:!0,enumerable:!0,writable:!0,value:o}):t[r]=o,delete n[r];return t}function he(e){var t;10===(t=e.input.charCodeAt(e.position))?e.position++:13===t?(e.position++,10===e.input.charCodeAt(e.position)&&e.position++):ce(e,"a line break is expected"),e.line+=1,e.lineStart=e.position,e.firstTabInLine=-1}function ge(e,t,n){for(var i=0,r=e.input.charCodeAt(e.position);0!==r;){for(;Q(r);)9===r&&-1===e.firstTabInLine&&(e.firstTabInLine=e.position),r=e.input.charCodeAt(++e.position);if(t&&35===r)do{r=e.input.charCodeAt(++e.position)}while(10!==r&&13!==r&&0!==r);if(!J(r))break;for(he(e),r=e.input.charCodeAt(e.position),i++,e.lineIndent=0;32===r;)e.lineIndent++,r=e.input.charCodeAt(++e.position)}return-1!==n&&0!==i&&e.lineIndent<n&&se(e,"deficient indentation"),i}function me(e){var t,n=e.position;return!(45!==(t=e.input.charCodeAt(n))&&46!==t||t!==e.input.charCodeAt(n+1)||t!==e.input.charCodeAt(n+2)||(n+=3,0!==(t=e.input.charCodeAt(n))&&!z(t)))}function ye(e,t){1===t?e.result+=" ":t>1&&(e.result+=n.repeat("\n",t-1))}function be(e,t){var n,i,r=e.tag,o=e.anchor,a=[],l=!1;if(-1!==e.firstTabInLine)return!1;for(null!==e.anchor&&(e.anchorMap[e.anchor]=a),i=e.input.charCodeAt(e.position);0!==i&&(-1!==e.firstTabInLine&&(e.position=e.firstTabInLine,ce(e,"tab characters must not be used in indentation")),45===i)&&z(e.input.charCodeAt(e.position+1));)if(l=!0,e.position++,ge(e,!0,-1)&&e.lineIndent<=t)a.push(null),i=e.input.charCodeAt(e.position);else if(n=e.line,we(e,t,3,!1,!0),a.push(e.result),ge(e,!0,-1),i=e.input.charCodeAt(e.position),(e.line===n||e.lineIndent>t)&&0!==i)ce(e,"bad indentation of a sequence entry");else if(e.lineIndent<t)break;return!!l&&(e.tag=r,e.anchor=o,e.kind="sequence",e.result=a,!0)}function Ae(e){var t,n,i,r,o=!1,a=!1;if(33!==(r=e.input.charCodeAt(e.position)))return!1;if(null!==e.tag&&ce(e,"duplication of a tag property"),60===(r=e.input.charCodeAt(++e.position))?(o=!0,r=e.input.charCodeAt(++e.position)):33===r?(a=!0,n="!!",r=e.input.charCodeAt(++e.position)):n="!",t=e.position,o){do{r=e.input.charCodeAt(++e.position)}while(0!==r&&62!==r);e.position<e.length?(i=e.input.slice(t,e.position),r=e.input.charCodeAt(++e.position)):ce(e,"unexpected end of the stream within a verbatim tag")}else{for(;0!==r&&!z(r);)33===r&&(a?ce(e,"tag suffix cannot contain exclamation marks"):(n=e.input.slice(t-1,e.position+1),G.test(n)||ce(e,"named tag handle cannot contain such characters"),a=!0,t=e.position+1)),r=e.input.charCodeAt(++e.position);i=e.input.slice(t,e.position),$.test(i)&&ce(e,"tag suffix cannot contain flow indicator characters")}i&&!V.test(i)&&ce(e,"tag name cannot contain such characters: "+i);try{i=decodeURIComponent(i)}catch(t){ce(e,"tag name is malformed: "+i)}return o?e.tag=i:P.call(e.tagMap,n)?e.tag=e.tagMap[n]+i:"!"===n?e.tag="!"+i:"!!"===n?e.tag="tag:yaml.org,2002:"+i:ce(e,'undeclared tag handle "'+n+'"'),!0}function ve(e){var t,n;if(38!==(n=e.input.charCodeAt(e.position)))return!1;for(null!==e.anchor&&ce(e,"duplication of an anchor property"),n=e.input.charCodeAt(++e.position),t=e.position;0!==n&&!z(n)&&!X(n);)n=e.input.charCodeAt(++e.position);return e.position===t&&ce(e,"name of an anchor node must contain at least one character"),e.anchor=e.input.slice(t,e.position),!0}function we(e,t,i,r,o){var a,l,c,s,u,p,f,d,h,g=1,m=!1,y=!1;if(null!==e.listener&&e.listener("open",e),e.tag=null,e.anchor=null,e.kind=null,e.result=null,a=l=c=4===i||3===i,r&&ge(e,!0,-1)&&(m=!0,e.lineIndent>t?g=1:e.lineIndent===t?g=0:e.lineIndent<t&&(g=-1)),1===g)for(;Ae(e)||ve(e);)ge(e,!0,-1)?(m=!0,c=a,e.lineIndent>t?g=1:e.lineIndent===t?g=0:e.lineIndent<t&&(g=-1)):c=!1;if(c&&(c=m||o),1!==g&&4!==i||(d=1===i||2===i?t:t+1,h=e.position-e.lineStart,1===g?c&&(be(e,h)||function(e,t,n){var i,r,o,a,l,c,s,u=e.tag,p=e.anchor,f={},d=Object.create(null),h=null,g=null,m=null,y=!1,b=!1;if(-1!==e.firstTabInLine)return!1;for(null!==e.anchor&&(e.anchorMap[e.anchor]=f),s=e.input.charCodeAt(e.position);0!==s;){if(y||-1===e.firstTabInLine||(e.position=e.firstTabInLine,ce(e,"tab characters must not be used in indentation")),i=e.input.charCodeAt(e.position+1),o=e.line,63!==s&&58!==s||!z(i)){if(a=e.line,l=e.lineStart,c=e.position,!we(e,n,2,!1,!0))break;if(e.line===o){for(s=e.input.charCodeAt(e.position);Q(s);)s=e.input.charCodeAt(++e.position);if(58===s)z(s=e.input.charCodeAt(++e.position))||ce(e,"a whitespace character is expected after the key-value separator within a block mapping"),y&&(de(e,f,d,h,g,null,a,l,c),h=g=m=null),b=!0,y=!1,r=!1,h=e.tag,g=e.result;else{if(!b)return e.tag=u,e.anchor=p,!0;ce(e,"can not read an implicit mapping pair; a colon is missed")}}else{if(!b)return e.tag=u,e.anchor=p,!0;ce(e,"can not read a block mapping entry; a multiline key may not be an implicit key")}}else 63===s?(y&&(de(e,f,d,h,g,null,a,l,c),h=g=m=null),b=!0,y=!0,r=!0):y?(y=!1,r=!0):ce(e,"incomplete explicit mapping pair; a key node is missed; or followed by a non-tabulated empty line"),e.position+=1,s=i;if((e.line===o||e.lineIndent>t)&&(y&&(a=e.line,l=e.lineStart,c=e.position),we(e,t,4,!0,r)&&(y?g=e.result:m=e.result),y||(de(e,f,d,h,g,m,a,l,c),h=g=m=null),ge(e,!0,-1),s=e.input.charCodeAt(e.position)),(e.line===o||e.lineIndent>t)&&0!==s)ce(e,"bad indentation of a mapping entry");else if(e.lineIndent<t)break}return y&&de(e,f,d,h,g,null,a,l,c),b&&(e.tag=u,e.anchor=p,e.kind="mapping",e.result=f),b}(e,h,d))||function(e,t){var n,i,r,o,a,l,c,s,u,p,f,d,h=!0,g=e.tag,m=e.anchor,y=Object.create(null);if(91===(d=e.input.charCodeAt(e.position)))a=93,s=!1,o=[];else{if(123!==d)return!1;a=125,s=!0,o={}}for(null!==e.anchor&&(e.anchorMap[e.anchor]=o),d=e.input.charCodeAt(++e.position);0!==d;){if(ge(e,!0,t),(d=e.input.charCodeAt(e.position))===a)return e.position++,e.tag=g,e.anchor=m,e.kind=s?"mapping":"sequence",e.result=o,!0;h?44===d&&ce(e,"expected the node content, but found ','"):ce(e,"missed comma between flow collection entries"),f=null,l=c=!1,63===d&&z(e.input.charCodeAt(e.position+1))&&(l=c=!0,e.position++,ge(e,!0,t)),n=e.line,i=e.lineStart,r=e.position,we(e,t,1,!1,!0),p=e.tag,u=e.result,ge(e,!0,t),d=e.input.charCodeAt(e.position),!c&&e.line!==n||58!==d||(l=!0,d=e.input.charCodeAt(++e.position),ge(e,!0,t),we(e,t,1,!1,!0),f=e.result),s?de(e,o,y,p,u,f,n,i,r):l?o.push(de(e,null,y,p,u,f,n,i,r)):o.push(u),ge(e,!0,t),44===(d=e.input.charCodeAt(e.position))?(h=!0,d=e.input.charCodeAt(++e.position)):h=!1}ce(e,"unexpected end of the stream within a flow collection")}(e,d)?y=!0:(l&&function(e,t){var i,r,o,a,l,c=1,s=!1,u=!1,p=t,f=0,d=!1;if(124===(a=e.input.charCodeAt(e.position)))r=!1;else{if(62!==a)return!1;r=!0}for(e.kind="scalar",e.result="";0!==a;)if(43===(a=e.input.charCodeAt(++e.position))||45===a)1===c?c=43===a?3:2:ce(e,"repeat of a chomping mode identifier");else{if(!((o=48<=(l=a)&&l<=57?l-48:-1)>=0))break;0===o?ce(e,"bad explicit indentation width of a block scalar; it cannot be less than one"):u?ce(e,"repeat of an indentation width identifier"):(p=t+o-1,u=!0)}if(Q(a)){do{a=e.input.charCodeAt(++e.position)}while(Q(a));if(35===a)do{a=e.input.charCodeAt(++e.position)}while(!J(a)&&0!==a)}for(;0!==a;){for(he(e),e.lineIndent=0,a=e.input.charCodeAt(e.position);(!u||e.lineIndent<p)&&32===a;)e.lineIndent++,a=e.input.charCodeAt(++e.position);if(!u&&e.lineIndent>p&&(p=e.lineIndent),J(a))f++;else{if(e.lineIndent<p){3===c?e.result+=n.repeat("\n",s?1+f:f):1===c&&s&&(e.result+="\n");break}for(r?Q(a)?(d=!0,e.result+=n.repeat("\n",s?1+f:f)):d?(d=!1,e.result+=n.repeat("\n",f+1)):0===f?s&&(e.result+=" "):e.result+=n.repeat("\n",f):e.result+=n.repeat("\n",s?1+f:f),s=!0,u=!0,f=0,i=e.position;!J(a)&&0!==a;)a=e.input.charCodeAt(++e.position);pe(e,i,e.position,!1)}}return!0}(e,d)||function(e,t){var n,i,r;if(39!==(n=e.input.charCodeAt(e.position)))return!1;for(e.kind="scalar",e.result="",e.position++,i=r=e.position;0!==(n=e.input.charCodeAt(e.position));)if(39===n){if(pe(e,i,e.position,!0),39!==(n=e.input.charCodeAt(++e.position)))return!0;i=e.position,e.position++,r=e.position}else J(n)?(pe(e,i,r,!0),ye(e,ge(e,!1,t)),i=r=e.position):e.position===e.lineStart&&me(e)?ce(e,"unexpected end of the document within a single quoted scalar"):(e.position++,r=e.position);ce(e,"unexpected end of the stream within a single quoted scalar")}(e,d)||function(e,t){var n,i,r,o,a,l,c;if(34!==(l=e.input.charCodeAt(e.position)))return!1;for(e.kind="scalar",e.result="",e.position++,n=i=e.position;0!==(l=e.input.charCodeAt(e.position));){if(34===l)return pe(e,n,e.position,!0),e.position++,!0;if(92===l){if(pe(e,n,e.position,!0),J(l=e.input.charCodeAt(++e.position)))ge(e,!1,t);else if(l<256&&ie[l])e.result+=re[l],e.position++;else if((a=120===(c=l)?2:117===c?4:85===c?8:0)>0){for(r=a,o=0;r>0;r--)(a=ee(l=e.input.charCodeAt(++e.position)))>=0?o=(o<<4)+a:ce(e,"expected hexadecimal character");e.result+=ne(o),e.position++}else ce(e,"unknown escape sequence");n=i=e.position}else J(l)?(pe(e,n,i,!0),ye(e,ge(e,!1,t)),n=i=e.position):e.position===e.lineStart&&me(e)?ce(e,"unexpected end of the document within a double quoted scalar"):(e.position++,i=e.position)}ce(e,"unexpected end of the stream within a double quoted scalar")}(e,d)?y=!0:!function(e){var t,n,i;if(42!==(i=e.input.charCodeAt(e.position)))return!1;for(i=e.input.charCodeAt(++e.position),t=e.position;0!==i&&!z(i)&&!X(i);)i=e.input.charCodeAt(++e.position);return e.position===t&&ce(e,"name of an alias node must contain at least one character"),n=e.input.slice(t,e.position),P.call(e.anchorMap,n)||ce(e,'unidentified alias "'+n+'"'),e.result=e.anchorMap[n],ge(e,!0,-1),!0}(e)?function(e,t,n){var i,r,o,a,l,c,s,u,p=e.kind,f=e.result;if(z(u=e.input.charCodeAt(e.position))||X(u)||35===u||38===u||42===u||33===u||124===u||62===u||39===u||34===u||37===u||64===u||96===u)return!1;if((63===u||45===u)&&(z(i=e.input.charCodeAt(e.position+1))||n&&X(i)))return!1;for(e.kind="scalar",e.result="",r=o=e.position,a=!1;0!==u;){if(58===u){if(z(i=e.input.charCodeAt(e.position+1))||n&&X(i))break}else if(35===u){if(z(e.input.charCodeAt(e.position-1)))break}else{if(e.position===e.lineStart&&me(e)||n&&X(u))break;if(J(u)){if(l=e.line,c=e.lineStart,s=e.lineIndent,ge(e,!1,-1),e.lineIndent>=t){a=!0,u=e.input.charCodeAt(e.position);continue}e.position=o,e.line=l,e.lineStart=c,e.lineIndent=s;break}}a&&(pe(e,r,o,!1),ye(e,e.line-l),r=o=e.position,a=!1),Q(u)||(o=e.position+1),u=e.input.charCodeAt(++e.position)}return pe(e,r,o,!1),!!e.result||(e.kind=p,e.result=f,!1)}(e,d,1===i)&&(y=!0,null===e.tag&&(e.tag="?")):(y=!0,null===e.tag&&null===e.anchor||ce(e,"alias node should not have any properties")),null!==e.anchor&&(e.anchorMap[e.anchor]=e.result)):0===g&&(y=c&&be(e,h))),null===e.tag)null!==e.anchor&&(e.anchorMap[e.anchor]=e.result);else if("?"===e.tag){for(null!==e.result&&"scalar"!==e.kind&&ce(e,'unacceptable node kind for !<?> tag; it should be "scalar", not "'+e.kind+'"'),s=0,u=e.implicitTypes.length;s<u;s+=1)if((f=e.implicitTypes[s]).resolve(e.result)){e.result=f.construct(e.result),e.tag=f.tag,null!==e.anchor&&(e.anchorMap[e.anchor]=e.result);break}}else if("!"!==e.tag){if(P.call(e.typeMap[e.kind||"fallback"],e.tag))f=e.typeMap[e.kind||"fallback"][e.tag];else for(f=null,s=0,u=(p=e.typeMap.multi[e.kind||"fallback"]).length;s<u;s+=1)if(e.tag.slice(0,p[s].tag.length)===p[s].tag){f=p[s];break}f||ce(e,"unknown tag !<"+e.tag+">"),null!==e.result&&f.kind!==e.kind&&ce(e,"unacceptable node kind for !<"+e.tag+'> tag; it should be "'+f.kind+'", not "'+e.kind+'"'),f.resolve(e.result,e.tag)?(e.result=f.construct(e.result,e.tag),null!==e.anchor&&(e.anchorMap[e.anchor]=e.result)):ce(e,"cannot resolve a node with !<"+e.tag+"> explicit tag")}return null!==e.listener&&e.listener("close",e),null!==e.tag||null!==e.anchor||y}function ke(e){var t,n,i,r,o=e.position,a=!1;for(e.version=null,e.checkLineBreaks=e.legacy,e.tagMap=Object.create(null),e.anchorMap=Object.create(null);0!==(r=e.input.charCodeAt(e.position))&&(ge(e,!0,-1),r=e.input.charCodeAt(e.position),!(e.lineIndent>0||37!==r));){for(a=!0,r=e.input.charCodeAt(++e.position),t=e.position;0!==r&&!z(r);)r=e.input.charCodeAt(++e.position);for(i=[],(n=e.input.slice(t,e.position)).length<1&&ce(e,"directive name must not be less than one character in length");0!==r;){for(;Q(r);)r=e.input.charCodeAt(++e.position);if(35===r){do{r=e.input.charCodeAt(++e.position)}while(0!==r&&!J(r));break}if(J(r))break;for(t=e.position;0!==r&&!z(r);)r=e.input.charCodeAt(++e.position);i.push(e.input.slice(t,e.position))}0!==r&&he(e),P.call(ue,n)?ue[n](e,n,i):se(e,'unknown document directive "'+n+'"')}ge(e,!0,-1),0===e.lineIndent&&45===e.input.charCodeAt(e.position)&&45===e.input.charCodeAt(e.position+1)&&45===e.input.charCodeAt(e.position+2)?(e.position+=3,ge(e,!0,-1)):a&&ce(e,"directives end mark is expected"),we(e,e.lineIndent-1,4,!1,!0),ge(e,!0,-1),e.checkLineBreaks&&H.test(e.input.slice(o,e.position))&&se(e,"non-ASCII line breaks are interpreted as content"),e.documents.push(e.result),e.position===e.lineStart&&me(e)?46===e.input.charCodeAt(e.position)&&(e.position+=3,ge(e,!0,-1)):e.position<e.length-1&&ce(e,"end of the stream or a document separator is expected")}function Ce(e,t){t=t||{},0!==(e=String(e)).length&&(10!==e.charCodeAt(e.length-1)&&13!==e.charCodeAt(e.length-1)&&(e+="\n"),65279===e.charCodeAt(0)&&(e=e.slice(1)));var n=new ae(e,t),i=e.indexOf("\0");for(-1!==i&&(n.position=i,ce(n,"null byte is not allowed in input")),n.input+="\0";32===n.input.charCodeAt(n.position);)n.lineIndent+=1,n.position+=1;for(;n.position<n.length-1;)ke(n);return n.documents}var xe={loadAll:function(e,t,n){null!==t&&"object"==typeof t&&void 0===n&&(n=t,t=null);var i=Ce(e,n);if("function"!=typeof t)return i;for(var r=0,o=i.length;r<o;r+=1)t(i[r])},load:function(e,t){var n=Ce(e,t);if(0!==n.length){if(1===n.length)return n[0];throw new o("expected a single document in the stream, but found more")}}},Ie=Object.prototype.toString,Se=Object.prototype.hasOwnProperty,Oe=65279,je={0:"\\0",7:"\\a",8:"\\b",9:"\\t",10:"\\n",11:"\\v",12:"\\f",13:"\\r",27:"\\e",34:'\\"',92:"\\\\",133:"\\N",160:"\\_",8232:"\\L",8233:"\\P"},Te=["y","Y","yes","Yes","YES","on","On","ON","n","N","no","No","NO","off","Off","OFF"],Ne=/^[-+]?[0-9_]+(?::[0-9_]+)+(?:\.[0-9_]*)?$/;function Fe(e){var t,i,r;if(t=e.toString(16).toUpperCase(),e<=255)i="x",r=2;else if(e<=65535)i="u",r=4;else{if(!(e<=4294967295))throw new o("code point within a string may not be greater than 0xFFFFFFFF");i="U",r=8}return"\\"+i+n.repeat("0",r-t.length)+t}function Ee(e){this.schema=e.schema||K,this.indent=Math.max(1,e.indent||2),this.noArrayIndent=e.noArrayIndent||!1,this.skipInvalid=e.skipInvalid||!1,this.flowLevel=n.isNothing(e.flowLevel)?-1:e.flowLevel,this.styleMap=function(e,t){var n,i,r,o,a,l,c;if(null===t)return{};for(n={},r=0,o=(i=Object.keys(t)).length;r<o;r+=1)a=i[r],l=String(t[a]),"!!"===a.slice(0,2)&&(a="tag:yaml.org,2002:"+a.slice(2)),(c=e.compiledTypeMap.fallback[a])&&Se.call(c.styleAliases,l)&&(l=c.styleAliases[l]),n[a]=l;return n}(this.schema,e.styles||null),this.sortKeys=e.sortKeys||!1,this.lineWidth=e.lineWidth||80,this.noRefs=e.noRefs||!1,this.noCompatMode=e.noCompatMode||!1,this.condenseFlow=e.condenseFlow||!1,this.quotingType='"'===e.quotingType?2:1,this.forceQuotes=e.forceQuotes||!1,this.replacer="function"==typeof e.replacer?e.replacer:null,this.implicitTypes=this.schema.compiledImplicit,this.explicitTypes=this.schema.compiledExplicit,this.tag=null,this.result="",this.duplicates=[],this.usedDuplicates=null}function Me(e,t){for(var i,r=n.repeat(" ",t),o=0,a=-1,l="",c=e.length;o<c;)-1===(a=e.indexOf("\n",o))?(i=e.slice(o),o=c):(i=e.slice(o,a+1),o=a+1),i.length&&"\n"!==i&&(l+=r),l+=i;return l}function Le(e,t){return"\n"+n.repeat(" ",e.indent*t)}function _e(e){return 32===e||9===e}function De(e){return 32<=e&&e<=126||161<=e&&e<=55295&&8232!==e&&8233!==e||57344<=e&&e<=65533&&e!==Oe||65536<=e&&e<=1114111}function Ue(e){return De(e)&&e!==Oe&&13!==e&&10!==e}function qe(e,t,n){var i=Ue(e),r=i&&!_e(e);return(n?i:i&&44!==e&&91!==e&&93!==e&&123!==e&&125!==e)&&35!==e&&!(58===t&&!r)||Ue(t)&&!_e(t)&&35===e||58===t&&r}function Ye(e,t){var n,i=e.charCodeAt(t);return i>=55296&&i<=56319&&t+1<e.length&&(n=e.charCodeAt(t+1))>=56320&&n<=57343?1024*(i-55296)+n-56320+65536:i}function Re(e){return/^\n* /.test(e)}function Be(e,t,n,i,r,o,a,l){var c,s,u=0,p=null,f=!1,d=!1,h=-1!==i,g=-1,m=De(s=Ye(e,0))&&s!==Oe&&!_e(s)&&45!==s&&63!==s&&58!==s&&44!==s&&91!==s&&93!==s&&123!==s&&125!==s&&35!==s&&38!==s&&42!==s&&33!==s&&124!==s&&61!==s&&62!==s&&39!==s&&34!==s&&37!==s&&64!==s&&96!==s&&function(e){return!_e(e)&&58!==e}(Ye(e,e.length-1));if(t||a)for(c=0;c<e.length;u>=65536?c+=2:c++){if(!De(u=Ye(e,c)))return 5;m=m&&qe(u,p,l),p=u}else{for(c=0;c<e.length;u>=65536?c+=2:c++){if(10===(u=Ye(e,c)))f=!0,h&&(d=d||c-g-1>i&&" "!==e[g+1],g=c);else if(!De(u))return 5;m=m&&qe(u,p,l),p=u}d=d||h&&c-g-1>i&&" "!==e[g+1]}return f||d?n>9&&Re(e)?5:a?2===o?5:2:d?4:3:!m||a||r(e)?2===o?5:2:1}function Ke(e,t,n,i,r){e.dump=function(){if(0===t.length)return 2===e.quotingType?'""':"''";if(!e.noCompatMode&&(-1!==Te.indexOf(t)||Ne.test(t)))return 2===e.quotingType?'"'+t+'"':"'"+t+"'";var a=e.indent*Math.max(1,n),l=-1===e.lineWidth?-1:Math.max(Math.min(e.lineWidth,40),e.lineWidth-a),c=i||e.flowLevel>-1&&n>=e.flowLevel;switch(Be(t,c,e.indent,l,(function(t){return function(e,t){var n,i;for(n=0,i=e.implicitTypes.length;n<i;n+=1)if(e.implicitTypes[n].resolve(t))return!0;return!1}(e,t)}),e.quotingType,e.forceQuotes&&!i,r)){case 1:return t;case 2:return"'"+t.replace(/'/g,"''")+"'";case 3:return"|"+Pe(t,e.indent)+We(Me(t,a));case 4:return">"+Pe(t,e.indent)+We(Me(function(e,t){var n,i,r=/(\n+)([^\n]*)/g,o=(l=e.indexOf("\n"),l=-1!==l?l:e.length,r.lastIndex=l,He(e.slice(0,l),t)),a="\n"===e[0]||" "===e[0];var l;for(;i=r.exec(e);){var c=i[1],s=i[2];n=" "===s[0],o+=c+(a||n||""===s?"":"\n")+He(s,t),a=n}return o}(t,l),a));case 5:return'"'+function(e){for(var t,n="",i=0,r=0;r<e.length;i>=65536?r+=2:r++)i=Ye(e,r),!(t=je[i])&&De(i)?(n+=e[r],i>=65536&&(n+=e[r+1])):n+=t||Fe(i);return n}(t)+'"';default:throw new o("impossible error: invalid scalar style")}}()}function Pe(e,t){var n=Re(e)?String(t):"",i="\n"===e[e.length-1];return n+(i&&("\n"===e[e.length-2]||"\n"===e)?"+":i?"":"-")+"\n"}function We(e){return"\n"===e[e.length-1]?e.slice(0,-1):e}function He(e,t){if(""===e||" "===e[0])return e;for(var n,i,r=/ [^ ]/g,o=0,a=0,l=0,c="";n=r.exec(e);)(l=n.index)-o>t&&(i=a>o?a:l,c+="\n"+e.slice(o,i),o=i+1),a=l;return c+="\n",e.length-o>t&&a>o?c+=e.slice(o,a)+"\n"+e.slice(a+1):c+=e.slice(o),c.slice(1)}function $e(e,t,n,i){var r,o,a,l="",c=e.tag;for(r=0,o=n.length;r<o;r+=1)a=n[r],e.replacer&&(a=e.replacer.call(n,String(r),a)),(Ve(e,t+1,a,!0,!0,!1,!0)||void 0===a&&Ve(e,t+1,null,!0,!0,!1,!0))&&(i&&""===l||(l+=Le(e,t)),e.dump&&10===e.dump.charCodeAt(0)?l+="-":l+="- ",l+=e.dump);e.tag=c,e.dump=l||"[]"}function Ge(e,t,n){var i,r,a,l,c,s;for(a=0,l=(r=n?e.explicitTypes:e.implicitTypes).length;a<l;a+=1)if(((c=r[a]).instanceOf||c.predicate)&&(!c.instanceOf||"object"==typeof t&&t instanceof c.instanceOf)&&(!c.predicate||c.predicate(t))){if(n?c.multi&&c.representName?e.tag=c.representName(t):e.tag=c.tag:e.tag="?",c.represent){if(s=e.styleMap[c.tag]||c.defaultStyle,"[object Function]"===Ie.call(c.represent))i=c.represent(t,s);else{if(!Se.call(c.represent,s))throw new o("!<"+c.tag+'> tag resolver accepts not "'+s+'" style');i=c.represent[s](t,s)}e.dump=i}return!0}return!1}function Ve(e,t,n,i,r,a,l){e.tag=null,e.dump=n,Ge(e,n,!1)||Ge(e,n,!0);var c,s=Ie.call(e.dump),u=i;i&&(i=e.flowLevel<0||e.flowLevel>t);var p,f,d="[object Object]"===s||"[object Array]"===s;if(d&&(f=-1!==(p=e.duplicates.indexOf(n))),(null!==e.tag&&"?"!==e.tag||f||2!==e.indent&&t>0)&&(r=!1),f&&e.usedDuplicates[p])e.dump="*ref_"+p;else{if(d&&f&&!e.usedDuplicates[p]&&(e.usedDuplicates[p]=!0),"[object Object]"===s)i&&0!==Object.keys(e.dump).length?(!function(e,t,n,i){var r,a,l,c,s,u,p="",f=e.tag,d=Object.keys(n);if(!0===e.sortKeys)d.sort();else if("function"==typeof e.sortKeys)d.sort(e.sortKeys);else if(e.sortKeys)throw new o("sortKeys must be a boolean or a function");for(r=0,a=d.length;r<a;r+=1)u="",i&&""===p||(u+=Le(e,t)),c=n[l=d[r]],e.replacer&&(c=e.replacer.call(n,l,c)),Ve(e,t+1,l,!0,!0,!0)&&((s=null!==e.tag&&"?"!==e.tag||e.dump&&e.dump.length>1024)&&(e.dump&&10===e.dump.charCodeAt(0)?u+="?":u+="? "),u+=e.dump,s&&(u+=Le(e,t)),Ve(e,t+1,c,!0,s)&&(e.dump&&10===e.dump.charCodeAt(0)?u+=":":u+=": ",p+=u+=e.dump));e.tag=f,e.dump=p||"{}"}(e,t,e.dump,r),f&&(e.dump="&ref_"+p+e.dump)):(!function(e,t,n){var i,r,o,a,l,c="",s=e.tag,u=Object.keys(n);for(i=0,r=u.length;i<r;i+=1)l="",""!==c&&(l+=", "),e.condenseFlow&&(l+='"'),a=n[o=u[i]],e.replacer&&(a=e.replacer.call(n,o,a)),Ve(e,t,o,!1,!1)&&(e.dump.length>1024&&(l+="? "),l+=e.dump+(e.condenseFlow?'"':"")+":"+(e.condenseFlow?"":" "),Ve(e,t,a,!1,!1)&&(c+=l+=e.dump));e.tag=s,e.dump="{"+c+"}"}(e,t,e.dump),f&&(e.dump="&ref_"+p+" "+e.dump));else if("[object Array]"===s)i&&0!==e.dump.length?(e.noArrayIndent&&!l&&t>0?$e(e,t-1,e.dump,r):$e(e,t,e.dump,r),f&&(e.dump="&ref_"+p+e.dump)):(!function(e,t,n){var i,r,o,a="",l=e.tag;for(i=0,r=n.length;i<r;i+=1)o=n[i],e.replacer&&(o=e.replacer.call(n,String(i),o)),(Ve(e,t,o,!1,!1)||void 0===o&&Ve(e,t,null,!1,!1))&&(""!==a&&(a+=","+(e.condenseFlow?"":" ")),a+=e.dump);e.tag=l,e.dump="["+a+"]"}(e,t,e.dump),f&&(e.dump="&ref_"+p+" "+e.dump));else{if("[object String]"!==s){if("[object Undefined]"===s)return!1;if(e.skipInvalid)return!1;throw new o("unacceptable kind of an object to dump "+s)}"?"!==e.tag&&Ke(e,e.dump,t,a,u)}null!==e.tag&&"?"!==e.tag&&(c=encodeURI("!"===e.tag[0]?e.tag.slice(1):e.tag).replace(/!/g,"%21"),c="!"===e.tag[0]?"!"+c:"tag:yaml.org,2002:"===c.slice(0,18)?"!!"+c.slice(18):"!<"+c+">",e.dump=c+" "+e.dump)}return!0}function Ze(e,t){var n,i,r=[],o=[];for(Je(e,r,o),n=0,i=o.length;n<i;n+=1)t.duplicates.push(r[o[n]]);t.usedDuplicates=new Array(i)}function Je(e,t,n){var i,r,o;if(null!==e&&"object"==typeof e)if(-1!==(r=t.indexOf(e)))-1===n.indexOf(r)&&n.push(r);else if(t.push(e),Array.isArray(e))for(r=0,o=e.length;r<o;r+=1)Je(e[r],t,n);else for(r=0,o=(i=Object.keys(e)).length;r<o;r+=1)Je(e[i[r]],t,n)}function Qe(e,t){return function(){throw new Error("Function yaml."+e+" is removed in js-yaml 4. Use yaml."+t+" instead, which is now safe by default.")}}var ze=p,Xe=h,et=b,tt=O,nt=j,it=K,rt=xe.load,ot=xe.loadAll,at={dump:function(e,t){var n=new Ee(t=t||{});n.noRefs||Ze(e,n);var i=e;return n.replacer&&(i=n.replacer.call({"":i},"",i)),Ve(n,0,i,!0,!0)?n.dump+"\n":""}}.dump,lt=o,ct={binary:L,float:S,map:y,null:A,pairs:Y,set:B,timestamp:F,bool:v,int:C,merge:E,omap:U,seq:m,str:g},st=Qe("safeLoad","load"),ut=Qe("safeLoadAll","loadAll"),pt=Qe("safeDump","dump"),ft={Type:ze,Schema:Xe,FAILSAFE_SCHEMA:et,JSON_SCHEMA:tt,CORE_SCHEMA:nt,DEFAULT_SCHEMA:it,load:rt,loadAll:ot,dump:at,YAMLException:lt,types:ct,safeLoad:st,safeLoadAll:ut,safeDump:pt};e.CORE_SCHEMA=nt,e.DEFAULT_SCHEMA=it,e.FAILSAFE_SCHEMA=et,e.JSON_SCHEMA=tt,e.Schema=Xe,e.Type=ze,e.YAMLException=lt,e.default=ft,e.dump=at,e.load=rt,e.loadAll=ot,e.safeDump=pt,e.safeLoad=st,e.safeLoadAll=ut,e.types=ct,Object.defineProperty(e,"__esModule",{value:!0})}));
+
+</script>
+<script>
+window.DRILL_CONTENT = {"blueprints": {"trade-allocation-direct": "# The same system WITHOUT Kafka: the OMS calls the allocation engine directly.\n# Compare with trade-allocation-kafka.yaml — the only differences are one component,\n# one flow line and the alerts that watch it.\n\nid: trade-allocation-direct\nsystem: Middle-office trade allocation (direct, no Kafka)\ndescription: >\n  The OMS hands fills straight to the allocation engine's queue. Without Kafka there is\n  no consumer lag to watch: a slow allocation engine shows up as its own backlog.\n\nclock:\n  start: \"13:30\"\n  cutoff: \"15:00\"\n\nbusiness:\n  currency: \"₹\"\n  unit: \"Cr\"\n  avg_notional: 0.6\n  produced_at: oms\n  kpis:\n    - {label: \"Unallocated\", at: tam}\n    - {label: \"Not yet affirmed\", at: ctm, cutoff: true}\n\ncomponents:\n  - {id: oms, type: source, name: Order Management, rate_per_min: 300}\n  - {id: tam, type: service, name: Allocation Engine, capacity_per_min: 420, instances: 4, uses: [ssi, tam_db]}\n  - {id: ssi, type: ref_data, name: SSI Reference Data, refresh_every_min: 15, stale_after_min: 20}\n  - {id: tam_db, type: database, name: Allocation DB, pool_size: 50}\n  - {id: ctm, type: external_party, name: Confirmation Platform (CTM), capacity_per_min: 520}\n  - {id: settle, type: external_party, name: Settlement (SWIFT), capacity_per_min: 600}\n\nflow:\n  - oms -> tam -> ctm -> settle\n\nalerts:\n  - {name: \"Allocation backlog high\", on: tam, metric: backlog, above: 900, severity: P2}\n  - {name: \"Allocation throughput low\", on: tam, metric: out_rate, below: 235, severity: P3}\n  - {name: \"Allocation reject rate high\", on: tam, metric: reject_rate, above: 2, severity: P2}\n  - {name: \"DB connection pool saturated\", on: tam_db, metric: pool_pct, above: 90, severity: P2}\n  - {name: \"SSI data stale\", on: ssi, metric: staleness_min, above: 25, severity: P3}\n  - {name: \"Unmatched confirmations\", on: ctm, metric: backlog, above: 900, severity: P2}\n", "trade-allocation-kafka": "# Middle-office trade allocation, with Kafka between the OMS and the allocation engine.\n# Edit this file (or the Blueprint tab in the app) to change the system being simulated.\n\nid: trade-allocation-kafka\nsystem: Middle-office trade allocation\ndescription: >\n  Executed fills flow from the OMS through a Kafka topic to the allocation engine,\n  which splits block trades across client accounts using SSI reference data,\n  then sends allocations to the confirmation platform and on to settlement.\n\nclock:\n  start: \"13:30\"\n  cutoff: \"15:00\"          # affirmation cut-off for today's trades\n\nbusiness:\n  currency: \"₹\"\n  unit: \"Cr\"\n  avg_notional: 0.6        # ₹ Cr per trade, used to show impact in money\n  produced_at: oms\n  kpis:\n    - {label: \"Unallocated\", at: tam}\n    - {label: \"Not yet affirmed\", at: ctm, cutoff: true}\n\ncomponents:\n  - id: oms\n    type: source\n    name: Order Management\n    rate_per_min: 300\n\n  - id: trades_topic\n    type: kafka_topic\n    name: trades.executed\n    partitions: 6\n    consumer_group: tam-allocator\n\n  - id: tam\n    type: service\n    name: Allocation Engine\n    capacity_per_min: 420\n    instances: 4\n    uses: [ssi, tam_db]\n\n  - id: ssi\n    type: ref_data\n    name: SSI Reference Data\n    refresh_every_min: 15\n    stale_after_min: 20\n\n  - id: tam_db\n    type: database\n    name: Allocation DB\n    pool_size: 50\n\n  - id: ctm\n    type: external_party\n    name: Confirmation Platform (CTM)\n    capacity_per_min: 520\n\n  - id: settle\n    type: external_party\n    name: Settlement (SWIFT)\n    capacity_per_min: 600\n\nflow:\n  - oms -> trades_topic -> tam -> ctm -> settle\n\nalerts:\n  - {name: \"Kafka consumer lag high\", on: trades_topic, metric: lag, above: 900, severity: P2}\n  - {name: \"Partition lag high\", on: trades_topic, metric: max_partition_lag, above: 300, severity: P2}\n  - {name: \"Allocation throughput low\", on: tam, metric: out_rate, below: 235, severity: P3}\n  - {name: \"Allocation reject rate high\", on: tam, metric: reject_rate, above: 2, severity: P2}\n  - {name: \"DB connection pool saturated\", on: tam_db, metric: pool_pct, above: 90, severity: P2}\n  - {name: \"SSI data stale\", on: ssi, metric: staleness_min, above: 25, severity: P3}\n  - {name: \"Unmatched confirmations\", on: ctm, metric: backlog, above: 900, severity: P2}\n"}, "default_blueprint": "trade-allocation-kafka", "drills": ["id: allocations-falling-behind\ntitle: Allocations falling behind\nlevel: Easy\nsummary: Allocations slow down mid-afternoon. Find out why before the affirmation cut-off.\nbrief: >\n  13:30 on a busy trading day. You are the on-call support engineer for middle-office\n  allocations. The affirmation cut-off is 15:00. The ops desk has asked you to keep an eye\n  on today's flow.\nfaults:\n  - {at: \"13:36\", component: tam, fault: instances_lost, params: {remaining: 2}}\nroot_cause: {component: tam, fault: instances_lost}\naccepted_fixes: [tam.scale_out]\nrisky_actions: [tam.restart]\nhints:\n  - {after_min: 3, text: \"Which component's output dropped first? Compare what goes in with what comes out.\"}\n  - {after_min: 7, text: \"Open the Allocation Engine and look at its healthy instance count and logs.\"}\ndebrief:\n  what_happened: >\n    Two of the four Allocation Engine pods were evicted by node memory pressure. Throughput\n    halved to about 210 trades/min while 300/min kept arriving, so the backlog grew steadily.\n  key_signal: Throughput dropped while the input rate stayed flat; the logs show pods Pending.\n  why_not_restart: >\n    A rolling restart halves capacity even further for three minutes and does not bring\n    evicted pods back. The problem is node capacity, not the process.\n  runbook:\n    - Check the healthy instance count and pod status.\n    - Reschedule the instances on healthy nodes (scale out) with approval.\n    - Watch the backlog drain and confirm the cut-off projection.\n    - Raise a problem record for node memory pressure.\n", "id: stuck-partition\ntitle: One partition stuck\nlevel: Medium\nsummary: Overall flow looks almost normal, but part of the book is not being allocated.\nbrief: >\n  13:30. Everything looked fine at the start of the afternoon. Watch the allocation flow\n  through to the 15:00 affirmation cut-off.\nfaults:\n  - {at: \"13:35\", component: trades_topic, fault: poison_message, params: {partition: 3}}\nroot_cause: {component: trades_topic, fault: poison_message}\naccepted_fixes: [trades_topic.skip_poison_message]\nrisky_actions: [tam.restart]\nhints:\n  - {after_min: 4, text: \"Total throughput is only slightly lower. Is the lag spread evenly across partitions?\"}\n  - {after_min: 9, text: \"Search the Allocation Engine logs for errors that repeat the same offset.\"}\ndebrief:\n  what_happened: >\n    A message with a new field (allocRatioV2) could not be deserialised. The consumer retried\n    it forever, so partition 3 stopped while the other five partitions kept flowing. Throughput\n    fell by only one-sixth, which is easy to miss.\n  key_signal: Lag growing on one partition only, and the same offset repeating in the error log.\n  why_not_restart: >\n    Restarting the consumer re-reads the same message and gets stuck again. The message must be\n    parked to a dead-letter topic and repaired separately.\n  runbook:\n    - Compare lag per partition, not just total lag.\n    - Find the offset in the consumer error log.\n    - Park the message to the DLQ with approval, then repair and replay it.\n    - Raise a problem record for schema compatibility between OMS and the allocator.\n", "id: missing-ssis\ntitle: Missing settlement instructions\nlevel: Medium\nsummary: Some allocations are being rejected. The allocation engine itself looks healthy.\nbrief: >\n  13:30. Allocations are flowing. The 15:00 affirmation cut-off applies. A handful of clients\n  have onboarded new accounts this week.\nfaults:\n  - {at: \"13:32\", component: ssi, fault: feed_failed, params: {last_refresh_minutes_ago: 19}}\nroot_cause: {component: ssi, fault: feed_failed}\naccepted_fixes: [ssi.force_refresh, tam.reprocess_rejected]\nrisky_actions: [tam.restart]\nhints:\n  - {after_min: 3, text: \"Rejects are not a capacity problem. What data does the allocator need for each account?\"}\n  - {after_min: 8, text: \"Check when the SSI reference data last loaded successfully.\"}\n  - {after_min: 12, text: \"After fixing the data, the trades already rejected are still waiting in the exception queue.\"}\ndebrief:\n  what_happened: >\n    The SSI feed job failed (vendor SFTP refused connections). Once the data was older than\n    20 minutes, allocations for recently changed accounts were rejected and parked in the\n    exception queue.\n  key_signal: Reject rate above 2% with normal throughput, plus SSI staleness growing and feed errors.\n  why_not_restart: Restarting the allocator changes nothing; it still reads the same stale SSI data.\n  runbook:\n    - Check the reject reason in the allocator log.\n    - Check reference data freshness and the feed job log.\n    - Re-run the feed from the secondary source with approval.\n    - Reprocess the exception queue, then confirm it is empty.\n", "id: confirmation-platform-down\ntitle: Confirmations not matching\nlevel: Medium\nsummary: Allocations are fine, yet nothing is getting affirmed. Decide what is in your control.\nbrief: >\n  13:30. Normal afternoon flow. The 15:00 affirmation cut-off applies and client service has\n  three large institutional clients waiting for confirmations.\nfaults:\n  - {at: \"13:40\", component: ctm, fault: unavailable}\nnoise:\n  - {at: \"13:43\", name: \"Disk usage 82% on report-01\", severity: P4}\nroot_cause: {component: ctm, fault: unavailable}\naccepted_fixes: [ctm.escalate_to_vendor]\nrisky_actions: [tam.restart, ctm.restart_adapter]\nhints:\n  - {after_min: 3, text: \"Follow the flow left to right. Where does the backlog start?\"}\n  - {after_min: 7, text: \"Is the failure inside our systems, or at the third party?\"}\ndebrief:\n  what_happened: >\n    The confirmation platform returned HTTP 503 for every call. Our allocations kept flowing,\n    so everything looked healthy until confirmations piled up.\n  key_signal: Unmatched confirmations growing with 100% failed calls, while internal components stay green.\n  why_not_restart: >\n    The fault was on the vendor's side. Restarting our adapter or the allocator only adds a\n    second outage. The right move is a fast, clear vendor escalation and client updates.\n  runbook:\n    - Confirm the error is coming from the vendor (HTTP 5xx), not our adapter.\n    - Raise a P1 with the vendor and record the reference.\n    - Inform client service about the confirmation delay.\n    - Monitor recovery and the cut-off projection.\n", "id: database-pool-exhausted\ntitle: Allocation engine choking\nlevel: Hard\nsummary: Several alerts fire at once. Separate the cause from the symptoms.\nbrief: >\n  13:30. Month-end week. Finance has been running reconciliation reports today. The 15:00\n  affirmation cut-off applies.\nfaults:\n  - {at: \"13:37\", component: tam_db, fault: pool_exhausted}\nnoise:\n  - {at: \"13:39\", name: \"CPU 78% on tam-allocator-2\", severity: P4}\nroot_cause: {component: tam_db, fault: pool_exhausted}\naccepted_fixes: [tam_db.kill_blocking_session]\nrisky_actions: [tam.restart, tam.scale_out]\nhints:\n  - {after_min: 3, text: \"Throughput, lag and the cut-off are all symptoms. Which alert is closest to the cause?\"}\n  - {after_min: 7, text: \"Look at the Allocation DB logs: who is holding the connections?\"}\ndebrief:\n  what_happened: >\n    A month-end reconciliation report ran a full table scan and held 46 of 50 database\n    connections. The allocator waited for connections and processed only a fifth of its\n    normal volume.\n  key_signal: DB pool at 100% and connection timeouts in the allocator logs.\n  why_not_restart: >\n    Restarting or scaling out the allocator adds more clients competing for the same\n    exhausted pool. Free the connections first.\n  runbook:\n    - Check pool usage and connection wait time.\n    - Identify the blocking session and its owner.\n    - Kill it with approval and inform the report owner.\n    - Raise a problem: move heavy reports to a replica.\n", "id: mystery\ntitle: Mystery incident\nlevel: Hard\nsummary: One of five real faults, chosen at random. No hints, no clues in the title.\nmystery: true\nbrief: >\n  13:30. Something will go wrong this afternoon. You do not know what or where.\n  The 15:00 affirmation cut-off applies.\nnoise:\n  - {at: \"13:41\", name: \"Disk usage 82% on report-01\", severity: P4}\npool:\n  - faults: [{at: \"13:38\", component: tam, fault: instances_lost, params: {remaining: 2}}]\n    root_cause: {component: tam, fault: instances_lost}\n    accepted_fixes: [tam.scale_out]\n    risky_actions: [tam.restart]\n    debrief: {what_happened: \"Two allocator pods were evicted; throughput halved.\", key_signal: \"Healthy instances 2/4.\"}\n  - faults: [{at: \"13:38\", component: trades_topic, fault: poison_message, params: {partition: 1}}]\n    root_cause: {component: trades_topic, fault: poison_message}\n    accepted_fixes: [trades_topic.skip_poison_message]\n    risky_actions: [tam.restart]\n    debrief: {what_happened: \"A poison message blocked one partition.\", key_signal: \"Lag on a single partition and a repeating offset in the logs.\"}\n  - faults: [{at: \"13:38\", component: ssi, fault: feed_failed, params: {last_refresh_minutes_ago: 19}}]\n    root_cause: {component: ssi, fault: feed_failed}\n    accepted_fixes: [ssi.force_refresh, tam.reprocess_rejected]\n    risky_actions: [tam.restart]\n    debrief: {what_happened: \"The SSI feed failed; allocations for changed accounts were rejected.\", key_signal: \"Reject rate up, SSI staleness growing.\"}\n  - faults: [{at: \"13:38\", component: tam_db, fault: pool_exhausted}]\n    root_cause: {component: tam_db, fault: pool_exhausted}\n    accepted_fixes: [tam_db.kill_blocking_session]\n    risky_actions: [tam.restart, tam.scale_out]\n    debrief: {what_happened: \"A report query held the DB connection pool.\", key_signal: \"Pool at 100%, connection timeouts.\"}\n  - faults: [{at: \"13:38\", component: ctm, fault: unavailable}]\n    root_cause: {component: ctm, fault: unavailable}\n    accepted_fixes: [ctm.escalate_to_vendor]\n    risky_actions: [tam.restart, ctm.restart_adapter]\n    debrief: {what_happened: \"The confirmation platform was down on the vendor side.\", key_signal: \"100% failed calls to CTM; internal systems green.\"}\n"]};
+</script>
+<script>
+/*
+ * OpsPilot Drill Simulator — simulation engine.
+ *
+ * Pure logic, no screen code. The same file runs in the browser and in Node tests.
+ *
+ * Three layers:
+ *   1. Component TYPES (this file): how a kind of thing behaves, what it measures,
+ *      how it can fail and how it can be fixed.
+ *   2. A BLUEPRINT (YAML): which components a system has and how they connect.
+ *   3. A DRILL (YAML, see session.js): which fault hits which component, and how
+ *      the responder is scored.
+ *
+ * Every simulated tick, work flows along the blueprint's chain: the source produces
+ * trades, each component takes what its capacity allows and passes it on. Faults only
+ * change a component's rules (capacity, rejects, availability). Backlogs, lag, alerts
+ * and missed cut-offs are not scripted — they follow from the flow.
+ */
+(function (root) {
+  'use strict';
+
+  // ---------------------------------------------------------------- helpers
+  function rng(seed) { // mulberry32: deterministic random numbers, so drills are repeatable
+    let a = seed >>> 0;
+    return function () {
+      a |= 0; a = (a + 0x6D2B79F5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  const pad = n => String(n).padStart(2, '0');
+  function parseClock(s) {
+    const m = /^(\d{1,2}):(\d{2})$/.exec(String(s || '').trim());
+    if (!m) return null;
+    return (+m[1]) * 3600 + (+m[2]) * 60;
+  }
+  function clockStr(t, withSeconds) {
+    t = Math.max(0, Math.floor(t));
+    const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), s = t % 60;
+    return pad(h) + ':' + pad(m) + (withSeconds ? ':' + pad(s) : '');
+  }
+  const fmtInt = n => Math.round(n).toLocaleString('en-IN');
+
+  // ---------------------------------------------------------------- 1. component types
+  const TYPES = {
+    source: {
+      label: 'Source', flow: true, required: ['rate_per_min'],
+      metrics: { out_rate: 'Trades produced per minute' },
+      faults: {}, actions: {},
+    },
+    kafka_topic: {
+      label: 'Kafka topic', flow: true, required: ['partitions'],
+      metrics: {
+        lag: 'Total consumer lag (messages)', max_partition_lag: 'Largest single-partition lag',
+        in_rate: 'Messages produced per minute', out_rate: 'Messages consumed per minute', rebalances: 'Consumer group rebalances',
+      },
+      faults: {
+        poison_message: { label: 'Poison message blocking a partition', params: { partition: 3 } },
+        rebalance_storm: { label: 'Consumer group rebalance storm', params: {} },
+      },
+      actions: {
+        skip_poison_message: { label: 'Park stuck message to dead-letter topic', fixes: ['poison_message'] },
+        tune_consumer_timeout: { label: 'Raise consumer session timeout and rejoin group', fixes: ['rebalance_storm'] },
+      },
+    },
+    service: {
+      label: 'Service', flow: true, required: ['capacity_per_min'],
+      metrics: {
+        in_rate: 'Trades received per minute', out_rate: 'Trades processed per minute', backlog: 'Trades waiting',
+        reject_rate: 'Rejected (%)', error_rate: 'Errors and timeouts (%)', instances: 'Healthy instances',
+        latency_ms: 'Processing time (ms)', rejected: 'Trades in exception queue',
+      },
+      faults: {
+        instances_lost: { label: 'Instances lost (pods evicted)', params: { remaining: 2 } },
+      },
+      actions: {
+        scale_out: { label: 'Scale out (reschedule instances on healthy nodes)', fixes: ['instances_lost'] },
+        restart: { label: 'Rolling restart', fixes: [] },
+        reprocess_rejected: { label: 'Reprocess exception queue', fixes: [] },
+      },
+    },
+    external_party: {
+      label: 'External party', flow: true, required: ['capacity_per_min'],
+      metrics: { in_rate: 'Received per minute', out_rate: 'Completed per minute', backlog: 'Waiting / unmatched', error_rate: 'Failed calls (%)' },
+      faults: {
+        unavailable: { label: 'Vendor platform unavailable', params: {} },
+      },
+      actions: {
+        escalate_to_vendor: { label: 'Raise P1 with vendor', fixes: ['unavailable'], delay_min: 8 },
+        restart_adapter: { label: 'Restart our adapter', fixes: [] },
+      },
+    },
+    ref_data: {
+      label: 'Reference data', flow: false, required: ['refresh_every_min', 'stale_after_min'],
+      metrics: { staleness_min: 'Minutes since last successful load' },
+      faults: {
+        feed_failed: { label: 'Upstream feed job failing', params: { last_refresh_minutes_ago: 18 } },
+      },
+      actions: {
+        force_refresh: { label: 'Re-run feed from secondary source', fixes: ['feed_failed'] },
+      },
+    },
+    database: {
+      label: 'Database', flow: false, required: ['pool_size'],
+      metrics: { pool_used: 'Connections in use', pool_pct: 'Pool used (%)', wait_ms: 'Connection wait (ms)' },
+      faults: {
+        pool_exhausted: { label: 'Connection pool exhausted by a long-running query', params: {} },
+      },
+      actions: {
+        kill_blocking_session: { label: 'Kill blocking session', fixes: ['pool_exhausted'] },
+      },
+    },
+  };
+
+  // ---------------------------------------------------------------- 2. blueprint parsing + validation
+  function parseBlueprint(text, yaml) {
+    const errors = [];
+    let bp;
+    try { bp = yaml.load(text); } catch (e) { return { errors: ['YAML syntax: ' + (e.reason || e.message) + (e.mark ? ` (line ${e.mark.line + 1})` : '')] }; }
+    if (!bp || typeof bp !== 'object') return { errors: ['The blueprint is empty.'] };
+    return validateBlueprint(bp);
+  }
+
+  function validateBlueprint(bp) {
+    const errors = [];
+    const comps = Array.isArray(bp.components) ? bp.components : [];
+    if (!bp.system) errors.push('Missing "system" (the system name).');
+    if (!comps.length) errors.push('Missing "components" list.');
+    const ids = new Map();
+    comps.forEach((c, i) => {
+      const where = `components[${i}]` + (c && c.id ? ` (${c.id})` : '');
+      if (!c || typeof c !== 'object') { errors.push(`${where}: must be an object.`); return; }
+      if (!c.id || !/^[a-z][a-z0-9_]*$/.test(c.id)) errors.push(`${where}: "id" must be lowercase letters, digits or _ and start with a letter.`);
+      else if (ids.has(c.id)) errors.push(`${where}: duplicate id "${c.id}".`);
+      else ids.set(c.id, c);
+      const T = TYPES[c.type];
+      if (!T) { errors.push(`${where}: unknown type "${c.type}". Known types: ${Object.keys(TYPES).join(', ')}.`); return; }
+      T.required.forEach(k => {
+        if (typeof c[k] !== 'number' || !(c[k] > 0)) errors.push(`${where}: "${k}" is required and must be a positive number for type ${c.type}.`);
+      });
+      if (c.type === 'kafka_topic' && c.partitions > 64) errors.push(`${where}: at most 64 partitions.`);
+      if (c.type === 'service' && c.instances !== undefined && !(Number.isInteger(c.instances) && c.instances > 0)) errors.push(`${where}: "instances" must be a positive whole number.`);
+      if (c.uses !== undefined && !Array.isArray(c.uses)) errors.push(`${where}: "uses" must be a list of component ids.`);
+    });
+    comps.forEach(c => (c && Array.isArray(c.uses) ? c.uses : []).forEach(u => {
+      const d = ids.get(u);
+      if (!d) errors.push(`${c.id}: uses unknown component "${u}".`);
+      else if (TYPES[d.type] && TYPES[d.type].flow) errors.push(`${c.id}: can only "use" reference data or databases, not ${d.type} "${u}".`);
+      else if (c.type !== 'service') errors.push(`${c.id}: only services can "use" other components.`);
+    }));
+
+    // flow chains: "a -> b -> c"
+    const chains = [];
+    const seen = new Set();
+    (Array.isArray(bp.flow) ? bp.flow : []).forEach((line, i) => {
+      const parts = String(line).split('->').map(s => s.trim()).filter(Boolean);
+      if (parts.length < 2) { errors.push(`flow[${i}]: needs at least two components joined by "->".`); return; }
+      const chain = [];
+      parts.forEach((p, j) => {
+        const c = ids.get(p);
+        if (!c) { errors.push(`flow[${i}]: unknown component "${p}".`); return; }
+        if (!TYPES[c.type] || !TYPES[c.type].flow) { errors.push(`flow[${i}]: ${c.type} "${p}" cannot be in the flow; attach it to a service with "uses".`); return; }
+        if (seen.has(p)) { errors.push(`flow[${i}]: "${p}" appears more than once (only straight chains are supported in this version).`); return; }
+        if (j === 0 && c.type !== 'source') errors.push(`flow[${i}]: a chain must start with a source, not ${c.type} "${p}".`);
+        if (j > 0 && c.type === 'source') errors.push(`flow[${i}]: source "${p}" can only be first in a chain.`);
+        if (c.type === 'kafka_topic' && j === parts.length - 1) errors.push(`flow[${i}]: Kafka topic "${p}" needs a consumer after it.`);
+        if (c.type === 'kafka_topic' && j > 0 && ids.get(parts[j - 1]) && ids.get(parts[j - 1]).type === 'kafka_topic') errors.push(`flow[${i}]: two Kafka topics in a row need a service between them.`);
+        seen.add(p); chain.push(p);
+      });
+      chains.push(chain);
+    });
+    if (!chains.length) errors.push('Missing "flow" (for example: - oms -> trades_topic -> tam).');
+    comps.forEach(c => { if (c && TYPES[c.type] && TYPES[c.type].flow && c.id && !seen.has(c.id)) errors.push(`${c.id}: is not connected in any flow.`); });
+
+    // clock + business
+    const clock = bp.clock || {};
+    const start = parseClock(clock.start || '13:30'), cutoff = parseClock(clock.cutoff || '15:00');
+    if (start === null) errors.push('clock.start must look like "13:30".');
+    if (cutoff === null) errors.push('clock.cutoff must look like "15:00".');
+    if (start !== null && cutoff !== null && cutoff <= start + 600) errors.push('clock.cutoff must be at least 10 minutes after clock.start.');
+    const biz = bp.business || {};
+    const kpis = Array.isArray(biz.kpis) ? biz.kpis : [];
+    kpis.forEach((k, i) => {
+      if (!k || !k.label) errors.push(`business.kpis[${i}]: needs a "label".`);
+      if (!k || !ids.has(k.at)) errors.push(`business.kpis[${i}]: "at" must be a component id.`);
+    });
+    if (kpis.filter(k => k && k.cutoff).length > 1) errors.push('Only one business KPI can be marked "cutoff: true".');
+
+    // alert rules
+    const alerts = Array.isArray(bp.alerts) ? bp.alerts : [];
+    alerts.forEach((a, i) => {
+      const where = `alerts[${i}]` + (a && a.name ? ` (${a.name})` : '');
+      if (!a || !a.name) { errors.push(`${where}: needs a "name".`); return; }
+      const c = ids.get(a.on);
+      if (!c) { errors.push(`${where}: "on" must be a component id.`); return; }
+      const T = TYPES[c.type];
+      if (T && !T.metrics[a.metric]) errors.push(`${where}: ${c.type} has no metric "${a.metric}". Available: ${Object.keys(T.metrics).join(', ')}.`);
+      if (typeof a.above !== 'number' && typeof a.below !== 'number') errors.push(`${where}: needs "above" or "below" as a number.`);
+      if (a.severity && !/^P[1-4]$/.test(a.severity)) errors.push(`${where}: severity must be P1–P4.`);
+    });
+
+    if (errors.length) return { errors };
+    const sourceRate = comps.filter(c => c.type === 'source').reduce((s, c) => s + c.rate_per_min, 0);
+    const model = {
+      id: bp.id || 'blueprint', system: bp.system, description: bp.description || '',
+      start, cutoff, components: comps, byId: Object.fromEntries(comps.map(c => [c.id, c])), chains,
+      alerts: alerts.map((a, i) => ({ id: 'rule' + i, severity: 'P3', ...a })),
+      business: {
+        currency: biz.currency || '₹', unit: biz.unit || 'Cr', avg_notional: typeof biz.avg_notional === 'number' ? biz.avg_notional : 0.5,
+        produced_at: biz.produced_at || (comps.find(c => c.type === 'source') || {}).id,
+        kpis, tolerance_trades: typeof biz.tolerance_trades === 'number' ? biz.tolerance_trades : sourceRate * 0.5,
+      },
+      raw: bp,
+    };
+    return { errors: [], blueprint: model };
+  }
+
+  // ---------------------------------------------------------------- 3. the simulator
+  function Simulator(bp, opts) {
+    opts = opts || {};
+    this.bp = bp;
+    this.rand = rng(opts.seed || 42);
+    this.t = bp.start - 30 * 60;       // warm up for 30 simulated minutes
+    this.alerts = []; this.alertSeq = 1000; this.events = [];
+    this.history = { t: [] }; this.lastSample = -Infinity;
+    this.c = {};
+    bp.components.forEach(def => { this.c[def.id] = this._initState(def); });
+    bp.chains.forEach(chain => chain.forEach((id, i) => {
+      this.c[id].up = i > 0 ? chain[i - 1] : null;
+      this.c[id].down = i < chain.length - 1 ? chain[i + 1] : null;
+    }));
+    this.ruleState = {};
+    this.biz = { produced: 0, prevCut: 0, netRate: 0 };
+    this.warmup(bp.start - this.t);
+  }
+
+  Simulator.prototype._initState = function (def) {
+    const s = { def, type: def.type, fault: null, logs: [], hist: {}, rates: {}, tot: { in: 0, out: 0, rej: 0, err: 0 }, win: { in: 0, out: 0, rej: 0, err: 0, n: 0 } };
+    if (def.type === 'kafka_topic') { s.parts = new Array(def.partitions).fill(0); s.blocked = -1; s.rebalances = 0; s.offsets = new Array(def.partitions).fill(0).map((_, i) => 884000 + i * 3121); s.dlq = 0; }
+    if (def.type === 'service') { s.inbox = 0; s.retry = 0; s.rejected = 0; s.configured = def.instances || 4; s.instances = s.configured; s.restartUntil = -1; }
+    if (def.type === 'external_party') { s.inbox = 0; s.recoverAt = -1; s.adapterDownUntil = -1; }
+    if (def.type === 'ref_data') { s.lastRefresh = this.t; s.records = 48210; }
+    if (def.type === 'database') { s.used = Math.round(def.pool_size * 0.28); }
+    return s;
+  };
+
+  Simulator.prototype.now = function () { return this.t; };
+  Simulator.prototype.time = function (sec) { return clockStr(this.t, sec); };
+
+  Simulator.prototype.log = function (id, level, msg) {
+    const s = this.c[id];
+    s.logs.push({ t: this.t, level, msg, line: `${clockStr(this.t, true)} ${level.padEnd(5)} [${id}] ${msg}` });
+    if (s.logs.length > 400) s.logs.splice(0, s.logs.length - 400);
+  };
+  Simulator.prototype.chance = function (p) { return this.rand() < p; };
+
+  // capacity of a service after faults and dependencies are applied
+  Simulator.prototype.serviceFactor = function (s) {
+    let f = s.instances / s.configured;
+    if (this.t < s.restartUntil) f *= 0.5;
+    (s.def.uses || []).forEach(u => { const d = this.c[u]; if (d.type === 'database' && d.fault && d.fault.type === 'pool_exhausted') f *= 0.2; });
+    const up = s.up && this.c[s.up];
+    if (up && up.type === 'kafka_topic' && up.fault && up.fault.type === 'rebalance_storm') f *= 0.35;
+    return f;
+  };
+  Simulator.prototype.staleRefs = function (s) {
+    return (s.def.uses || []).map(u => this.c[u]).filter(d => d.type === 'ref_data' && this.staleness(d) > d.def.stale_after_min);
+  };
+  Simulator.prototype.staleness = function (d) { return (this.t - d.lastRefresh) / 60; };
+
+  Simulator.prototype.accept = function (id, n) {
+    const s = this.c[id];
+    s.tot.in += n; s.win.in += n;
+    if (s.type === 'kafka_topic') {
+      const per = n / s.parts.length;
+      for (let i = 0; i < s.parts.length; i++) { s.parts[i] += per; s.offsets[i] += per; }
+    } else if (s.type === 'service' || s.type === 'external_party') s.inbox += n;
+  };
+
+  Simulator.prototype.step = function (dt) {
+    const bp = this.bp;
+    this.t += dt;
+    // reference data refresh schedule
+    Object.values(this.c).filter(s => s.type === 'ref_data').forEach(s => {
+      const due = this.t - s.lastRefresh >= s.def.refresh_every_min * 60;
+      if (!due) return;
+      if (s.fault && s.fault.type === 'feed_failed') {
+        if (!s.lastFailLog || this.t - s.lastFailLog >= 300) {
+          s.lastFailLog = this.t;
+          this.log(s.def.id, 'ERROR', `${s.def.name} feed job FAILED: sftp://feeds.vendor.example:22 connection refused (attempt ${Math.floor((this.t - s.fault.since) / 300) + 1})`);
+        }
+      } else {
+        s.lastRefresh = this.t; s.records += Math.floor(this.rand() * 40);
+        this.log(s.def.id, 'INFO', `${s.def.name} loaded: ${fmtInt(s.records)} records`);
+      }
+    });
+    // databases
+    Object.values(this.c).filter(s => s.type === 'database').forEach(s => {
+      const P = s.def.pool_size;
+      if (s.fault && s.fault.type === 'pool_exhausted') s.used = P;
+      else s.used = Math.max(2, Math.min(P, Math.round(P * (0.24 + this.rand() * 0.1))));
+    });
+    // work flows along each chain
+    bp.chains.forEach(chain => chain.forEach(id => this._process(id, dt)));
+    // vendor recovery after escalation
+    Object.values(this.c).forEach(s => {
+      if (s.type === 'external_party' && s.recoverAt > 0 && this.t >= s.recoverAt) {
+        s.recoverAt = -1; this.clearFault(s.def.id, 'Vendor reports platform restored');
+        this.log(s.def.id, 'INFO', `${s.def.name} responding normally again (vendor incident closed)`);
+      }
+    });
+    this._chatter(dt);
+    this._rates(dt);
+    this._business(dt);
+    this._evalAlerts();
+    if (this.t - this.lastSample >= 60) { this.lastSample = this.t; this._sample(); }
+  };
+
+  Simulator.prototype._process = function (id, dt) {
+    const s = this.c[id], def = s.def, min = dt / 60;
+    if (s.type === 'source') {
+      const n = def.rate_per_min * min * (0.94 + this.rand() * 0.12);
+      this.biz.produced += n; s.tot.out += n; s.win.out += n;
+      if (s.down) this.accept(s.down, n);
+      return;
+    }
+    if (s.type === 'kafka_topic') return; // the consumer pulls from the topic
+    if (s.type === 'service') {
+      const up = s.up && this.c[s.up];
+      const fromKafka = up && up.type === 'kafka_topic';
+      let cap = def.capacity_per_min * this.serviceFactor(s) * min;
+      const take = [];
+      // retries from the exception queue are processed first
+      const r = Math.min(s.retry, cap); s.retry -= r; cap -= r; take.push(r);
+      let got = r;
+      if (fromKafka) {
+        // equal share per partition; a blocked partition gives nothing
+        const open = up.parts.map((v, i) => i === up.blocked ? 0 : v);
+        let remaining = cap;
+        for (let pass = 0; pass < 3 && remaining > 1e-9; pass++) {
+          const active = open.map((v, i) => [v, i]).filter(([v]) => v > 1e-9);
+          if (!active.length) break;
+          const share = remaining / active.length;
+          active.forEach(([v, i]) => { const x = Math.min(v, share); open[i] -= x; up.parts[i] -= x; remaining -= x; got += x; });
+        }
+        const used = got - r; up.tot.out += used; up.win.out += used;
+      } else {
+        const x = Math.min(s.inbox, cap); s.inbox -= x; got += x;
+      }
+      const stale = this.staleRefs(s).length > 0;
+      const rejFrac = stale ? 0.08 : 0;
+      const rej = got * rejFrac;
+      s.rejected += rej; s.tot.rej += rej; s.win.rej += rej;
+      const ok = got - rej;
+      s.tot.out += ok; s.win.out += ok;
+      const dbBad = (def.uses || []).some(u => this.c[u].fault && this.c[u].fault.type === 'pool_exhausted');
+      const errs = dbBad ? got * 0.06 + 0.5 : 0; s.win.err += errs;
+      if (s.down) this.accept(s.down, ok);
+      return;
+    }
+    if (s.type === 'external_party') {
+      const unavailable = (s.fault && s.fault.type === 'unavailable') || this.t < s.adapterDownUntil;
+      const cap = unavailable ? 0 : def.capacity_per_min * min;
+      const x = Math.min(s.inbox, cap); s.inbox -= x;
+      s.tot.out += x; s.win.out += x;
+      if (unavailable) s.win.err += Math.max(1, s.inbox > 0 ? 3 : 1);
+      if (s.down) this.accept(s.down, x);
+    }
+  };
+
+  // realistic log lines, driven by the current state (never by the drill script)
+  Simulator.prototype._chatter = function (dt) {
+    const p = dt / 30; // ~one routine line per component every 30 simulated seconds
+    Object.values(this.c).forEach(s => {
+      const id = s.def.id, name = s.def.name, f = s.fault && s.fault.type;
+      if (s.type === 'source' && this.chance(p)) {
+        const tgt = s.down ? this.c[s.down].def.name : 'downstream';
+        this.log(id, 'INFO', `Published ${Math.round(this.rates(id).out_rate / 2)} fills to ${tgt} (batch ${88000 + Math.floor(this.t / 30)})`);
+      }
+      if (s.type === 'kafka_topic') {
+        if (s.blocked >= 0 && this.chance(p * 0.6)) this.log(id, 'WARN', `Consumer offset for ${name}-${s.blocked} not advancing at ${Math.floor(s.stuckOffset)} (lag ${fmtInt(s.parts[s.blocked])})`);
+        if (f === 'rebalance_storm' && this.chance(p * 1.4)) { s.rebalances++; this.log(id, 'WARN', `Group ${s.def.consumer_group || 'consumers'} rebalancing (generation ${400 + s.rebalances}): member left, session timeout 10000ms`); }
+        if (!f && this.chance(p * 0.3)) this.log(id, 'INFO', `Group ${s.def.consumer_group || 'consumers'} stable: ${this._consumerCount(s)} members, ${s.parts.length} partitions`);
+      }
+      if (s.type === 'service') {
+        const up = s.up && this.c[s.up];
+        if (up && up.type === 'kafka_topic' && up.blocked >= 0 && this.chance(p * 1.5))
+          this.log(id, 'ERROR', `Failed to deserialize record ${up.def.name}-${up.blocked}@${Math.floor(up.stuckOffset)}: Unrecognized field "allocRatioV2" (class TradeEvent) — retrying`);
+        if (up && up.type === 'kafka_topic' && up.fault && up.fault.type === 'rebalance_storm' && this.chance(p))
+          this.log(id, 'WARN', `Partitions revoked [${[0, 1, 2].join(', ')}]; rejoining group ${up.def.consumer_group || ''}`.trim());
+        if (f === 'instances_lost' && this.chance(p * 0.8))
+          this.log(id, 'WARN', `Only ${s.instances}/${s.configured} ${name} instances ready; pods ${id}-${s.instances + 1}, ${id}-${s.configured} Pending (node memory pressure)`);
+        if ((s.def.uses || []).some(u => this.c[u].fault && this.c[u].fault.type === 'pool_exhausted') && this.chance(p * 1.6))
+          this.log(id, 'ERROR', `HikariPool-1 - Connection is not available, request timed out after 30000ms (block BLK-${71000 + Math.floor(this.rand() * 900)})`);
+        this.staleRefs(s).forEach(r => { if (this.chance(p * 1.4)) this.log(id, 'ERROR', `Allocation rejected for block BLK-${71000 + Math.floor(this.rand() * 900)}: no SSI for account ACC-${48000 + Math.floor(this.rand() * 900)} in ${r.def.name}`); });
+        if (this.t < s.restartUntil && this.chance(p)) this.log(id, 'INFO', `Rolling restart in progress: instance ${1 + Math.floor(this.rand() * s.configured)}/${s.configured} restarting`);
+        if (this.chance(p * 0.7)) {
+          const r = this.rates(id);
+          this.log(id, 'INFO', `Processed ${Math.round(r.out_rate / 2)} trades in last 30s (backlog ${fmtInt(this.metric(id, 'backlog'))})`);
+        }
+      }
+      if (s.type === 'external_party') {
+        if ((f === 'unavailable' || this.t < s.adapterDownUntil) && this.chance(p * 1.6)) this.log(id, 'ERROR', `${name} API POST /v1/messages returned 503 Service Unavailable (retry ${1 + Math.floor(this.rand() * 5)}/5)`);
+        else if (!f && this.chance(p * 0.6)) this.log(id, 'INFO', `${name}: ${Math.round(this.rates(id).out_rate / 2)} messages acknowledged in last 30s`);
+      }
+      if (s.type === 'database') {
+        if (f === 'pool_exhausted' && this.chance(p)) this.log(id, 'WARN', `Session 482 (month_end_recon_report) running ${Math.round((this.t - s.fault.since) / 60) + 14} min, holding ${s.def.pool_size - 4} connections`);
+        else if (this.chance(p * 0.25)) this.log(id, 'INFO', `Pool active ${s.used}/${s.def.pool_size}, idle ${s.def.pool_size - s.used}`);
+      }
+    });
+  };
+  Simulator.prototype._consumerCount = function (k) {
+    const svc = k.down && this.c[k.down];
+    return svc && svc.type === 'service' ? svc.instances : 1;
+  };
+
+  Simulator.prototype._rates = function (dt) {
+    Object.values(this.c).forEach(s => {
+      const w = s.win; w.n += dt;
+      if (w.n < 30) return; // rates over a rolling 30-second window
+      const k = 60 / w.n, a = 0.5;
+      const prev = s.rates;
+      const nr = { in_rate: w.in * k, out_rate: w.out * k, rej_rate: w.rej * k, err_rate: w.err * k };
+      s.rates = prev.n ? Object.fromEntries(Object.keys(nr).map(x => [x, prev[x] * (1 - a) + nr[x] * a])) : nr;
+      s.rates.n = 1;
+      s.win = { in: 0, out: 0, rej: 0, err: 0, n: 0 };
+    });
+  };
+  Simulator.prototype.rates = function (id) { const r = this.c[id].rates; return r.n ? r : { in_rate: 0, out_rate: 0, rej_rate: 0, err_rate: 0 }; };
+
+  Simulator.prototype.metric = function (id, m) {
+    const s = this.c[id], r = this.rates(id);
+    switch (s.type) {
+      case 'source': return m === 'out_rate' ? r.out_rate : 0;
+      case 'kafka_topic':
+        if (m === 'lag') return s.parts.reduce((a, b) => a + b, 0);
+        if (m === 'max_partition_lag') return Math.max(...s.parts);
+        if (m === 'in_rate') return r.in_rate;
+        if (m === 'out_rate') return r.out_rate;
+        if (m === 'rebalances') return s.rebalances;
+        return 0;
+      case 'service': {
+        const up = s.up && this.c[s.up];
+        const backlog = (up && up.type === 'kafka_topic' ? 0 : s.inbox) + s.retry;
+        const processed = r.out_rate + r.rej_rate;
+        if (m === 'backlog') return backlog;
+        if (m === 'in_rate') return up && up.type === 'kafka_topic' ? r.out_rate + r.rej_rate : r.in_rate;
+        if (m === 'out_rate') return r.out_rate;
+        if (m === 'reject_rate') return processed > 1 ? 100 * r.rej_rate / processed : 0;
+        if (m === 'error_rate') return processed > 1 ? Math.min(100, 100 * r.err_rate / processed) : (r.err_rate > 0 ? 100 : 0);
+        if (m === 'instances') return s.instances;
+        if (m === 'rejected') return s.rejected;
+        if (m === 'latency_ms') { const f = this.serviceFactor(s); return Math.round(140 / Math.max(f, 0.05) * (0.95 + this.rand() * 0.1)); }
+        return 0;
+      }
+      case 'external_party':
+        if (m === 'backlog') return s.inbox;
+        if (m === 'in_rate') return r.in_rate;
+        if (m === 'out_rate') return r.out_rate;
+        if (m === 'error_rate') return (s.fault && s.fault.type === 'unavailable') || this.t < s.adapterDownUntil ? 100 : 0;
+        return 0;
+      case 'ref_data': return m === 'staleness_min' ? this.staleness(s) : 0;
+      case 'database':
+        if (m === 'pool_used') return s.used;
+        if (m === 'pool_pct') return 100 * s.used / s.def.pool_size;
+        if (m === 'wait_ms') return s.fault && s.fault.type === 'pool_exhausted' ? 30000 : 2 + Math.round(this.rand() * 6);
+        return 0;
+    }
+    return 0;
+  };
+
+  // business KPIs: trades produced but not yet past a stage
+  Simulator.prototype.kpi = function (k) {
+    const s = this.c[k.at];
+    const passed = s.type === 'source' ? s.tot.out : s.tot.out;
+    const trades = Math.max(0, this.biz.produced - passed);
+    return { label: k.label, trades, notional: trades * this.bp.business.avg_notional, cutoff: !!k.cutoff };
+  };
+  Simulator.prototype.kpis = function () { return this.bp.business.kpis.map(k => this.kpi(k)); };
+  Simulator.prototype.cutoffKpi = function () { const k = this.bp.business.kpis.find(x => x.cutoff); return k ? this.kpi(k) : null; };
+  Simulator.prototype._business = function (dt) {
+    const k = this.cutoffKpi(); if (!k) return;
+    const net = (k.trades - this.biz.prevCut) / (dt / 60);
+    this.biz.prevCut = k.trades;
+    this.biz.netRate = this.biz.netRate * 0.9 + net * 0.1;
+  };
+  // will the cut-off KPI be back to normal before the cut-off?
+  Simulator.prototype.cutoffRisk = function () {
+    const k = this.cutoffKpi(); if (!k) return { atRisk: false };
+    const tol = this.bp.business.tolerance_trades, left = (this.bp.cutoff - this.t) / 60;
+    if (k.trades <= tol) return { atRisk: false, eta: null };
+    if (this.biz.netRate >= -1) return { atRisk: true, eta: null };
+    const eta = (k.trades - tol) / -this.biz.netRate;
+    return { atRisk: eta > left, eta };
+  };
+
+  Simulator.prototype._evalAlerts = function () {
+    if (this.t < this.bp.start) return; // no paging during warm-up
+    const rules = this.bp.alerts.slice();
+    const k = this.cutoffKpi();
+    if (k) rules.push({ id: 'cutoff', name: `${k.label} — cut-off at risk`, on: this.bp.business.kpis.find(x => x.cutoff).at, severity: 'P1', builtin: true });
+    rules.forEach(rule => {
+      let val, firing;
+      if (rule.builtin) { val = k.trades; firing = this.cutoffRisk().atRisk && this.t < this.bp.cutoff; }
+      else {
+        val = this.metric(rule.on, rule.metric);
+        firing = typeof rule.above === 'number' ? val > rule.above : val < rule.below;
+      }
+      const st = this.ruleState[rule.id] || (this.ruleState[rule.id] = { since: null, clearSince: null, alert: null });
+      if (firing) {
+        st.clearSince = null;
+        if (st.since === null) st.since = this.t;
+        if (!st.alert && this.t - st.since >= 60) { // sustained for 1 simulated minute
+          const a = { id: 'ALRT-' + (++this.alertSeq), rule: rule.id, name: rule.name, severity: rule.severity || 'P3', on: rule.on, metric: rule.metric || 'business', threshold: rule.builtin ? 'projected past cut-off' : (typeof rule.above === 'number' ? '> ' + rule.above : '< ' + rule.below), value: val, firedAt: this.t, resolvedAt: null, status: 'FIRING' };
+          st.alert = a; this.alerts.unshift(a);
+          this.events.push({ t: this.t, kind: 'alert', text: `${a.id} ${a.severity} ${a.name} fired` });
+        }
+        if (st.alert) st.alert.value = val;
+      } else {
+        st.since = null;
+        if (st.alert) {
+          if (st.clearSince === null) st.clearSince = this.t;
+          if (this.t - st.clearSince >= 120) { // clear for 2 minutes before resolving
+            st.alert.status = 'RESOLVED'; st.alert.resolvedAt = this.t;
+            this.events.push({ t: this.t, kind: 'alert', text: `${st.alert.id} ${st.alert.name} resolved` });
+            st.alert = null;
+          }
+        }
+      }
+    });
+  };
+  Simulator.prototype.addExternalAlert = function (a) { // e.g. unrelated noise in a drill
+    const al = { id: 'ALRT-' + (++this.alertSeq), firedAt: this.t, resolvedAt: null, status: 'FIRING', severity: 'P4', metric: 'external', value: '', threshold: '', ...a };
+    this.alerts.unshift(al); return al;
+  };
+
+  Simulator.prototype._sample = function () {
+    this.history.t.push(this.t);
+    Object.values(this.c).forEach(s => {
+      Object.keys(TYPES[s.type].metrics).forEach(m => {
+        const h = s.hist[m] || (s.hist[m] = []);
+        h.push(this.metric(s.def.id, m));
+      });
+    });
+    const k = this.cutoffKpi();
+    (this.history.cut || (this.history.cut = [])).push(k ? k.notional : 0);
+    if (this.history.t.length > 240) {
+      this.history.t.shift(); this.history.cut.shift();
+      Object.values(this.c).forEach(s => Object.values(s.hist).forEach(h => h.shift()));
+    }
+  };
+
+  Simulator.prototype.warmup = function (secs) { const step = 5; for (let x = 0; x < secs; x += step) this.step(step); };
+
+  Simulator.prototype.health = function (id) {
+    const s = this.c[id], m = k => this.metric(id, k);
+    const rate = this.bp.components.filter(c => c.type === 'source').reduce((a, c) => a + c.rate_per_min, 0) || 1;
+    switch (s.type) {
+      case 'source': return 'ok';
+      case 'kafka_topic': { const L = m('lag'), P = m('max_partition_lag'); return L > rate * 8 || P > rate * 2 ? 'bad' : L > rate * 2 || P > rate * 0.8 ? 'warn' : 'ok'; }
+      case 'service': {
+        if (s.instances < s.configured || m('error_rate') > 2 || m('reject_rate') > 5) return m('reject_rate') > 5 || this.serviceFactor(s) < 0.3 ? 'bad' : 'warn';
+        if (m('reject_rate') > 1 || s.rejected > 5 || m('backlog') > rate * 2) return 'warn';
+        return 'ok';
+      }
+      case 'external_party': return m('error_rate') > 50 ? 'bad' : m('backlog') > rate * 2 ? 'warn' : 'ok';
+      case 'ref_data': { const st = m('staleness_min'); return st > s.def.stale_after_min * 1.5 ? 'bad' : st > s.def.stale_after_min ? 'warn' : 'ok'; }
+      case 'database': { const p = m('pool_pct'); return p > 95 ? 'bad' : p > 85 ? 'warn' : 'ok'; }
+    }
+    return 'ok';
+  };
+
+  // ---------------------------------------------------------------- faults and actions
+  Simulator.prototype.injectFault = function (id, type, params) {
+    const s = this.c[id];
+    if (!s) throw new Error(`No component "${id}"`);
+    const F = TYPES[s.type].faults[type];
+    if (!F) throw new Error(`${s.type} "${id}" has no fault "${type}"`);
+    const p = { ...F.params, ...(params || {}) };
+    s.fault = { type, params: p, since: this.t };
+    if (type === 'poison_message') { s.blocked = Math.min(s.parts.length - 1, Math.max(0, p.partition | 0)); s.stuckOffset = s.offsets[s.blocked] - s.parts[s.blocked]; }
+    if (type === 'instances_lost') s.instances = Math.max(1, Math.min(s.configured - 1, p.remaining | 0));
+    if (type === 'feed_failed') s.lastRefresh = Math.min(s.lastRefresh, this.t - p.last_refresh_minutes_ago * 60);
+    if (type === 'pool_exhausted') this.log(id, 'WARN', `Long-running query started: session 482 (month_end_recon_report), full table scan on ALLOCATION_HIST`);
+    this.events.push({ t: this.t, kind: 'fault', hidden: true, text: `Fault injected: ${F.label} on ${s.def.name}` });
+    return s.fault;
+  };
+  Simulator.prototype.clearFault = function (id, why) {
+    const s = this.c[id]; if (!s.fault) return;
+    this.events.push({ t: this.t, kind: 'fixed', text: `${s.def.name}: ${why}` });
+    if (s.type === 'kafka_topic') s.blocked = -1;
+    s.fault = null;
+  };
+  Simulator.prototype.actionsFor = function (id) {
+    const s = this.c[id]; return s ? TYPES[s.type].actions : {};
+  };
+  Simulator.prototype.applyAction = function (id, action) {
+    const s = this.c[id];
+    if (!s) return { ok: false, message: `No component "${id}"` };
+    const A = TYPES[s.type].actions[action];
+    if (!A) return { ok: false, message: `${s.def.name} has no action "${action}"` };
+    const f = s.fault && s.fault.type, name = s.def.name;
+    let message, effect = 'none';
+    switch (action) {
+      case 'skip_poison_message':
+        if (f === 'poison_message') { s.dlq++; message = `Parked ${name}-${s.blocked}@${Math.floor(s.stuckOffset)} to ${name}.DLQ; partition ${s.blocked} consuming again. 1 trade needs manual repair.`; this.log(id, 'INFO', `Offset ${Math.floor(s.stuckOffset)} on partition ${s.blocked} skipped and parked to DLQ`); this.clearFault(id, 'stuck message parked to DLQ'); effect = 'fixed'; }
+        else message = 'No stuck offset found on any partition. Nothing parked.';
+        break;
+      case 'tune_consumer_timeout':
+        if (f === 'rebalance_storm') { message = 'session.timeout.ms raised to 45000; group rejoined and stable.'; this.clearFault(id, 'consumer session timeout raised'); effect = 'fixed'; }
+        else { message = 'Consumer group restarted with new timeout; brief pause while it rejoined.'; s.rebalances++; }
+        break;
+      case 'scale_out':
+        if (f === 'instances_lost') { s.instances = s.configured; s.configured += 1; s.instances = s.configured; message = `Rescheduled on healthy nodes; ${s.instances}/${s.configured} instances ready.`; this.clearFault(id, 'instances rescheduled'); effect = 'fixed'; }
+        else { s.configured += 1; s.instances += 1; message = `Added one instance (${s.instances}/${s.configured} ready). No change to the underlying problem.`; }
+        this.log(id, 'INFO', message);
+        break;
+      case 'restart':
+        s.restartUntil = this.t + 180;
+        message = 'Rolling restart started: capacity halved for about 3 minutes.' + (f === 'instances_lost' ? ' Evicted pods are still Pending — the nodes are the problem, not the process.' : '');
+        this.log(id, 'INFO', 'Rolling restart requested');
+        break;
+      case 'reprocess_rejected': {
+        const n = Math.round(s.rejected);
+        if (!n) { message = 'Exception queue is empty.'; break; }
+        if (this.staleRefs(s).length) { message = `Resubmitted ${fmtInt(n)} trades — they will be rejected again while SSI data is stale.`; }
+        else message = `Resubmitted ${fmtInt(n)} trades from the exception queue.`;
+        s.retry += s.rejected; s.rejected = 0; effect = this.staleRefs(s).length ? 'none' : 'partial';
+        break;
+      }
+      case 'escalate_to_vendor':
+        if (f === 'unavailable') { s.recoverAt = this.t + (A.delay_min || 8) * 60; message = `Vendor P1 raised. Vendor confirms an outage on their side; ETA about ${A.delay_min || 8} minutes.`; effect = 'pending'; }
+        else message = 'Vendor reports no issues on their platform.';
+        break;
+      case 'restart_adapter':
+        s.adapterDownUntil = this.t + 60;
+        message = 'Adapter restarted (1 minute without connectivity).' + (f === 'unavailable' ? ' Calls still fail: the vendor platform itself is down.' : '');
+        break;
+      case 'force_refresh':
+        s.lastRefresh = this.t; s.records += 12;
+        if (f === 'feed_failed') { message = `Loaded ${fmtInt(s.records)} records from the secondary source. Rejections should stop; trades already rejected need reprocessing.`; this.clearFault(id, 'feed re-run from secondary source'); effect = 'fixed'; }
+        else message = `Refreshed: ${fmtInt(s.records)} records (no change).`;
+        this.log(id, 'INFO', `${name} loaded: ${fmtInt(s.records)} records (manual refresh)`);
+        break;
+      case 'kill_blocking_session':
+        if (f === 'pool_exhausted') { message = 'Killed session 482 (month_end_recon_report). Connections released.'; this.log(id, 'INFO', 'Session 482 killed by operator; pool recovering'); this.clearFault(id, 'blocking session killed'); effect = 'fixed'; }
+        else message = 'No blocking sessions found.';
+        break;
+    }
+    this.events.push({ t: this.t, kind: 'action', text: `${A.label} on ${name}: ${message}` });
+    return { ok: true, message, effect, label: A.label };
+  };
+
+  Simulator.prototype.activeFaults = function () {
+    return Object.values(this.c).filter(s => s.fault).map(s => ({ id: s.def.id, type: s.fault.type }));
+  };
+  Simulator.prototype.pendingRepair = function () { // work a responder still has to clear up
+    let rejected = 0;
+    Object.values(this.c).forEach(s => { if (s.type === 'service') rejected += s.rejected; });
+    return { rejected };
+  };
+
+  const OpsSim = { TYPES, parseBlueprint, validateBlueprint, Simulator, clockStr, parseClock, fmtInt, rng };
+  if (typeof module === 'object' && module.exports) module.exports = OpsSim;
+  else root.OpsSim = OpsSim;
+})(typeof globalThis !== 'undefined' ? globalThis : this);
+
+</script>
+<script>
+/*
+ * OpsPilot Drill Simulator — drill session.
+ *
+ * A drill = a blueprint + scheduled faults + the correct answer + scoring rules.
+ * The session never tells the responder what is wrong; it only records what they do
+ * (acknowledge, inspect, declare a root cause, request approved actions) and scores it.
+ */
+(function (root) {
+  'use strict';
+  const S = (typeof module === 'object' && module.exports) ? require('./engine.js') : root.OpsSim;
+
+  function validateDrill(drill, bp) {
+    const errors = [];
+    if (!drill || !drill.id || !drill.title) return ['Drill needs an "id" and a "title".'];
+    const scenarios = drill.mystery ? (drill.pool || []) : [drill];
+    if (drill.mystery && !scenarios.length) errors.push('Mystery drill needs a "pool" of scenarios.');
+    scenarios.forEach((sc, i) => {
+      const where = drill.mystery ? `pool[${i}]` : 'drill';
+      (sc.faults || []).forEach(f => {
+        const c = bp.byId[f.component];
+        if (!c) { errors.push(`${where}: needs component "${f.component}", which this blueprint does not have.`); return; }
+        if (!S.TYPES[c.type].faults[f.fault]) errors.push(`${where}: ${c.type} "${f.component}" has no fault "${f.fault}".`);
+        if (S.parseClock(f.at) === null) errors.push(`${where}: fault time "${f.at}" must look like "13:36".`);
+      });
+      if (!(sc.faults || []).length) errors.push(`${where}: needs at least one fault.`);
+      [...(sc.accepted_fixes || []), ...(sc.risky_actions || [])].forEach(a => {
+        const [cid, act] = String(a).split('.');
+        const c = bp.byId[cid];
+        if (!c) errors.push(`${where}: action "${a}" refers to missing component "${cid}".`);
+        else if (!S.TYPES[c.type].actions[act]) errors.push(`${where}: ${c.type} "${cid}" has no action "${act}".`);
+      });
+    });
+    return errors;
+  }
+
+  function Session(sim, drill, opts) {
+    opts = opts || {};
+    this.sim = sim; this.drill = drill; this.mode = opts.mode || 'practice';
+    const pick = drill.mystery ? drill.pool[Math.floor(S.rng(opts.seed || Date.now())() * drill.pool.length)] : drill;
+    this.sc = pick; // the scenario actually running (for mystery drills, hidden from the responder)
+    this.state = 'running';
+    this.faultPlan = (pick.faults || []).map(f => ({ ...f, t: S.parseClock(f.at), done: false }));
+    this.noisePlan = (drill.noise || []).map(n => ({ ...n, t: S.parseClock(n.at), done: false }));
+    this.faultAt = Math.min(...this.faultPlan.map(f => f.t));
+    this.lastFaultAt = Math.max(...this.faultPlan.map(f => f.t));
+    this.timeline = [{ t: sim.t, kind: 'start', text: `Drill started: ${drill.title} (${this.mode} mode)` }];
+    this.ackAt = null; this.ackBy = null;
+    this.declarations = []; this.actions = []; this.inspected = new Set();
+    this.noiseIds = new Set();
+    this.recoveredAt = null; this.endedAt = null; this.cutoffResult = null;
+    this.hintsShown = 0;
+  }
+
+  Session.prototype.tick = function (dt) {
+    if (this.state !== 'running') return;
+    const sim = this.sim;
+    sim.step(dt);
+    this.faultPlan.forEach(f => { if (!f.done && sim.t >= f.t) { f.done = true; sim.injectFault(f.component, f.fault, f.params); } });
+    this.noisePlan.forEach(n => {
+      if (!n.done && sim.t >= n.t) { n.done = true; const a = sim.addExternalAlert({ name: n.name, severity: n.severity || 'P4', on: n.on || 'infra' }); this.noiseIds.add(a.id); }
+    });
+    // recovered: every fault fixed, exception queues empty, business back within normal in-flight volume
+    const allInjected = this.faultPlan.every(f => f.done);
+    if (allInjected && sim.t > this.lastFaultAt + 60 && !sim.activeFaults().length && sim.pendingRepair().rejected < 1) {
+      const k = sim.cutoffKpi();
+      if (!k || k.trades <= sim.bp.business.tolerance_trades) {
+        this.recoveredAt = sim.t;
+        this.timeline.push({ t: sim.t, kind: 'recovered', text: 'Business flow back to normal' });
+        this.finish('recovered');
+        return;
+      }
+    }
+    if (sim.t >= sim.bp.cutoff) {
+      const k = sim.cutoffKpi();
+      this.cutoffResult = k;
+      this.timeline.push({ t: sim.t, kind: 'cutoff', text: `Cut-off reached with ${S.fmtInt(k ? k.trades : 0)} trades ${k ? k.label.toLowerCase() : ''}` });
+      this.finish('cutoff');
+    }
+  };
+
+  Session.prototype.finish = function (why) {
+    this.state = 'ended'; this.endReason = why; this.endedAt = this.sim.t;
+    if (why === 'abandoned') this.timeline.push({ t: this.sim.t, kind: 'end', text: 'Drill ended by responder' });
+  };
+
+  Session.prototype.realAlerts = function () { return this.sim.alerts.filter(a => !this.noiseIds.has(a.id) && a.firedAt >= this.faultAt); };
+  Session.prototype.firstAlertAt = function () { const a = this.realAlerts(); return a.length ? Math.min(...a.map(x => x.firedAt)) : null; };
+
+  Session.prototype.acknowledge = function (who) {
+    if (this.ackAt !== null || this.state !== 'running') return false;
+    this.ackAt = this.sim.t; this.ackBy = who || 'Responder';
+    this.timeline.push({ t: this.sim.t, kind: 'ack', text: `Acknowledged by ${this.ackBy}` });
+    return true;
+  };
+
+  Session.prototype.inspect = function (id) {
+    if (this.inspected.has(id) || this.state !== 'running') return;
+    this.inspected.add(id);
+    this.timeline.push({ t: this.sim.t, kind: 'inspect', text: `Inspected ${this.sim.c[id].def.name}` });
+  };
+
+  Session.prototype.declare = function (component, fault) {
+    if (this.state !== 'running') return null;
+    const rc = this.sc.root_cause || { component: this.faultPlan[0].component, fault: this.faultPlan[0].fault };
+    const correct = rc.component === component && rc.fault === fault;
+    const c = this.sim.c[component];
+    const label = c ? `${S.TYPES[c.type].faults[fault] ? S.TYPES[c.type].faults[fault].label : fault} on ${c.def.name}` : fault;
+    this.declarations.push({ t: this.sim.t, component, fault, correct, label });
+    this.timeline.push({ t: this.sim.t, kind: 'declare', text: `Declared root cause: ${label}` });
+    return correct; // stored for the debrief; the UI does not reveal it during the drill
+  };
+
+  Session.prototype.requestAction = function (component, action, approver, confirmed) {
+    if (this.state !== 'running') return { ok: false, message: 'The drill has ended.' };
+    if (!approver || !String(approver).trim()) return { ok: false, message: 'An approver name is required.' };
+    if (!confirmed) return { ok: false, message: 'The approver must confirm the action.' };
+    const r = this.sim.applyAction(component, action);
+    if (!r.ok) return r;
+    const key = component + '.' + action;
+    const accepted = (this.sc.accepted_fixes || []).includes(key);
+    const risky = (this.sc.risky_actions || []).includes(key);
+    const cls = accepted ? 'accepted' : risky ? 'risky' : 'unnecessary';
+    this.actions.push({ t: this.sim.t, key, label: r.label, component, approver: approver.trim(), cls, message: r.message });
+    this.timeline.push({ t: this.sim.t, kind: 'action', text: `${r.label} on ${this.sim.c[component].def.name} (approved by ${approver.trim()}): ${r.message}` });
+    return r;
+  };
+
+  Session.prototype.visibleHints = function () {
+    if (this.mode !== 'practice') return [];
+    const mins = (this.sim.t - this.faultAt) / 60;
+    return (this.sc.hints || []).filter(h => mins >= (h.after_min || 0)).map(h => h.text);
+  };
+
+  Session.prototype.score = function () {
+    const sim = this.sim, min = x => x === null || x === undefined ? null : Math.round(x / 60);
+    const first = this.firstAlertAt();
+    const parts = [];
+    // 1. detection + acknowledgement
+    let ackPts = 0, mtta = null;
+    if (this.ackAt !== null) {
+      mtta = first === null ? 0 : Math.max(0, this.ackAt - first);
+      ackPts = mtta <= 300 ? 15 : mtta <= 600 ? 10 : mtta <= 1200 ? 5 : 2;
+    }
+    parts.push({ label: 'Acknowledged promptly', pts: ackPts, max: 15, note: this.ackAt === null ? 'Never acknowledged' : (first === null ? 'Acknowledged before any alert' : `MTTA ${min(mtta)} min after first real alert`) });
+    // 2. diagnosis
+    const firstCorrect = this.declarations.findIndex(d => d.correct);
+    const diagPts = firstCorrect === 0 ? 30 : firstCorrect === 1 ? 15 : firstCorrect > 1 ? 5 : 0;
+    parts.push({ label: 'Correct root cause', pts: diagPts, max: 30, note: !this.declarations.length ? 'No root cause declared' : firstCorrect < 0 ? 'Root cause not identified' : `Correct on attempt ${firstCorrect + 1}, ${min(this.declarations[firstCorrect].t - this.faultAt)} min after fault` });
+    // 3. fix
+    const fixed = !sim.activeFaults().length;
+    const usedFix = this.actions.some(a => a.cls === 'accepted');
+    const fixPts = fixed && usedFix ? 25 : usedFix ? 15 : 0;
+    parts.push({ label: 'Applied the right fix', pts: fixPts, max: 25, note: fixed && usedFix ? 'Fault resolved with an accepted action' : usedFix ? 'Right action taken, recovery still in progress' : 'Fault not fixed by an accepted action' });
+    // 4. business outcome
+    const tol = sim.bp.business.tolerance_trades;
+    let bizPts = 0, bizNote;
+    if (this.recoveredAt !== null) { bizPts = 20; bizNote = `Business flow normal at ${S.clockStr(this.recoveredAt)}, before the ${S.clockStr(sim.bp.cutoff)} cut-off`; }
+    else if (this.cutoffResult) {
+      const k = this.cutoffResult;
+      bizPts = k.trades <= tol ? 20 : k.trades <= tol * 3 ? 10 : 0;
+      bizNote = `${S.fmtInt(k.trades)} trades (${sim.bp.business.currency}${S.fmtInt(k.notional)} ${sim.bp.business.unit}) ${k.label.toLowerCase()} at cut-off`;
+    } else bizNote = 'Drill ended before recovery or cut-off';
+    parts.push({ label: 'Met the business cut-off', pts: bizPts, max: 20, note: bizNote });
+    // 5. safe operations
+    const risky = this.actions.filter(a => a.cls === 'risky').length, unnec = this.actions.filter(a => a.cls === 'unnecessary').length;
+    const safePts = Math.max(0, 10 - risky * 5 - unnec * 3);
+    parts.push({ label: 'Safe operations', pts: safePts, max: 10, note: !risky && !unnec ? 'No risky or unnecessary actions' : `${risky} risky, ${unnec} unnecessary action(s)` });
+    const total = parts.reduce((a, p) => a + p.pts, 0);
+    return {
+      total, parts, grade: total >= 85 ? 'Excellent' : total >= 65 ? 'Good' : total >= 40 ? 'Needs practice' : 'Not ready',
+      times: {
+        fault: this.faultAt, firstAlert: first, ack: this.ackAt,
+        detect: first === null ? null : min(first - this.faultAt), mtta: min(mtta),
+        diagnose: firstCorrect >= 0 ? min(this.declarations[firstCorrect].t - this.faultAt) : null,
+        recover: this.recoveredAt === null ? null : min(this.recoveredAt - this.faultAt),
+      },
+    };
+  };
+
+  Session.prototype.debrief = function () {
+    const sim = this.sim;
+    const hidden = sim.events.filter(e => e.kind === 'fault' || e.kind === 'fixed' || (e.kind === 'alert' && e.t >= this.faultAt - 60));
+    const all = [...this.timeline, ...hidden.map(e => ({ t: e.t, kind: e.kind, text: e.text }))].sort((a, b) => a.t - b.t);
+    const rc = this.sc.root_cause || { component: this.faultPlan[0].component, fault: this.faultPlan[0].fault };
+    const c = sim.c[rc.component];
+    return {
+      score: this.score(), timeline: all,
+      answer: { component: c.def.name, fault: S.TYPES[c.type].faults[rc.fault].label },
+      accepted: (this.sc.accepted_fixes || []).map(k => { const [cid, a] = k.split('.'); return `${S.TYPES[sim.c[cid].type].actions[a].label} on ${sim.c[cid].def.name}`; }),
+      notes: this.sc.debrief || {}, actions: this.actions, declarations: this.declarations,
+      inspected: [...this.inspected].map(id => sim.c[id].def.name),
+    };
+  };
+
+  const OpsDrill = { Session, validateDrill };
+  if (typeof module === 'object' && module.exports) module.exports = OpsDrill;
+  else root.OpsDrill = OpsDrill;
+})(typeof globalThis !== 'undefined' ? globalThis : this);
+
+</script>
+<script>
+/* OpsPilot Drill Simulator — user interface.
+ * The engine (engine.js) and drill rules (session.js) hold all logic; this file only draws
+ * state and turns clicks into calls on them. Static controls are built once per view; the
+ * live parts (clock, map, alerts, inspector) refresh on every tick so typing is never lost.
+ */
+(function () {
+  'use strict';
+  const S = window.OpsSim, D = window.OpsDrill, yaml = window.jsyaml, C = window.DRILL_CONTENT;
+  const $ = s => document.querySelector(s);
+  const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const store = { get(k, d) { try { const v = localStorage.getItem('opsdrill.' + k); return v === null ? d : v; } catch (e) { return d; } }, set(k, v) { try { localStorage.setItem('opsdrill.' + k, v); } catch (e) { /* storage unavailable */ } } };
+
+  const DRILLS = C.drills.map(t => yaml.load(t));
+  const DRILL_TEXT = Object.fromEntries(C.drills.map((t, i) => [DRILLS[i].id, t]));
+  const SIM_SECONDS_PER_REAL_SECOND = 10; // at 1× speed
+
+  const A = {
+    tab: 'drills', bpName: C.blueprints[C.default_blueprint] ? C.default_blueprint : Object.keys(C.blueprints)[0], bpText: '', bp: null, sim: null, session: null,
+    drillId: DRILLS[0].id, mode: store.get('mode', 'practice'), responder: store.get('responder', ''),
+    running: true, speed: 2, selected: null, approval: null, feed: [], acc: 0, debrief: null, errorsOnly: false,
+    bpMsg: null, layout: null,
+  };
+
+  // ------------------------------------------------------------ blueprint + sim lifecycle
+  function loadBlueprint(text) {
+    const r = S.parseBlueprint(text, yaml);
+    if (r.errors.length) return r.errors;
+    A.bpText = text; A.bp = r.blueprint; A.session = null; A.feed = []; A.approval = null; A.ended = false;
+    A.sim = new S.Simulator(A.bp, { seed: 7 });
+    A.layout = layout(A.bp);
+    A.selected = (A.bp.components.find(c => c.type === 'service') || A.bp.components[0]).id;
+    if (DRILL_COMPAT(A.drillId).length) { const ok = DRILLS.find(d => !DRILL_COMPAT(d.id).length); if (ok) A.drillId = ok.id; }
+    return [];
+  }
+  const DRILL_COMPAT = id => D.validateDrill(DRILLS.find(d => d.id === id), A.bp);
+
+  function startDrill() {
+    const drill = DRILLS.find(d => d.id === A.drillId);
+    if (!drill || DRILL_COMPAT(drill.id).length) return;
+    const seed = Math.floor(Math.random() * 1e9);
+    A.sim = new S.Simulator(A.bp, { seed });
+    A.session = new D.Session(A.sim, drill, { mode: A.mode, seed });
+    A.feed = []; A.approval = null; A.debrief = null; A.running = true; A.acc = 0; A.ended = false;
+    A.selected = (A.bp.components.find(c => c.type === 'service') || A.bp.components[0]).id;
+    A.tab = 'run'; renderAll();
+  }
+  function endDrill(reason) {
+    if (!A.session) return;
+    if (A.session.state === 'running') A.session.finish(reason || 'abandoned');
+    A.debriefReason = A.session.endReason;
+    A.debrief = A.session.debrief();
+    A.debrief.drill = A.session.drill; A.debrief.mode = A.session.mode;
+    A.session = null; A.running = false; A.approval = null; A.ended = true;
+    A.tab = 'debrief'; renderAll();
+    if (A.debriefReason !== 'abandoned') toast(A.debriefReason === 'recovered' ? 'Business flow recovered. Drill complete.' : 'Cut-off reached. Drill over.');
+  }
+  function resetSandbox() {
+    A.sim = new S.Simulator(A.bp, { seed: Math.floor(Math.random() * 1e9) });
+    A.session = null; A.feed = []; A.approval = null; A.running = true; A.acc = 0; A.ended = false; renderAll();
+  }
+
+  // ------------------------------------------------------------ the clock
+  setInterval(() => {
+    if (!A.running || !A.sim) return;
+    A.acc += 0.25 * SIM_SECONDS_PER_REAL_SECOND * A.speed;
+    while (A.acc >= 5) {
+      A.acc -= 5;
+      if (A.session) {
+        A.session.tick(5);
+        if (A.session.state !== 'running') { endDrill(A.session.endReason); return; }
+      } else A.sim.step(5);
+    }
+    updateLive();
+  }, 250);
+
+  // ------------------------------------------------------------ formatting
+  const money = n => `${A.bp.business.currency}${S.fmtInt(n)} ${A.bp.business.unit}`;
+  function fmtMetric(m, v) {
+    if (m.endsWith('_rate') && (m === 'reject_rate' || m === 'error_rate')) return v.toFixed(1) + '%';
+    if (m.endsWith('_rate')) return S.fmtInt(v) + '/min';
+    if (m === 'pool_pct') return v.toFixed(0) + '%';
+    if (m === 'staleness_min') return v.toFixed(0) + ' min';
+    if (m === 'latency_ms' || m === 'wait_ms') return S.fmtInt(v) + ' ms';
+    return S.fmtInt(v);
+  }
+  const shortName = (s, n) => s.length > n ? s.slice(0, n - 1) + '…' : s;
+  function keyMetric(id) {
+    const s = A.sim.c[id], m = k => A.sim.metric(id, k);
+    switch (s.type) {
+      case 'source': return `${S.fmtInt(m('out_rate'))}/min produced`;
+      case 'kafka_topic': return `lag ${S.fmtInt(m('lag'))}`;
+      case 'service': return `${S.fmtInt(m('out_rate'))}/min · ${m('instances')}/${s.configured} up${s.rejected >= 1 ? ' · ' + S.fmtInt(s.rejected) + ' rej' : ''}`;
+      case 'external_party': return `${S.fmtInt(m('out_rate'))}/min · ${S.fmtInt(m('backlog'))} waiting`;
+      case 'ref_data': return `loaded ${m('staleness_min').toFixed(0)} min ago`;
+      case 'database': return `pool ${m('pool_used')}/${s.def.pool_size}`;
+    }
+    return '';
+  }
+
+  // ------------------------------------------------------------ system map
+  function layout(bp) {
+    const colW = 214, boxW = 156, boxH = 78, depGap = 104;
+    const pos = {}; let y = 26, maxX = 0;
+    bp.chains.forEach(chain => {
+      chain.forEach((id, i) => { pos[id] = { x: 20 + i * colW, y }; maxX = Math.max(maxX, 20 + i * colW + boxW); });
+      const hasDeps = chain.some(id => (bp.byId[id].uses || []).length);
+      chain.forEach(id => {
+        const uses = (bp.byId[id].uses || []).filter(u => !pos[u]);
+        uses.forEach((u, j) => {
+          const x = Math.max(20, pos[id].x + (j - (uses.length - 1) / 2) * (boxW + 18));
+          pos[u] = { x, y: y + boxH + depGap - 40 }; maxX = Math.max(maxX, x + boxW);
+        });
+      });
+      y += boxH + (hasDeps ? depGap + boxH - 40 : 0) + 46;
+    });
+    return { pos, boxW, boxH, W: maxX + 20, H: y - 20 };
+  }
+  function drawMap() {
+    const L = A.layout, sim = A.sim, bp = A.bp, W = L.W, H = L.H, bw = L.boxW, bh = L.boxH;
+    let g = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="System map of ${esc(bp.system)}"><defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1 9 5 1 9" fill="none" stroke="currentColor" stroke-width="1.6" style="color:var(--muted)"/></marker></defs>`;
+    bp.chains.forEach(chain => chain.slice(0, -1).forEach((id, i) => {
+      const a = L.pos[id], b = L.pos[chain[i + 1]];
+      const y = a.y + bh / 2, down = sim.c[chain[i + 1]];
+      const rate = down.type === 'service' && sim.c[id].type === 'kafka_topic' ? sim.metric(down.def.id, 'in_rate') : sim.metric(chain[i + 1], 'in_rate');
+      g += `<path class="edge" d="M${a.x + bw} ${y} L${b.x - 2} ${y}" marker-end="url(#arr)"/><text class="edge-l" x="${(a.x + bw + b.x) / 2}" y="${y - 7}" text-anchor="middle">${S.fmtInt(rate)}/min</text>`;
+    }));
+    bp.components.forEach(c => (c.uses || []).forEach(u => {
+      const a = L.pos[c.id], b = L.pos[u]; if (!a || !b) return;
+      const ax = a.x + bw / 2, bx = b.x + bw / 2, my = (a.y + bh + b.y) / 2;
+      g += `<path class="edge dep" d="M${ax} ${a.y + bh} L${ax} ${my} L${bx} ${my} L${bx} ${b.y - 2}"/>`;
+    }));
+    bp.components.forEach(c => {
+      const p = L.pos[c.id]; if (!p) return;
+      const h = sim.health(c.id), s = sim.c[c.id];
+      g += `<g class="node ${h}${A.selected === c.id ? ' sel' : ''}" data-node="${c.id}" tabindex="0" role="button" aria-label="${esc(c.name)}, ${h}">`
+        + `<rect class="box" x="${p.x}" y="${p.y}" width="${bw}" height="${bh}" rx="7"/><rect class="bar" x="${p.x}" y="${p.y}" width="5" height="${bh}" rx="2"/>`
+        + `<text x="${p.x + 14}" y="${p.y + 21}" font-size="13.5" font-weight="600">${esc(shortName(c.name, 19))}</text>`
+        + `<text class="k" x="${p.x + 14}" y="${p.y + 37}">${esc(S.TYPES[c.type].label)}${c.type === 'kafka_topic' ? ' · ' + c.partitions + ' partitions' : ''}</text>`
+        + `<text class="m" x="${p.x + 14}" y="${p.y + 56}">${esc(keyMetric(c.id))}</text>`;
+      if (c.type === 'kafka_topic') {
+        const max = Math.max(150, ...s.parts), n = s.parts.length, pw = (bw - 28) / n;
+        s.parts.forEach((v, i) => {
+          const hh = Math.max(1, (v / max) * 12);
+          g += `<rect class="ptrack" x="${p.x + 14 + i * pw}" y="${p.y + 62}" width="${pw - 2}" height="12"/><rect class="pbar${v > max * 0.5 && v > 120 ? ' hot' : ''}" x="${p.x + 14 + i * pw}" y="${p.y + 74 - hh}" width="${pw - 2}" height="${hh}"/>`;
+        });
+      }
+      g += `</g>`;
+    });
+    return g + '</svg>';
+  }
+
+  // ------------------------------------------------------------ inspector
+  function spark(arr) {
+    const pts = arr.slice(-60); if (pts.length < 2) return '<svg viewBox="0 0 100 34"></svg>';
+    const max = Math.max(...pts), min = Math.min(...pts), rng = max - min || 1;
+    const xy = pts.map((v, i) => [i / (pts.length - 1) * 100, 31 - ((v - min) / rng) * 27]);
+    const line = xy.map(p => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ');
+    const last = xy[xy.length - 1];
+    return `<svg viewBox="0 0 100 34" preserveAspectRatio="none" aria-hidden="true"><polygon class="spark-a" points="0,34 ${line} 100,34"/><polyline class="spark-l" points="${line}" vector-effect="non-scaling-stroke"/><circle class="spark-d" cx="${last[0]}" cy="${last[1]}" r="2.2" vector-effect="non-scaling-stroke"/></svg>`;
+  }
+  function drawInspector() {
+    const id = A.selected, s = A.sim.c[id]; if (!s) return;
+    const h = A.sim.health(id);
+    $('#insTitle').innerHTML = `${esc(s.def.name)} <span class="pill ${h === 'ok' ? 'ok' : h}">${h === 'ok' ? 'healthy' : h === 'warn' ? 'degraded' : 'critical'}</span>`;
+    $('#insType').textContent = `${S.TYPES[s.type].label} · id ${id}${s.def.uses ? ' · uses ' + s.def.uses.join(', ') : ''}`;
+    const M = S.TYPES[s.type].metrics;
+    $('#tiles').innerHTML = Object.keys(M).map(m => `<div class="tile"><div class="label">${esc(M[m])}</div><div class="v">${fmtMetric(m, A.sim.metric(id, m))}</div>${spark(s.hist[m] || [])}</div>`).join('')
+      + (s.type === 'kafka_topic' ? `<div class="tile"><div class="label">Lag by partition</div><div class="mono small">${s.parts.map((v, i) => `p${i}: ${S.fmtInt(v)}`).join('<br>')}</div></div>` : '');
+    const term = $('#logs');
+    const near = term.scrollHeight - term.scrollTop - term.clientHeight < 40;
+    const logs = s.logs.filter(l => !A.errorsOnly || l.level !== 'INFO').slice(-150);
+    term.innerHTML = logs.length ? logs.map(l => `<span class="${l.level[0]}">${esc(l.line)}</span>`).join('\n') : '<span>No log lines yet.</span>';
+    if (near) term.scrollTop = term.scrollHeight;
+  }
+
+  // ------------------------------------------------------------ live updates (every tick)
+  function updateLive() {
+    const sim = A.sim; if (!sim) return;
+    $('#clock').textContent = sim.time(true);
+    const left = Math.round((A.bp.cutoff - sim.t) / 60);
+    $('#cutoff').textContent = left > 0 ? `Cut-off ${S.clockStr(A.bp.cutoff)} · ${left} min left` : `Cut-off ${S.clockStr(A.bp.cutoff)} passed`;
+    const risk = sim.cutoffRisk().atRisk;
+    $('#kpis').innerHTML = sim.kpis().map(k => {
+      const cls = k.trades > A.bp.business.tolerance_trades ? (k.cutoff && risk ? 'bad' : 'warn') : '';
+      return `<div class="kpi"><span class="label">${esc(k.label)}${k.cutoff ? ' (cut-off)' : ''}</span><span class="v ${cls}">${money(k.notional)}</span><span class="small muted mono">${S.fmtInt(k.trades)} trades</span></div>`;
+    }).join('');
+    const chip = $('#stateChip');
+    chip.className = 'state-chip' + (A.session ? ' live' : '');
+    chip.textContent = A.session ? `Drill: ${A.session.drill.title}` : A.ended ? 'Drill ended' : 'Sandbox';
+    $('#pauseBtn').disabled = !!A.ended;
+    $('#pauseBtn').textContent = A.running ? 'Pause' : 'Resume';
+    if (A.tab !== 'run') return;
+    $('#map').innerHTML = drawMap();
+    drawInspector();
+    const firing = sim.alerts.filter(a => a.status === 'FIRING').length;
+    $('#alertCount').textContent = firing ? `${firing} firing` : 'none firing';
+    $('#alerts').innerHTML = sim.alerts.length ? sim.alerts.slice().sort((a, b) => (a.status === 'FIRING' ? 0 : 1) - (b.status === 'FIRING' ? 0 : 1) || b.firedAt - a.firedAt).map(a =>
+      `<button class="alert${a.status === 'RESOLVED' ? ' resolved' : ''}" data-alert-on="${esc(a.on)}"><span class="pill ${a.severity === 'P1' ? 'bad' : a.severity === 'P2' ? 'warn' : 'mut'}">${a.severity}</span><span>${esc(a.name)}<br><span class="small muted">${esc(sim.c[a.on] ? sim.c[a.on].def.name : a.on)}${a.threshold ? ' · ' + esc(a.threshold) : ''}</span></span><span class="when">${S.clockStr(a.firedAt)}${a.status === 'RESOLVED' ? '<br>resolved' : ''}</span></button>`).join('')
+      : '<p class="small muted" style="margin:0">No alerts. Alert rules come from the blueprint.</p>';
+    if (A.session) {
+      const ss = A.session;
+      $('#ackStatus').textContent = ss.ackAt === null ? 'Not acknowledged' : `Acknowledged at ${S.clockStr(ss.ackAt)} by ${ss.ackBy}`;
+      $('#ackBtn').disabled = ss.ackAt !== null;
+      const hints = ss.visibleHints();
+      $('#hints').innerHTML = hints.map(h => `<div class="hint">${esc(h)}</div>`).join('');
+    }
+  }
+
+  // ------------------------------------------------------------ views
+  function renderAll() {
+    document.querySelectorAll('.tabs button').forEach(b => b.setAttribute('aria-selected', String(b.dataset.tab === A.tab)));
+    const v = { drills: viewDrills, run: viewRun, blueprint: viewBlueprint, debrief: viewDebrief }[A.tab];
+    $('#main').innerHTML = v();
+    wire();
+    updateLive();
+  }
+
+  function viewDrills() {
+    const sel = DRILLS.find(d => d.id === A.drillId);
+    return `<div class="stack">
+      <section class="panel stack">
+        <div><h2>Incident drills</h2><p class="muted" style="margin:4px 0 0;max-width:70ch">Pick a drill and start it. Faults are injected into the simulated <b>${esc(A.bp.system)}</b> without telling you what or where. Investigate, declare the root cause, request approved fixes, and get scored on speed, accuracy, safety and the business cut-off.</p></div>
+        <div class="setup">
+          <label class="field">Your name (shown on acknowledgements)<input type="text" id="responder" value="${esc(A.responder)}" placeholder="e.g. Priya, L2 Support" autocomplete="off"></label>
+          <label class="field">Mode<select id="mode"><option value="practice"${A.mode === 'practice' ? ' selected' : ''}>Practice: hints and feedback</option><option value="assessment"${A.mode === 'assessment' ? ' selected' : ''}>Assessment: no hints</option></select></label>
+          <label class="field">Speed<select id="speedSel">${[1, 2, 4, 8].map(x => `<option value="${x}"${A.speed === x ? ' selected' : ''}>${x}× (1 s = ${x * 10} s)</option>`).join('')}</select></label>
+          <button class="btn primary" id="startBtn" ${DRILL_COMPAT(A.drillId).length ? 'disabled' : ''}>Start “${esc(sel.title)}”</button>
+        </div>
+      </section>
+      <div class="lib">${DRILLS.map(d => {
+        const errs = DRILL_COMPAT(d.id);
+        return `<button class="card" data-drill="${d.id}" aria-pressed="${d.id === A.drillId}" ${errs.length ? 'disabled' : ''}>
+          <div class="row between"><span class="pill ${d.level === 'Easy' ? 'ok' : d.level === 'Medium' ? 'warn' : 'bad'}">${esc(d.level)}</span>${d.mystery ? '<span class="pill mut">random fault</span>' : ''}</div>
+          <h3>${esc(d.title)}</h3><span class="small muted">${esc(d.summary || '')}</span>
+          ${errs.length ? `<span class="small" style="color:var(--bad)">Not available on this blueprint: ${esc(errs[0])}</span>` : ''}</button>`;
+      }).join('')}</div>
+      <details class="panel"><summary class="label" style="cursor:pointer">Drill file: ${esc(sel.id)}.yaml</summary><p class="small muted">Drills are plain YAML files: faults, the correct root cause, accepted and risky actions, hints and the debrief. Adding a drill needs no code.</p><pre class="term" style="height:auto;max-height:420px">${esc(DRILL_TEXT[sel.id])}</pre></details>
+    </div>`;
+  }
+
+  function compOptions(filter) {
+    return A.bp.components.filter(filter).map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
+  }
+  function viewRun() {
+    const ss = A.session;
+    const side = ss ? `
+      <section class="panel stack"><div class="row between"><h2>Briefing</h2><span class="pill ${ss.mode === 'practice' ? 'info' : 'mut'}">${ss.mode}</span></div>
+        <p class="brief" style="margin:0">${esc(ss.drill.brief)}</p><div id="hints" class="stack" style="gap:6px"></div></section>
+      <section class="panel stack"><h2>Respond</h2>
+        <div class="row between"><span id="ackStatus" class="small muted"></span><button class="btn" id="ackBtn">Acknowledge</button></div>
+        <div class="stack" style="gap:6px"><span class="label">Declare root cause</span>
+          <div class="row"><select id="rcComp" aria-label="Component">${compOptions(c => Object.keys(S.TYPES[c.type].faults).length)}</select><select id="rcFault" aria-label="Fault"></select><button class="btn" id="rcBtn">Declare</button></div></div>
+        ${actionPicker()}
+        <div class="feed" id="feed">${feedHtml()}</div>
+        <button class="btn" id="endBtn">End drill and see debrief</button>
+      </section>` : `
+      <section class="panel stack"><h2>Sandbox</h2>
+        <p class="small muted" style="margin:0">${A.ended ? 'The drill has ended and the system is frozen at that moment. Inspect it, or reset to start a fresh sandbox.' : `Free play on <b>${esc(A.bp.system)}</b>. Break any component and watch the effect spread through the flow, or start a scored drill from the Drills tab.`}</p>
+        <div class="stack" style="gap:6px"><span class="label">Break something</span>
+          <div class="row"><select id="fxComp" aria-label="Component">${compOptions(c => Object.keys(S.TYPES[c.type].faults).length)}</select><select id="fxFault" aria-label="Fault"></select><button class="btn danger" id="fxBtn">Inject fault</button></div></div>
+        ${actionPicker()}
+        <div class="feed" id="feed">${feedHtml()}</div>
+        <button class="btn" id="resetBtn">Reset sandbox to healthy</button>
+      </section>`;
+    return `<div class="run">
+      <div class="stack">
+        <section class="panel stack"><div class="row between"><h2>${esc(A.bp.system)}</h2><span class="small muted">Click a component to inspect it. Dashed lines show what a service depends on.</span></div><div class="map" id="map"></div></section>
+        <section class="panel stack"><div class="row between"><div><h2 id="insTitle"></h2><span class="small muted" id="insType"></span></div></div>
+          <div class="tiles" id="tiles"></div>
+          <div class="row between"><span class="label">Logs</span><label class="small row" style="gap:6px"><input type="checkbox" id="errOnly" ${A.errorsOnly ? 'checked' : ''}> Warnings and errors only</label></div>
+          <div class="term" id="logs" tabindex="0" aria-label="Component logs"></div></section>
+      </div>
+      <div class="stack">${side}
+        <section class="panel stack"><div class="row between"><h2>Alerts</h2><span class="small muted" id="alertCount"></span></div><div class="alerts" id="alerts"></div></section>
+      </div></div>`;
+  }
+  function actionPicker() {
+    return `<div class="stack" style="gap:6px"><span class="label">Request an action</span>
+      <div class="row"><select id="acComp" aria-label="Component">${compOptions(c => Object.keys(S.TYPES[c.type].actions).length)}</select><select id="acAction" aria-label="Action"></select><button class="btn" id="acBtn">Request approval</button></div>
+      <div id="approval">${approvalHtml()}</div></div>`;
+  }
+  function approvalHtml() {
+    const ap = A.approval; if (!ap) return '';
+    const c = A.bp.byId[ap.comp], act = S.TYPES[c.type].actions[ap.action];
+    return `<div class="approve" role="group" aria-label="Approval">
+      <b>${esc(act.label)}</b><span class="small">on ${esc(c.name)}. This changes the system. It runs only with a named approver and confirmation, and is recorded.</span>
+      <label class="field">Approver<input type="text" id="apprName" placeholder="e.g. Rahul Mehta, Support Manager" autocomplete="off" value="${esc(ap.name || '')}"></label>
+      <label class="small row" style="gap:6px"><input type="checkbox" id="apprChk"> I confirm this action</label>
+      ${ap.error ? `<span class="err">${esc(ap.error)}</span>` : ''}
+      <div class="row"><button class="btn" id="apprCancel">Cancel</button><button class="btn danger" id="apprGo">Approve and run</button></div></div>`;
+  }
+  function feedHtml() {
+    return A.feed.slice(-12).reverse().map(f => `<div class="${f.cls || ''}"><span class="mono muted">${f.t}</span> ${esc(f.text)}</div>`).join('');
+  }
+  function pushFeed(text, cls) { A.feed.push({ t: A.sim.time(), text, cls }); const el = $('#feed'); if (el) el.innerHTML = feedHtml(); }
+
+  function viewBlueprint() {
+    const types = Object.entries(S.TYPES).map(([k, T]) => `<tr><td><code>${k}</code></td><td class="small">${T.required.map(r => `<code>${r}</code>`).join(' ')}${k === 'service' ? ' <span class="muted">(optional: <code>instances</code>, <code>uses</code>)</span>' : ''}${k === 'kafka_topic' ? ' <span class="muted">(optional: <code>consumer_group</code>)</span>' : ''}</td><td class="small">${Object.keys(T.metrics).map(m => `<code>${m}</code>`).join(' ')}</td><td class="small">${Object.values(T.faults).map(f => esc(f.label)).join('; ') || '—'}</td></tr>`).join('');
+    return `<div class="bp">
+      <section class="panel stack">
+        <div class="row between"><h2>Blueprint</h2><label class="row small" style="gap:6px">Start from<select id="preset">${Object.keys(C.blueprints).map(n => `<option value="${n}"${n === A.bpName ? ' selected' : ''}>${n}</option>`).join('')}</select></label></div>
+        <p class="small muted" style="margin:0">Describe the system as components, a flow and alert rules. Edit the YAML, then load it. ${A.session ? '<b>Loading ends the current drill.</b>' : ''}</p>
+        <textarea class="code" id="bpText" spellcheck="false" aria-label="Blueprint YAML">${esc(A.bpEditing != null ? A.bpEditing : A.bpText)}</textarea>
+        <div class="row"><button class="btn" id="bpCheck">Check</button><button class="btn primary" id="bpLoad">Load into simulator</button></div>
+        <div id="bpMsg">${A.bpMsg || ''}</div>
+      </section>
+      <section class="panel stack">
+        <h2>How a blueprint works</h2>
+        <p class="small" style="margin:0">Component <b>types</b> are built into the engine: they know how to behave, what to measure, how they fail and how they are fixed. A blueprint only says which components exist and how they connect, so a new system needs no code.</p>
+        <h3>Example: put Kafka between two systems</h3>
+        <pre class="term" style="height:auto">components:
+  - {id: oms, type: source, name: Order Management, rate_per_min: 300}
+  <span class="W">- {id: trades_topic, type: kafka_topic, name: trades.executed,
+     partitions: 6, consumer_group: tam-allocator}</span>
+  - {id: tam, type: service, name: Allocation Engine, capacity_per_min: 420}
+flow:
+  - oms <span class="W">-> trades_topic</span> -> tam</pre>
+        <p class="small muted" style="margin:0">With Kafka in between, a slow allocator no longer slows the OMS. The early signal becomes consumer lag, and a single stuck partition becomes possible. Compare the two presets.</p>
+        <h3>Component types</h3>
+        <div class="tablewrap"><table><thead><tr><th>Type</th><th>Settings</th><th>Metrics for alerts</th><th>Faults</th></tr></thead><tbody>${types}</tbody></table></div>
+        <p class="small muted" style="margin:0">Rules: a flow starts with a <code>source</code>; reference data and databases attach to a service with <code>uses</code>; alert rules use <code>above</code> or <code>below</code>; one business KPI can be marked <code>cutoff: true</code>.</p>
+      </section></div>`;
+  }
+
+  function viewDebrief() {
+    const d = A.debrief;
+    if (!d) return `<div class="panel empty">Finish a drill to see its debrief here.</div>`;
+    const sc = d.score, t = sc.times, n = d.notes || {};
+    const tm = (v, suf) => v === null || v === undefined ? '—' : v + (suf || ' min');
+    const reason = { recovered: 'Business flow recovered', cutoff: 'Cut-off reached', abandoned: 'Ended by responder' }[A.debriefReason || 'abandoned'];
+    return `<div class="stack">
+      <section class="panel score"><div><div class="big">${sc.total}</div><div class="label">of 100 · ${esc(sc.grade)}</div></div>
+        <div class="stack" style="gap:6px"><h2>${esc(d.drill.title)}</h2><span class="small muted">${esc(d.mode)} mode · ${esc(reason)}</span>
+          <div class="parts">${sc.parts.map(p => `<div class="part"><span>${esc(p.label)}</span><div class="track"><div class="fill" style="width:${p.pts / p.max * 100}%"></div></div><span class="mono">${p.pts}/${p.max}</span><span class="note">${esc(p.note)}</span></div>`).join('')}</div></div></section>
+      <div class="times">
+        <div class="panel"><div class="label">Fault started</div><div class="mono" style="font-size:18px">${S.clockStr(t.fault)}</div></div>
+        <div class="panel"><div class="label">Time to detect</div><div class="mono" style="font-size:18px">${tm(t.detect)}</div></div>
+        <div class="panel"><div class="label">Time to acknowledge</div><div class="mono" style="font-size:18px">${tm(t.mtta)}</div></div>
+        <div class="panel"><div class="label">Time to diagnose</div><div class="mono" style="font-size:18px">${tm(t.diagnose)}</div></div>
+        <div class="panel"><div class="label">Time to recover</div><div class="mono" style="font-size:18px">${tm(t.recover)}</div></div>
+      </div>
+      <div class="bp">
+        <section class="panel stack"><h2>What happened</h2>
+          <p style="margin:0"><b>Root cause:</b> ${esc(d.answer.fault)} on ${esc(d.answer.component)}.</p>
+          ${n.what_happened ? `<p style="margin:0">${esc(n.what_happened)}</p>` : ''}
+          ${n.key_signal ? `<p style="margin:0"><b>The signal to spot:</b> ${esc(n.key_signal)}</p>` : ''}
+          ${n.why_not_restart ? `<p style="margin:0"><b>Why not just restart:</b> ${esc(n.why_not_restart)}</p>` : ''}
+          <p style="margin:0"><b>Accepted fix:</b> ${esc(d.accepted.join(', then '))}.</p>
+          ${n.runbook ? `<h3>Runbook</h3><ol style="margin:0;padding-left:20px">${n.runbook.map(r => `<li>${esc(r)}</li>`).join('')}</ol>` : ''}
+          <h3>Your decisions</h3>
+          ${d.declarations.length ? `<ul style="margin:0;padding-left:20px">${d.declarations.map(x => `<li><span class="mono">${S.clockStr(x.t)}</span> Declared ${esc(x.label)} <span class="cls ${x.correct ? 'accepted' : 'risky'}">${x.correct ? 'correct' : 'incorrect'}</span></li>`).join('')}</ul>` : '<p class="small muted" style="margin:0">No root cause declared.</p>'}
+          ${d.actions.length ? `<ul style="margin:0;padding-left:20px">${d.actions.map(x => `<li><span class="mono">${S.clockStr(x.t)}</span> ${esc(x.label)} on ${esc(A.bp.byId[x.component] ? A.bp.byId[x.component].name : x.component)}, approved by ${esc(x.approver)} <span class="cls ${x.cls}">${x.cls}</span></li>`).join('')}</ul>` : '<p class="small muted" style="margin:0">No actions taken.</p>'}
+          <p class="small muted" style="margin:0">Inspected: ${d.inspected.length ? esc(d.inspected.join(', ')) : 'nothing'}.</p>
+        </section>
+        <section class="panel stack"><h2>Timeline</h2><ul class="tl">${d.timeline.map(e => `<li class="k-${e.kind}"><time>${S.clockStr(e.t)}</time><span>${esc(e.text)}</span></li>`).join('')}</ul></section>
+      </div>
+      <div class="row"><button class="btn primary" id="againBtn">Run this drill again</button><button class="btn" id="otherBtn">Choose another drill</button></div>
+    </div>`;
+  }
+
+  // ------------------------------------------------------------ events
+  function fillFaults(compSel, faultSel) {
+    const c = A.bp.byId[$(compSel).value]; if (!c) return;
+    $(faultSel).innerHTML = Object.entries(S.TYPES[c.type].faults).map(([k, f]) => `<option value="${k}">${esc(f.label)}</option>`).join('');
+  }
+  function fillActions() {
+    const c = A.bp.byId[$('#acComp').value]; if (!c) return;
+    $('#acAction').innerHTML = Object.entries(S.TYPES[c.type].actions).map(([k, a]) => `<option value="${k}">${esc(a.label)}</option>`).join('');
+  }
+  function wire() {
+    const on = (sel, ev, fn) => { const el = $(sel); if (el) el.addEventListener(ev, fn); };
+    // drills
+    document.querySelectorAll('[data-drill]').forEach(b => b.addEventListener('click', () => { A.drillId = b.dataset.drill; renderAll(); }));
+    on('#responder', 'input', e => { A.responder = e.target.value; store.set('responder', A.responder); });
+    on('#mode', 'change', e => { A.mode = e.target.value; store.set('mode', A.mode); });
+    on('#speedSel', 'change', e => { A.speed = +e.target.value; $('#speed').value = String(A.speed); });
+    on('#startBtn', 'click', startDrill);
+    // run
+    on('#map', 'click', e => { const n = e.target.closest('[data-node]'); if (n) select(n.dataset.node); });
+    on('#map', 'keydown', e => { const n = e.target.closest('[data-node]'); if (n && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); select(n.dataset.node); } });
+    on('#alerts', 'click', e => { const b = e.target.closest('[data-alert-on]'); if (b && A.sim.c[b.dataset.alertOn]) select(b.dataset.alertOn); });
+    on('#errOnly', 'change', e => { A.errorsOnly = e.target.checked; drawInspector(); });
+    if ($('#rcComp')) { fillFaults('#rcComp', '#rcFault'); on('#rcComp', 'change', () => fillFaults('#rcComp', '#rcFault')); }
+    if ($('#fxComp')) { fillFaults('#fxComp', '#fxFault'); on('#fxComp', 'change', () => fillFaults('#fxComp', '#fxFault')); }
+    if ($('#acComp')) { fillActions(); on('#acComp', 'change', fillActions); }
+    on('#ackBtn', 'click', () => { if (A.session.acknowledge(A.responder.trim() || 'Responder')) { pushFeed('Incident acknowledged'); updateLive(); } });
+    on('#rcBtn', 'click', () => {
+      const comp = $('#rcComp').value, fault = $('#rcFault').value, ss = A.session;
+      const ok = ss.declare(comp, fault);
+      const label = `${S.TYPES[A.bp.byId[comp].type].faults[fault].label} on ${A.bp.byId[comp].name}`;
+      if (ss.mode === 'practice') pushFeed(ok ? `Root cause confirmed: ${label}. Now fix it.` : `Declared ${label}. The evidence does not support this; keep looking.`, ok ? 'ok' : 'bad');
+      else pushFeed(`Root cause recorded: ${label}`);
+    });
+    on('#fxBtn', 'click', () => {
+      const comp = $('#fxComp').value, fault = $('#fxFault').value;
+      A.sim.injectFault(comp, fault); pushFeed(`Injected: ${S.TYPES[A.bp.byId[comp].type].faults[fault].label} on ${A.bp.byId[comp].name}`, 'bad'); updateLive();
+    });
+    on('#acBtn', 'click', () => { A.approval = { comp: $('#acComp').value, action: $('#acAction').value, name: '' }; $('#approval').innerHTML = approvalHtml(); wireApproval(); $('#apprName').focus(); });
+    wireApproval();
+    on('#endBtn', 'click', () => endDrill('abandoned'));
+    on('#resetBtn', 'click', resetSandbox);
+    // blueprint
+    on('#preset', 'change', e => { A.bpName = e.target.value; A.bpEditing = C.blueprints[A.bpName]; A.bpMsg = null; renderAll(); });
+    on('#bpText', 'input', e => { A.bpEditing = e.target.value; });
+    on('#bpCheck', 'click', () => {
+      const r = S.parseBlueprint($('#bpText').value, yaml);
+      A.bpMsg = r.errors.length ? `<ul class="errors">${r.errors.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : `<span class="okmsg">Valid: ${r.blueprint.components.length} components, ${r.blueprint.alerts.length} alert rules. Drills available: ${DRILLS.filter(d => !D.validateDrill(d, r.blueprint).length).length} of ${DRILLS.length}.</span>`;
+      $('#bpMsg').innerHTML = A.bpMsg;
+    });
+    on('#bpLoad', 'click', () => {
+      const text = $('#bpText').value, errs = loadBlueprint(text);
+      if (errs.length) { A.bpMsg = `<ul class="errors">${errs.map(x => `<li>${esc(x)}</li>`).join('')}</ul>`; $('#bpMsg').innerHTML = A.bpMsg; return; }
+      A.bpEditing = null; A.bpMsg = null; A.running = true; A.tab = 'run'; renderAll(); toast(`Loaded “${A.bp.system}”. Sandbox running.`);
+    });
+    // debrief
+    on('#againBtn', 'click', startDrill);
+    on('#otherBtn', 'click', () => { A.tab = 'drills'; renderAll(); });
+  }
+  function wireApproval() {
+    const go = $('#apprGo'); if (!go) return;
+    $('#apprCancel').addEventListener('click', () => { A.approval = null; $('#approval').innerHTML = ''; });
+    $('#apprName').addEventListener('input', e => { A.approval.name = e.target.value; });
+    go.addEventListener('click', () => {
+      const ap = A.approval, name = $('#apprName').value.trim(), ok = $('#apprChk').checked;
+      let r;
+      if (!name) r = { ok: false, message: 'Enter the approver’s name.' };
+      else if (!ok) r = { ok: false, message: 'Tick the confirmation box to approve.' };
+      else if (A.session) r = A.session.requestAction(ap.comp, ap.action, name, ok);
+      else r = A.sim.applyAction(ap.comp, ap.action);
+      if (!r.ok) { ap.error = r.message; ap.name = name; $('#approval').innerHTML = approvalHtml(); wireApproval(); return; }
+      A.approval = null; $('#approval').innerHTML = '';
+      pushFeed(`${r.label} (approved by ${name}): ${r.message}`, r.effect === 'fixed' ? 'ok' : '');
+      updateLive();
+    });
+  }
+  function select(id) { A.selected = id; if (A.session) A.session.inspect(id); updateLive(); }
+
+  let toastT;
+  function toast(t) { const el = $('#toast'); el.textContent = t; el.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => { el.hidden = true; }, 3200); }
+
+  // top-level controls
+  document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click', () => { A.tab = b.dataset.tab; renderAll(); }));
+  $('#pauseBtn').addEventListener('click', () => { A.running = !A.running; updateLive(); });
+  $('#speed').addEventListener('change', e => { A.speed = +e.target.value; const s = $('#speedSel'); if (s) s.value = String(A.speed); });
+
+  loadBlueprint(C.blueprints[A.bpName]);
+  renderAll();
+  window.__drillApp = A; // exposed for automated tests
+})();
+
+</script>
+
+</body>
+</html>

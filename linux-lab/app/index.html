@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpsPilot Lab · real Linux, safe commands</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{--paper:#EEF1F5;--panel:#fff;--ink:#172033;--muted:#5B6577;--line:#D8DEE7;--soft:#F6F8FB;--signal:#2F5BEA;--signal-soft:#E7EDFD;--ok:#1F8A5B;--ok-soft:#E3F3EB;--warn:#B86E00;--warn-soft:#FBF0DC;--bad:#C2303A;--bad-soft:#FBE5E7;--term:#121826;--term-ink:#D6DEEB;
+--font:"IBM Plex Sans",system-ui,sans-serif;--mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace}
+*{box-sizing:border-box} body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.5 var(--font)}
+button,input,select{font:inherit;color:inherit} button{cursor:pointer}
+:focus-visible{outline:2px solid var(--signal);outline-offset:2px}
+header{background:#18213A;color:#fff;padding:14px 22px;display:flex;flex-wrap:wrap;gap:12px;align-items:center}
+header b{font-size:18px} header span{color:#C9D2E3;font-size:13.5px}
+.real{background:var(--ok);color:#fff;font-size:12.5px;font-weight:600;padding:2px 10px;border-radius:12px}
+main{display:grid;grid-template-columns:260px minmax(0,1fr) minmax(0,1fr);gap:16px;padding:18px 22px;max-width:1500px;margin:0 auto}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px 16px;min-width:0}
+h2{font-size:16px;margin:0 0 4px} p.note{margin:0 0 12px;color:var(--muted);font-size:13px}
+.btn{border:1px solid var(--line);background:var(--panel);padding:6px 12px;border-radius:6px;font-size:14px;font-weight:500}
+.btn:hover{border-color:var(--signal)} .btn.primary{background:var(--signal);border-color:var(--signal);color:#fff}
+.btn.danger{background:var(--bad);border-color:var(--bad);color:#fff} .btn:disabled{opacity:.5;cursor:wait}
+.fault{display:block;width:100%;text-align:left;margin-bottom:8px;border-left:4px solid var(--bad)}
+.fault small{display:block;color:var(--muted);font-weight:400;font-size:12.5px}
+.check{display:flex;justify-content:space-between;gap:8px;align-items:center;padding:7px 0;border-bottom:1px solid var(--line);font-size:14px}
+.check code{font-family:var(--mono);font-size:13px;font-weight:500}
+.check small{display:block;color:var(--muted);font-size:12.5px}
+.check input{width:150px;font-family:var(--mono);font-size:12px;border:1px solid var(--line);border-radius:4px;padding:2px 5px;background:var(--soft)}
+.term{background:var(--term);color:var(--term-ink);font-family:var(--mono);font-size:12.5px;border-radius:8px;padding:12px;height:300px;overflow:auto;white-space:pre-wrap;word-break:break-word}
+.term .cmd{color:#8FB3FF} .term .rej{color:#FF8A92} .term .ok{color:#7EE0AE}
+.prompt{display:flex;gap:8px;margin-top:8px} .prompt input{flex:1;font-family:var(--mono);font-size:13px;border:1px solid var(--line);border-radius:6px;padding:7px 10px;background:var(--soft)}
+.find{border:1px solid var(--line);border-left:4px solid var(--warn);border-radius:6px;padding:10px 12px;margin:10px 0}
+.find.P1{border-left-color:var(--bad)}
+.find h3{margin:0 0 6px;font-size:15px}
+.pill{font-size:12px;font-weight:600;padding:1px 8px;border-radius:10px;background:var(--bad-soft);color:var(--bad)}
+.pill.P2,.pill.P3{background:var(--warn-soft);color:var(--warn)} .pill.okp{background:var(--ok-soft);color:var(--ok)}
+.k{font-size:12px;font-weight:700;letter-spacing:.3px;margin-top:6px} .k.f{color:var(--signal)} .k.i{color:var(--warn)} .k.r{color:var(--ok)}
+.find ul{margin:2px 0;padding-left:18px;font-size:14px} .find p{margin:2px 0;font-size:14px}
+.src{font-family:var(--mono);font-size:11.5px;color:var(--muted)}
+.summary{font-weight:500;margin:8px 0}
+table{width:100%;border-collapse:collapse;font-size:13px} th{text-align:left;color:var(--muted);font-weight:600;padding:5px 8px;border-bottom:1px solid var(--line)} td{padding:5px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+td.ev-rejected,td.ev-action_rejected{color:var(--bad);font-weight:600} td.ev-action_executed{color:var(--ok);font-weight:600} td.ev-fault_injected{color:var(--warn);font-weight:600}
+.full{grid-column:1/-1}
+.scrim{position:fixed;inset:0;background:rgba(10,16,30,.45);display:none;align-items:center;justify-content:center;padding:16px}
+.scrim.open{display:flex} .modal{background:var(--panel);border-radius:10px;max-width:480px;width:100%;padding:18px 20px}
+.modal input[type=text]{width:100%;border:1px solid var(--line);border-radius:6px;padding:7px 10px;margin:4px 0 10px;background:var(--soft)}
+.toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;padding:9px 16px;border-radius:8px;font-size:14px;opacity:0;transition:opacity .2s;pointer-events:none;max-width:90vw}
+.toast.show{opacity:1}
+@media (max-width:1100px){main{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header><b>OpsPilot Lab</b><span class="real">Real Linux</span><span>Commands below run for real inside a disposable lab machine. Only approved checks can run.</span></header>
+<main>
+  <section class="panel">
+    <h2>Break something</h2>
+    <p class="note">Lab-only chaos controls. They create real problems on this machine. OpsPilot cannot use them.</p>
+    <div id="faults"></div>
+    <button class="btn" style="width:100%;margin-top:6px" id="resetBtn">Reset lab to healthy</button>
+  </section>
+
+  <section class="panel">
+    <h2>Approved checks</h2>
+    <p class="note">Read-only checks from a fixed catalogue. Arguments are validated; commands run without a shell.</p>
+    <div id="checks"></div>
+    <h2 style="margin-top:14px">Terminal</h2>
+    <div class="term" id="term" aria-live="polite"></div>
+    <form class="prompt" id="typed"><input id="typedIn" placeholder="Try: df -h   or   rm -rf /" aria-label="Type a command" autocomplete="off"><button class="btn">Run</button></form>
+  </section>
+
+  <section class="panel">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><h2>Investigation</h2><button class="btn primary" id="invBtn">Investigate</button></div>
+    <p class="note">Runs the approved checks automatically and reports only what the outputs show. Fixes are proposed, never run without approval.</p>
+    <div id="inv"><p class="note">Break something on the left, then press Investigate.</p></div>
+  </section>
+
+  <section class="panel full">
+    <div style="display:flex;justify-content:space-between;align-items:center"><h2>Audit trail</h2><button class="btn" id="auditBtn">Refresh</button></div>
+    <div style="overflow:auto;max-height:360px"><table><thead><tr><th>Time</th><th>Event</th><th>Who</th><th>Detail</th></tr></thead><tbody id="audit"></tbody></table></div>
+  </section>
+</main>
+
+<div class="scrim" id="scrim"><div class="modal" role="dialog" aria-modal="true" id="modal"></div></div>
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+async function api(path, body){ const r=await fetch(path,{method:body===undefined?'GET':'POST',headers:{'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)}); const j=await r.json(); if(!r.ok) throw new Error(j.detail||'Request failed'); return j; }
+function toast(t){ const el=$('#toast'); el.textContent=t; el.classList.add('show'); clearTimeout(toast.t); toast.t=setTimeout(()=>el.classList.remove('show'),3200); }
+const FAULTS={disk_fill:['Fill the data disk','App can no longer save orders'],app_crash:['Crash the orders app','Kill its process'],cpu_spike:['Runaway CPU process','Busy loop for 3 minutes'],mem_leak:['Memory leak','A process grabs ~350 MB'],error_flood:['Error flood in logs','300 payment-gateway timeouts']};
+
+function term(cmd, out, ok){
+  const t=$('#term'); t.innerHTML += `<span class="cmd">$ ${esc(cmd)}</span>\n<span class="${ok===false?'rej':''}">${esc(out)}</span>\n\n`; t.scrollTop=t.scrollHeight;
+}
+async function runCheck(name){
+  const args={}; document.querySelectorAll(`[data-check="${name}"]`).forEach(i=>{ if(i.value) args[i.dataset.arg]=i.value; });
+  const r=await api('/api/check',{name,args}); term(r.command||name, r.output, r.ok); loadAudit();
+}
+async function load(){
+  const c=await api('/api/catalogue');
+  $('#faults').innerHTML=c.faults.map(f=>`<button class="btn fault" data-fault="${f}">${FAULTS[f][0]}<small>${FAULTS[f][1]}</small></button>`).join('');
+  document.querySelectorAll('[data-fault]').forEach(b=>b.onclick=async()=>{ b.disabled=true; try{ const r=await api('/api/fault/'+b.dataset.fault,{}); toast(r.message); term('# chaos: '+b.dataset.fault, r.message); } finally{ b.disabled=false; loadAudit(); } });
+  $('#checks').innerHTML=c.checks.map(k=>`<div class="check"><div><code>${k.name}</code><small>${esc(k.description)}</small></div><div style="display:flex;gap:6px;align-items:center">${k.params.map(p=>`<input data-check="${k.name}" data-arg="${p}" placeholder="${esc(k.defaults[p]||p)}" aria-label="${p}">`).join('')}<button class="btn" onclick="runCheck('${k.name}')">Run</button></div></div>`).join('');
+  loadAudit();
+}
+async function loadAudit(){
+  const a=await api('/api/audit');
+  $('#audit').innerHTML=a.length?a.map(e=>{ const {ts,event,actor,...rest}=e; return `<tr><td>${esc(ts)}</td><td class="ev-${esc(event)}">${esc(event.replace(/_/g,' '))}</td><td>${esc(actor||rest.approver||'')}</td><td>${esc(Object.entries(rest).map(([k,v])=>k+': '+(typeof v==='object'?JSON.stringify(v):v)).join(' · '))}</td></tr>`}).join(''):'<tr><td colspan="4" style="color:var(--muted)">Nothing yet.</td></tr>';
+}
+let lastInv=null;
+async function investigate(){
+  const b=$('#invBtn'); b.disabled=true; b.textContent='Investigating…';
+  try{
+    const r=await api('/api/investigate',{}); lastInv=r;
+    $('#inv').innerHTML=`<p class="summary">${r.healthy?'<span class="pill okp">App healthy</span>':'<span class="pill">App unhealthy</span>'} ${esc(r.summary)}</p>`+
+      r.findings.map((f,n)=>`<div class="find ${f.severity}"><h3><span class="pill ${f.severity}">${f.severity}</span> ${esc(f.title)}</h3>
+        <div class="k f">FACTS</div><ul>${f.facts.map(([src,t])=>`<li>${esc(t)} <span class="src">[${esc(src)}]</span></li>`).join('')}</ul>
+        <div class="k i">INFERENCE</div><p>${esc(f.inference)}</p>
+        <div class="k r">RECOMMENDATION</div><p>${esc(f.recommendation)}</p>
+        ${f.action?`<button class="btn danger" style="margin-top:8px" onclick="approve(${n})">Request approval: ${esc(f.action.name.replace(/_/g,' '))}</button>`:''}</div>`).join('')+
+      `<details style="margin-top:10px"><summary class="note" style="cursor:pointer">Raw evidence (${Object.keys(r.evidence).length} checks)</summary>${Object.entries(r.evidence).map(([k,v])=>`<div class="src" style="margin-top:8px">${esc(v.command||k)}</div><div class="term" style="height:auto;max-height:160px">${esc(v.output)}</div>`).join('')}</details>`;
+  } catch(e){ toast(e.message); }
+  b.disabled=false; b.textContent='Investigate'; loadAudit();
+}
+function approve(n){
+  const a=lastInv.findings[n].action;
+  $('#modal').innerHTML=`<h2>Approve action</h2><p><b>${esc(a.name.replace(/_/g,' '))}</b> ${a.args.pid?'(PID '+esc(a.args.pid)+')':''}</p><p class="note">This changes the lab machine. It runs only with your name and confirmation, and is audited.</p>
+   <label>Approver name<input type="text" id="apprName" placeholder="e.g. Rahul Mehta, Support Manager"></label>
+   <label style="display:flex;gap:8px;align-items:center;font-size:14px"><input type="checkbox" id="apprChk"> I confirm this action</label>
+   <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px"><button class="btn" id="apprCancel">Cancel</button><button class="btn danger" id="apprGo">Approve and run</button></div>`;
+  $('#scrim').classList.add('open');
+  $('#apprCancel').onclick=()=>$('#scrim').classList.remove('open');
+  $('#apprGo').onclick=async()=>{
+    try{ const r=await api('/api/action',{name:a.name,args:a.args,approver:$('#apprName').value,confirmed:$('#apprChk').checked}); toast(r.message); term('# approved action: '+a.name, r.message); $('#scrim').classList.remove('open'); setTimeout(investigate,2500); }
+    catch(e){ toast('Blocked: '+e.message); }
+    loadAudit();
+  };
+}
+$('#typed').onsubmit=async e=>{ e.preventDefault(); const v=$('#typedIn').value.trim(); if(!v) return; const r=await api('/api/typed',{text:v}); term(r.command||v, r.output, r.ok); $('#typedIn').value=''; loadAudit(); };
+$('#invBtn').onclick=investigate;
+$('#auditBtn').onclick=loadAudit;
+$('#resetBtn').onclick=async()=>{ const r=await api('/api/lab/reset',{}); toast(r.message); $('#inv').innerHTML='<p class="note">Lab is healthy. Break something, then press Investigate.</p>'; $('#term').innerHTML=''; loadAudit(); };
+term('# OpsPilot Lab ready', 'Run an approved check, or type a command. Free-form commands are rejected.');
+load();
+</script>
+</body>
+</html>

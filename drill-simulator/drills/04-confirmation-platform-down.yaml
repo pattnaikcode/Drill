@@ -1,0 +1,30 @@
+id: confirmation-platform-down
+title: Confirmations not matching
+level: Medium
+summary: Allocations are fine, yet nothing is getting affirmed. Decide what is in your control.
+brief: >
+  13:30. Normal afternoon flow. The 15:00 affirmation cut-off applies and client service has
+  three large institutional clients waiting for confirmations.
+faults:
+  - {at: "13:40", component: ctm, fault: unavailable}
+noise:
+  - {at: "13:43", name: "Disk usage 82% on report-01", severity: P4}
+root_cause: {component: ctm, fault: unavailable}
+accepted_fixes: [ctm.escalate_to_vendor]
+risky_actions: [tam.restart, ctm.restart_adapter]
+hints:
+  - {after_min: 3, text: "Follow the flow left to right. Where does the backlog start?"}
+  - {after_min: 7, text: "Is the failure inside our systems, or at the third party?"}
+debrief:
+  what_happened: >
+    The confirmation platform returned HTTP 503 for every call. Our allocations kept flowing,
+    so everything looked healthy until confirmations piled up.
+  key_signal: Unmatched confirmations growing with 100% failed calls, while internal components stay green.
+  why_not_restart: >
+    The fault was on the vendor's side. Restarting our adapter or the allocator only adds a
+    second outage. The right move is a fast, clear vendor escalation and client updates.
+  runbook:
+    - Confirm the error is coming from the vendor (HTTP 5xx), not our adapter.
+    - Raise a P1 with the vendor and record the reference.
+    - Inform client service about the confirmation delay.
+    - Monitor recovery and the cut-off projection.

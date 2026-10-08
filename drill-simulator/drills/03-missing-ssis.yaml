@@ -1,0 +1,28 @@
+id: missing-ssis
+title: Missing settlement instructions
+level: Medium
+summary: Some allocations are being rejected. The allocation engine itself looks healthy.
+brief: >
+  13:30. Allocations are flowing. The 15:00 affirmation cut-off applies. A handful of clients
+  have onboarded new accounts this week.
+faults:
+  - {at: "13:32", component: ssi, fault: feed_failed, params: {last_refresh_minutes_ago: 19}}
+root_cause: {component: ssi, fault: feed_failed}
+accepted_fixes: [ssi.force_refresh, tam.reprocess_rejected]
+risky_actions: [tam.restart]
+hints:
+  - {after_min: 3, text: "Rejects are not a capacity problem. What data does the allocator need for each account?"}
+  - {after_min: 8, text: "Check when the SSI reference data last loaded successfully."}
+  - {after_min: 12, text: "After fixing the data, the trades already rejected are still waiting in the exception queue."}
+debrief:
+  what_happened: >
+    The SSI feed job failed (vendor SFTP refused connections). Once the data was older than
+    20 minutes, allocations for recently changed accounts were rejected and parked in the
+    exception queue.
+  key_signal: Reject rate above 2% with normal throughput, plus SSI staleness growing and feed errors.
+  why_not_restart: Restarting the allocator changes nothing; it still reads the same stale SSI data.
+  runbook:
+    - Check the reject reason in the allocator log.
+    - Check reference data freshness and the feed job log.
+    - Re-run the feed from the secondary source with approval.
+    - Reprocess the exception queue, then confirm it is empty.

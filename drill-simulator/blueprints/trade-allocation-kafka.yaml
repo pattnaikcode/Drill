@@ -1,0 +1,74 @@
+# Middle-office trade allocation, with Kafka between the OMS and the allocation engine.
+# Edit this file (or the Blueprint tab in the app) to change the system being simulated.
+
+id: trade-allocation-kafka
+system: Middle-office trade allocation
+description: >
+  Executed fills flow from the OMS through a Kafka topic to the allocation engine,
+  which splits block trades across client accounts using SSI reference data,
+  then sends allocations to the confirmation platform and on to settlement.
+
+clock:
+  start: "13:30"
+  cutoff: "15:00"          # affirmation cut-off for today's trades
+
+business:
+  currency: "₹"
+  unit: "Cr"
+  avg_notional: 0.6        # ₹ Cr per trade, used to show impact in money
+  produced_at: oms
+  kpis:
+    - {label: "Unallocated", at: tam}
+    - {label: "Not yet affirmed", at: ctm, cutoff: true}
+
+components:
+  - id: oms
+    type: source
+    name: Order Management
+    rate_per_min: 300
+
+  - id: trades_topic
+    type: kafka_topic
+    name: trades.executed
+    partitions: 6
+    consumer_group: tam-allocator
+
+  - id: tam
+    type: service
+    name: Allocation Engine
+    capacity_per_min: 420
+    instances: 4
+    uses: [ssi, tam_db]
+
+  - id: ssi
+    type: ref_data
+    name: SSI Reference Data
+    refresh_every_min: 15
+    stale_after_min: 20
+
+  - id: tam_db
+    type: database
+    name: Allocation DB
+    pool_size: 50
+
+  - id: ctm
+    type: external_party
+    name: Confirmation Platform (CTM)
+    capacity_per_min: 520
+
+  - id: settle
+    type: external_party
+    name: Settlement (SWIFT)
+    capacity_per_min: 600
+
+flow:
+  - oms -> trades_topic -> tam -> ctm -> settle
+
+alerts:
+  - {name: "Kafka consumer lag high", on: trades_topic, metric: lag, above: 900, severity: P2}
+  - {name: "Partition lag high", on: trades_topic, metric: max_partition_lag, above: 300, severity: P2}
+  - {name: "Allocation throughput low", on: tam, metric: out_rate, below: 235, severity: P3}
+  - {name: "Allocation reject rate high", on: tam, metric: reject_rate, above: 2, severity: P2}
+  - {name: "DB connection pool saturated", on: tam_db, metric: pool_pct, above: 90, severity: P2}
+  - {name: "SSI data stale", on: ssi, metric: staleness_min, above: 25, severity: P3}
+  - {name: "Unmatched confirmations", on: ctm, metric: backlog, above: 900, severity: P2}

@@ -1,0 +1,29 @@
+id: allocations-falling-behind
+title: Allocations falling behind
+level: Easy
+summary: Allocations slow down mid-afternoon. Find out why before the affirmation cut-off.
+brief: >
+  13:30 on a busy trading day. You are the on-call support engineer for middle-office
+  allocations. The affirmation cut-off is 15:00. The ops desk has asked you to keep an eye
+  on today's flow.
+faults:
+  - {at: "13:36", component: tam, fault: instances_lost, params: {remaining: 2}}
+root_cause: {component: tam, fault: instances_lost}
+accepted_fixes: [tam.scale_out]
+risky_actions: [tam.restart]
+hints:
+  - {after_min: 3, text: "Which component's output dropped first? Compare what goes in with what comes out."}
+  - {after_min: 7, text: "Open the Allocation Engine and look at its healthy instance count and logs."}
+debrief:
+  what_happened: >
+    Two of the four Allocation Engine pods were evicted by node memory pressure. Throughput
+    halved to about 210 trades/min while 300/min kept arriving, so the backlog grew steadily.
+  key_signal: Throughput dropped while the input rate stayed flat; the logs show pods Pending.
+  why_not_restart: >
+    A rolling restart halves capacity even further for three minutes and does not bring
+    evicted pods back. The problem is node capacity, not the process.
+  runbook:
+    - Check the healthy instance count and pod status.
+    - Reschedule the instances on healthy nodes (scale out) with approval.
+    - Watch the backlog drain and confirm the cut-off projection.
+    - Raise a problem record for node memory pressure.
