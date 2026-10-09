@@ -1451,7 +1451,7 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
   const TYPE_HELP = {
     source: { label: 'Participant (sends work in)', ex: 'Broker, market maker, OMS, execution desk', text: 'Where work enters the system. Every flow starts with one. It sends orders or trades at a steady rate.' },
     service: { label: 'Service (processes work)', ex: 'Gateway, risk checks, matching engine, allocation engine', text: 'Takes work from what feeds it, processes up to its capacity, and passes the rest on. Can read from databases and reference data.' },
-    kafka_topic: { label: 'Kafka topic (buffers work)', ex: 'trades.executed, trades.matched', text: 'Sits between a producer and exactly one consuming service. Decouples them: a slow consumer shows up as lag, not as a slow producer.' },
+    kafka_topic: { label: 'Kafka topic (buffers work)', ex: 'trades.executed, trades.matched', text: 'Sits between producers and a consuming service. Decouples them: a slow consumer shows up as lag, not as a slow producer. Several consumers can share a topic with an "assign" map in the YAML.' },
     external_party: { label: 'External party (outside our control)', ex: 'Clearing corporation, CTM, SWIFT, market data vendors', text: 'Receives work from us. When it fails we can only escalate, so restarting our side does not help.' },
     database: { label: 'Database (used by a service)', ex: 'Order book store, allocation DB', text: 'Not in the flow. A service reads it through a connection pool; an exhausted pool slows that service down.' },
     ref_data: { label: 'Reference data (used by a service)', ex: 'Instrument master, SSI data', text: 'Not in the flow. Loaded on a schedule; if it goes stale, services that use it start rejecting work.' },
@@ -1469,6 +1469,8 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
       { k: 'uses', label: 'Reads from', kind: 'uses', help: 'Databases and reference data this service depends on.' },
       { k: 'rejects', label: 'Rejected work', kind: 'select', opts: [['', 'Held for reprocessing (default)'], ['return', 'Returned to the sender']], help: 'Exchange risk checks return rejects; middle office queues them.' },
       { k: 'role', label: 'Role on the diagram', kind: 'text', help: 'e.g. Exchange, Middle office' },
+      { k: 'host', label: 'Server name', kind: 'text', help: 'Optional. Components with the same server name share one host: a full disk or reboot hits all of them.' },
+      { k: 'mount', label: 'Data path', kind: 'text', help: 'Optional. Where the host keeps its data, e.g. /survdata/datanode/data; shown by df -h.' },
     ],
     kafka_topic: [
       { k: 'partitions', label: 'Partitions', kind: 'number', req: true, help: 'Work is spread evenly across partitions.' },
@@ -1477,14 +1479,19 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
     external_party: [
       { k: 'capacity_per_min', label: 'Capacity per minute', kind: 'number', req: true, help: 'How much it can accept per minute.' },
       { k: 'role', label: 'Role on the diagram', kind: 'text', help: 'e.g. Clearing corporation' },
+      { k: 'host', label: 'Server name', kind: 'text', help: 'Optional. Components with the same server name share one host: a full disk or reboot hits all of them.' },
     ],
     database: [
       { k: 'pool_size', label: 'Connection pool size', kind: 'number', req: true, help: 'Connections available to services.' },
       { k: 'big_table', label: 'Largest table', kind: 'text', help: 'Named in the long-running-query fault.' },
+      { k: 'engine', label: 'Database engine', kind: 'select', opts: [['', 'Oracle (default)'], ['postgres', 'Postgres']], help: 'Changes error messages, the data path and the SQL session view.' },
+      { k: 'host', label: 'Server name', kind: 'text', help: 'Optional. Components with the same server name share one host: a full disk or reboot hits all of them.' },
     ],
     ref_data: [
       { k: 'refresh_every_min', label: 'Loads every (minutes)', kind: 'number', req: true, help: 'How often the feed loads.' },
       { k: 'stale_after_min', label: 'Stale after (minutes)', kind: 'number', req: true, help: 'After this, services that use it reject work.' },
+      { k: 'stale_reject_share', label: 'Share rejected when stale', kind: 'number', help: 'Optional, 0 to 1. Default 0.08; use 0.9 when nothing can be processed without it.' },
+      { k: 'missing_msg', label: 'Error when data is missing', kind: 'text', help: 'Optional log line; {key} is replaced with an id.' },
     ],
     issuer: [
       { k: 'feeds', label: 'Publishes to', kind: 'feeds', req: true, help: 'The reference data component it updates.' },
@@ -1529,8 +1536,10 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
   }
   function inline(obj) {
     return '{' + Object.entries(obj).filter(([, v]) => v !== '' && v !== undefined && v !== null && !(Array.isArray(v) && !v.length))
-      .map(([k, v]) => `${k}: ${Array.isArray(v) ? '[' + v.map(q).join(', ') + ']' : q(v)}`).join(', ') + '}';
+      .map(([k, v]) => `${k}: ${Array.isArray(v) ? '[' + v.map(q).join(', ') + ']' : v && typeof v === 'object' ? inline(v) : q(v)}`).join(', ') + '}';
   }
+  const BASE_KEYS = ['id', 'type', 'name', 'role'];
+  function extraKeys(c) { return Object.keys(c).filter(k => !BASE_KEYS.includes(k) && !FIELDS[c.type].some(f => f.k === k) && c[k] !== undefined && c[k] !== ''); }
   function chains(edges) { // join a->b, b->c into a -> b -> c where nothing else branches
     const out = {}, inn = {};
     edges.forEach(([a, b]) => { (out[a] = out[a] || []).push(b); (inn[b] = inn[b] || []).push(a); });
@@ -1559,6 +1568,7 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
     B.comps.forEach(c => {
       const o = { id: c.id, type: c.type, ...(c.role ? { role: c.role } : {}), name: c.name };
       FIELDS[c.type].forEach(f => { if (f.k !== 'role' && c[f.k] !== undefined && c[f.k] !== '' && !(Array.isArray(c[f.k]) && !c[f.k].length)) o[f.k] = c[f.k]; });
+      extraKeys(c).forEach(k => { o[k] = c[k]; }); // settings the forms do not show are kept as they were
       L.push('  - ' + inline(o));
     });
     L.push('', '# Business flow: "a -> b" means everything a sends goes to b. A component can appear in several lines.', 'flow:');
@@ -1594,7 +1604,10 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
   function renameRefs(from, to) {
     if (!from || from === to) return;
     B.flows.forEach(e => { if (e[0] === from) e[0] = to; if (e[1] === from) e[1] = to; });
-    B.comps.forEach(c => { if (Array.isArray(c.uses)) c.uses = c.uses.map(u => u === from ? to : u); if (c.feeds === from) c.feeds = to; });
+    B.comps.forEach(c => {
+      if (Array.isArray(c.uses)) c.uses = c.uses.map(u => u === from ? to : u); if (c.feeds === from) c.feeds = to;
+      if (c.assign && c.assign[from]) { c.assign[to] = c.assign[from]; delete c.assign[from]; }
+    });
     B.kpis.forEach(k => { if (k.at === from) k.at = to; });
     B.alerts.forEach(a => { if (a.on === from) a.on = to; });
     B.groups.forEach(g => { g.ids = g.ids.map(i => i === from ? to : i); });
@@ -1633,7 +1646,8 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
         <label class="field" for="n-${i}"><span>Name <b class="req">required</b></span><input id="n-${i}" type="text" data-c="${i}" data-k="name" value="${esc(c.name)}" autocomplete="off"><span class="fhint">Shown on the map and in logs.</span></label>
         <label class="field" for="id-${i}"><span>Id <b class="req">required</b></span><input id="id-${i}" type="text" data-c="${i}" data-id="1" value="${esc(c.id)}" autocomplete="off" class="mono"><span class="fhint">Lowercase, digits, _. Used to connect things.</span></label>
         ${FIELDS[c.type].map(f => field(i, c, f)).join('')}
-      </div></div>`;
+      </div>
+      ${extraKeys(c).length ? `<p class="fhint" style="margin:0">Kept from your YAML (edit them there): ${extraKeys(c).map(k => `<code>${esc(k)}</code>`).join(' ')}</p>` : ''}</div>`;
   }
   function renderForms() {
     const m = B.meta;
