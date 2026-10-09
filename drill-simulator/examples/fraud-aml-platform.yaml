@@ -1,0 +1,74 @@
+# Real-time fraud and AML monitoring platform at a bank (illustrative model)
+#
+# A generic model of an enterprise financial-crime platform: payment channels send every
+# transaction as an event, a detection engine scores it in real time against the customer's
+# profile and sanctions / PEP watchlists, the decision goes back to the channel within the SLA,
+# and suspicious activity becomes alerts and cases, with reports filed to FIU-IND.
+# Names and numbers are a training model, not any vendor's actual design.
+
+id: fraud-aml
+system: Real-time fraud and AML monitoring
+description: >
+  Core banking, the card switch and the UPI switch send every transaction to an ingestion
+  gateway. Events are buffered on Kafka and scored in real time by the detection engine using the
+  customer profile store and sanctions/PEP watchlists. Allow/hold/decline decisions go back to the
+  channels; suspicious events go to alert and case management, and reportable cases to FIU-IND.
+
+clock: {start: "18:00", cutoff: "19:00", cutoff_label: Evening peak end}
+
+business:
+  currency: "₹"
+  unit: Cr
+  unit_name: transactions
+  avg_notional: 0.0005
+  kpis:
+    - {label: "Transactions waiting for a fraud decision", at: channel_responses, cutoff: true}
+    - {label: "Events not yet in case management", at: case_mgmt}
+
+components:
+  - {id: core_banking, type: source, role: Channel, name: Core Banking (CBS), session: CBS01, rate_per_min: 600}
+  - {id: card_switch, type: source, role: Channel, name: Card Switch, session: CARD01, rate_per_min: 900}
+  - {id: upi_switch, type: source, role: Channel, name: UPI Switch, session: UPI01, rate_per_min: 1500}
+  - {id: ingest_gw, type: service, role: Ingestion, name: Event Ingestion Gateway, capacity_per_min: 4200, instances: 3}
+  - {id: events_topic, type: kafka_topic, name: txn.events, partitions: 8, consumer_group: detection}
+  - {id: detection, type: service, role: Real-time scoring, name: Detection Engine, capacity_per_min: 4000, instances: 4, uses: [customer_db, watchlists]}
+  - {id: customer_db, type: database, name: Customer Profile Store, pool_size: 80, big_table: CUSTOMER_TXN_HIST}
+  - {id: watchlists, type: ref_data, name: Sanctions and PEP Watchlists, refresh_every_min: 15, stale_after_min: 30}
+  - {id: channel_responses, type: external_party, role: Channels, name: Channel Decision Responses, capacity_per_min: 4500}
+  - {id: case_mgmt, type: service, role: Alerts and cases, name: Case Management, capacity_per_min: 4200, instances: 2}
+  - {id: fiu, type: external_party, role: Regulator, name: FIU-IND Reporting, capacity_per_min: 4500}
+
+flow:
+  - core_banking -> ingest_gw
+  - card_switch -> ingest_gw
+  - upi_switch -> ingest_gw
+  - ingest_gw -> events_topic -> detection
+  - detection -> channel_responses
+  - detection -> case_mgmt -> fiu
+
+alerts:
+  - {name: "Channel feed disconnected", on: ingest_gw, metric: sessions_down, above: 0, severity: P1}
+  - {name: "Event stream lag", on: events_topic, metric: lag, above: 1500, severity: P2}
+  - {name: "Fraud decision latency above SLA", on: detection, metric: latency_ms, above: 400, severity: P1}
+  - {name: "Detection throughput low", on: detection, metric: out_rate, below: 2400, severity: P2}
+  - {name: "Customer profile store pool saturated", on: customer_db, metric: pool_pct, above: 90, severity: P2}
+  - {name: "Watchlists stale", on: watchlists, metric: staleness_min, above: 30, severity: P2}
+  - {name: "Case management backlog", on: case_mgmt, metric: backlog, above: 3000, severity: P3}
+  - {name: "FIU reporting failures", on: fiu, metric: error_rate, above: 5, severity: P2}
+
+diagram:
+  notes: >
+    Fraud decisions are real time: a slow detection engine delays every payment, not just reports.
+    AML and sanctions screening depend on fresh watchlists.
+  groups:
+    - {label: "Payment channels", ids: [core_banking, card_switch, upi_switch]}
+    - {label: "Financial crime platform", ids: [ingest_gw, events_topic, detection, case_mgmt]}
+  steps:
+    - {from: upi_switch, to: ingest_gw, text: "Every channel sends each transaction to the ingestion gateway as an event."}
+    - {from: ingest_gw, to: events_topic, text: "Events are buffered on Kafka so a slow detection engine shows as lag, not lost transactions."}
+    - {from: events_topic, to: detection, text: "The detection engine scores each event in real time with rules and models."}
+    - {from: detection, to: customer_db, text: "It compares the transaction with the customer's profile and history."}
+    - {from: detection, to: watchlists, text: "It screens parties against sanctions and PEP watchlists."}
+    - {from: detection, to: channel_responses, text: "Allow, hold or decline goes back to the channel within the SLA."}
+    - {from: detection, to: case_mgmt, text: "Suspicious events become alerts and cases for investigators."}
+    - {from: case_mgmt, to: fiu, text: "Reportable cases are filed with FIU-IND (STR/CTR)."}
