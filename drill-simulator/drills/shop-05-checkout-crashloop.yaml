@@ -1,0 +1,22 @@
+id: shop-checkout-crashloop
+title: Checkout keeps falling over during the sale
+systems: [online-shop]
+level: Medium
+summary: Festival sale traffic. Checkout works for a minute, then stops, then works again.
+brief: >
+  15:00. A big festival sale is running and traffic is three times a normal day.
+faults:
+  - {at: "15:06", component: checkout, fault: memory_oom}
+root_cause: {component: checkout, fault: memory_oom}
+accepted_fixes: [checkout.increase_memory_limit]
+risky_actions: [checkout.restart, checkout.scale_out]
+hints:
+  - {after_min: 2, text: "A regular up-and-down pattern means something keeps restarting. Check the pods."}
+debrief:
+  what_happened: Larger carts during the sale pushed checkout past its memory limit; it was OOMKilled and crash-looped.
+  key_signal: CrashLoopBackOff and OOMKilled (exit 137) in kubectl; Java heap errors in the log.
+  why_not_restart: More restarts or pods with the same limit die the same way.
+  runbook:
+    - Check pod status and the last termination reason.
+    - Raise the memory limit with approval and confirm the pods stay up.
+    - Problem record - load-test checkout at sale volumes before the sale.

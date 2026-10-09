@@ -1,0 +1,24 @@
+id: shop-app-release-poison
+title: Some paid orders never reach the warehouse
+systems: [online-shop]
+level: Medium
+summary: Since this afternoon's app release, a slice of paid orders is stuck before fulfilment.
+brief: >
+  15:00. A new Android app version with gift-wrap options was released at 14:30.
+faults:
+  - {at: "15:06", component: orders_topic, fault: poison_message, params: {partition: 2}}
+root_cause: {component: orders_topic, fault: poison_message}
+accepted_fixes: [orders_topic.skip_poison_message]
+risky_actions: [fulfilment.restart, orders_topic.purge_queue]
+hints:
+  - {after_min: 2, text: "Is the lag on every partition or one? Is the same offset failing repeatedly?"}
+debrief:
+  what_happened: >
+    An order from the new app version carried a field fulfilment could not read. Fulfilment retried
+    it forever, and every paid order behind it on partition 2 waited.
+  key_signal: Lag on one partition only and the same offset repeating in the fulfilment errors.
+  why_not_restart: The restarted consumer reads the same order again. Purging deletes paid orders.
+  runbook:
+    - Find the stuck partition and offset.
+    - Park the order to the dead-letter topic with approval and let the backlog drain.
+    - Fix that one order by hand and get the app team to handle the new field.

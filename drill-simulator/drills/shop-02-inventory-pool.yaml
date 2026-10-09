@@ -1,0 +1,27 @@
+id: shop-inventory-pool
+title: Checkout slows down for everyone
+systems: [online-shop]
+level: Medium
+summary: Every customer on every channel waits at checkout.
+brief: >
+  15:00. The warehouse team is running its quarterly stock reconciliation report today.
+faults:
+  - {at: "15:06", component: inventory_db, fault: pool_exhausted}
+root_cause: {component: inventory_db, fault: pool_exhausted}
+accepted_fixes: [inventory_db.kill_blocking_session]
+risky_actions: [checkout.restart, checkout.scale_out, inventory_db.increase_pool_size]
+hints:
+  - {after_min: 2, text: "Checkout has all its instances. What does it wait on for every order?"}
+  - {after_min: 5, text: "Who is holding the inventory database's connections?"}
+debrief:
+  what_happened: >
+    The stock reconciliation report ran a full scan on STOCK_MOVEMENTS and held almost every inventory
+    database connection. Checkout reserves stock on every order, so it waited for connections.
+  key_signal: Inventory DB pool at 100%, connection timeouts in the checkout log, and one long-running session.
+  why_not_restart: >
+    Restarting or adding checkout instances adds more waiters for the same exhausted pool. A bigger
+    pool fills up too while the report keeps running.
+  runbook:
+    - Check what checkout depends on.
+    - Find the session holding the connections and kill it with approval.
+    - Move reporting to a read replica.

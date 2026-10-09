@@ -1,0 +1,24 @@
+id: shop-payment-gateway-down
+title: Customers cannot pay
+systems: [online-shop]
+level: Easy
+summary: Carts reach payment, then fail. Everything on our side looks healthy.
+brief: >
+  15:00. Peak afternoon traffic.
+faults:
+  - {at: "15:06", component: payment_gw, fault: unavailable}
+root_cause: {component: payment_gw, fault: unavailable}
+accepted_fixes: [payment_gw.escalate_to_vendor]
+risky_actions: [payment_gw.restart_adapter, checkout.restart, payment_gw.purge_queue]
+hints:
+  - {after_min: 2, text: "Read the exact HTTP status the payment gateway returns."}
+debrief:
+  what_happened: The payment gateway provider had an outage; every call returned 503 Service Unavailable.
+  key_signal: 503 from the payment gateway with every internal service green.
+  why_not_restart: >
+    Restarting our adapter or checkout cannot fix the provider. Purging the queue drops orders
+    customers already submitted.
+  runbook:
+    - Confirm the failure is on the provider's side (503, their status page).
+    - Raise a P1 with the provider and post a status message for customers.
+    - If the business has a second gateway, discuss switching over with the business owner.

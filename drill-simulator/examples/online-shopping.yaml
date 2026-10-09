@@ -1,0 +1,79 @@
+# Online shopping platform (illustrative model)
+#
+# Customers shop on the website and the Android and iOS apps. Checkout prices every item from the
+# product catalogue, reserves stock, takes payment through a payment gateway, and publishes paid
+# orders to Kafka. Fulfilment sends them to the warehouse, which books shipments with the delivery
+# partner, and customers get order updates by SMS and email. Names and numbers are a training model.
+
+id: online-shop
+system: Online shopping platform
+description: >
+  The website and mobile apps call checkout through an API gateway. Checkout prices orders from the
+  product catalogue and reserves stock in the inventory database, then takes payment through the
+  payment gateway. Paid orders go onto Kafka; fulfilment sends them to the warehouse, which books
+  shipments with the delivery partner before the same-day dispatch cut-off, and notifies customers.
+
+clock: {start: "15:00", cutoff: "16:00", cutoff_label: Same-day dispatch cut-off}
+
+business:
+  currency: "₹"
+  unit: L
+  unit_name: orders
+  avg_notional: 0.015
+  kpis:
+    - {label: "Orders not yet paid", at: payment_gw}
+    - {label: "Orders not handed to delivery", at: courier, cutoff: true}
+
+components:
+  - {id: website, type: source, role: Customers, name: Website, session: WEB01, rate_per_min: 900}
+  - {id: android_app, type: source, role: Customers, name: Android App, session: AND01, rate_per_min: 1000}
+  - {id: ios_app, type: source, role: Customers, name: iOS App, session: IOS01, rate_per_min: 600}
+  - {id: api_gw, type: service, role: API gateway, name: API Gateway, capacity_per_min: 3500, instances: 3}
+  - {id: checkout, type: service, role: Cart and checkout, name: Checkout Service, capacity_per_min: 3400, instances: 4, uses: [catalog, inventory_db], rejects: return}
+  - {id: catalog, type: ref_data, name: Product Catalogue and Prices, refresh_every_min: 15, stale_after_min: 30, stale_reject_share: 0.12,
+     missing_msg: "No current price for SKU {key}: checkout rejected, customer sees an error"}
+  - {id: inventory_db, type: database, name: Inventory DB, pool_size: 80, big_table: STOCK_MOVEMENTS}
+  - {id: payment_gw, type: external_party, role: Payments, name: Payment Gateway (cards and UPI), capacity_per_min: 3500}
+  - {id: orders_topic, type: kafka_topic, name: orders.paid, partitions: 6, consumer_group: fulfilment}
+  - {id: fulfilment, type: service, role: Fulfilment, name: Fulfilment Service, capacity_per_min: 3400, instances: 3}
+  - {id: wms, type: service, role: Warehouse, name: Warehouse Management, capacity_per_min: 3400, instances: 2}
+  - {id: courier, type: external_party, role: Delivery partner, name: Delivery Partner API, capacity_per_min: 3500}
+  - {id: notify, type: external_party, role: Notifications, name: SMS and Email Provider, capacity_per_min: 3500}
+
+flow:
+  - website -> api_gw
+  - android_app -> api_gw
+  - ios_app -> api_gw
+  - api_gw -> checkout -> payment_gw -> orders_topic -> fulfilment -> wms -> courier
+  - fulfilment -> notify
+
+alerts:
+  - {name: "App or website traffic stopped", on: api_gw, metric: sessions_down, above: 0, severity: P1}
+  - {name: "API gateway errors", on: api_gw, metric: error_rate, above: 2, severity: P2}
+  - {name: "Checkout failures high", on: checkout, metric: reject_rate, above: 2, severity: P1}
+  - {name: "Checkout slow", on: checkout, metric: latency_ms, above: 500, severity: P2}
+  - {name: "Inventory DB pool saturated", on: inventory_db, metric: pool_pct, above: 90, severity: P2}
+  - {name: "Prices stale", on: catalog, metric: staleness_min, above: 30, severity: P3}
+  - {name: "Payment failures", on: payment_gw, metric: error_rate, above: 5, severity: P1}
+  - {name: "Paid orders waiting for fulfilment", on: orders_topic, metric: lag, above: 1500, severity: P2}
+  - {name: "Shipments not booked", on: courier, metric: backlog, above: 2000, severity: P2}
+  - {name: "Customer notifications failing", on: notify, metric: error_rate, above: 5, severity: P3}
+
+diagram:
+  notes: >
+    Pricing and stock are checked at every checkout, so a slow inventory database slows every
+    customer. Paid orders are buffered on Kafka, so a fulfilment problem shows as lag, not lost orders.
+  groups:
+    - {label: "Customers", ids: [website, android_app, ios_app]}
+    - {label: "Checkout", ids: [api_gw, checkout]}
+    - {label: "Fulfilment", ids: [orders_topic, fulfilment, wms]}
+  steps:
+    - {from: android_app, to: api_gw, text: "Customers check out on the website or the apps, through the API gateway."}
+    - {from: api_gw, to: checkout, text: "Checkout validates the cart."}
+    - {from: checkout, to: catalog, text: "It prices every item from the product catalogue."}
+    - {from: checkout, to: inventory_db, text: "It reserves stock in the inventory database."}
+    - {from: checkout, to: payment_gw, text: "The customer pays by card or UPI through the payment gateway."}
+    - {from: payment_gw, to: orders_topic, text: "Paid orders are published to Kafka."}
+    - {from: fulfilment, to: wms, text: "Fulfilment sends each order to a warehouse to pick and pack."}
+    - {from: wms, to: courier, text: "The warehouse books the shipment with the delivery partner before the dispatch cut-off."}
+    - {from: fulfilment, to: notify, text: "Customers get order confirmations by SMS and email."}

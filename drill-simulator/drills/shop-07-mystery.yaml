@@ -1,0 +1,41 @@
+id: shop-mystery
+title: Mystery incident on the shopping platform
+systems: [online-shop]
+level: Hard
+summary: One of six real faults, chosen at random. No hints.
+mystery: true
+brief: >
+  15:00, peak afternoon. Something will go wrong before the 16:00 dispatch cut-off.
+noise:
+  - {at: "15:10", name: "Disk usage 82% on search-node-3", severity: P4}
+pool:
+  - faults: [{at: "15:07", component: catalog, fault: feed_failed, params: {last_refresh_minutes_ago: 26}}]
+    root_cause: {component: catalog, fault: feed_failed}
+    accepted_fixes: [catalog.force_refresh]
+    risky_actions: [checkout.restart]
+    debrief: {what_happened: "The catalogue load failed; sale prices were missing.", key_signal: "No current price for SKU in checkout."}
+  - faults: [{at: "15:07", component: inventory_db, fault: pool_exhausted}]
+    root_cause: {component: inventory_db, fault: pool_exhausted}
+    accepted_fixes: [inventory_db.kill_blocking_session]
+    risky_actions: [checkout.restart]
+    debrief: {what_happened: "A report held the inventory DB's connections.", key_signal: "Pool at 100%; checkout slow."}
+  - faults: [{at: "15:07", component: payment_gw, fault: unavailable}]
+    root_cause: {component: payment_gw, fault: unavailable}
+    accepted_fixes: [payment_gw.escalate_to_vendor]
+    risky_actions: [payment_gw.restart_adapter]
+    debrief: {what_happened: "The payment provider was down.", key_signal: "503 from the gateway."}
+  - faults: [{at: "15:07", component: courier, fault: api_auth_expired}]
+    root_cause: {component: courier, fault: api_auth_expired}
+    accepted_fixes: [courier.rotate_api_credentials]
+    risky_actions: [courier.restart_adapter]
+    debrief: {what_happened: "Our delivery partner API secret expired.", key_signal: "401 Unauthorized."}
+  - faults: [{at: "15:07", component: checkout, fault: memory_oom}]
+    root_cause: {component: checkout, fault: memory_oom}
+    accepted_fixes: [checkout.increase_memory_limit]
+    risky_actions: [checkout.restart]
+    debrief: {what_happened: "Checkout ran out of memory and crash-looped.", key_signal: "OOMKilled, exit 137."}
+  - faults: [{at: "15:07", component: orders_topic, fault: poison_message, params: {partition: 4}}]
+    root_cause: {component: orders_topic, fault: poison_message}
+    accepted_fixes: [orders_topic.skip_poison_message]
+    risky_actions: [fulfilment.restart]
+    debrief: {what_happened: "An unreadable order blocked a partition.", key_signal: "Lag on one partition; repeating offset."}

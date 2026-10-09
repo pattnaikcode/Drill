@@ -1,0 +1,22 @@
+id: shop-courier-unauthorised
+title: Paid orders are not getting shipped
+systems: [online-shop]
+level: Easy
+summary: Orders and payments are fine. Shipments are not being booked before the dispatch cut-off.
+brief: >
+  15:00. The delivery partner emailed last month about rotating API credentials.
+faults:
+  - {at: "15:06", component: courier, fault: api_auth_expired}
+root_cause: {component: courier, fault: api_auth_expired}
+accepted_fixes: [courier.rotate_api_credentials]
+risky_actions: [courier.restart_adapter, wms.restart]
+hints:
+  - {after_min: 2, text: "What HTTP status does the delivery partner's API return?"}
+debrief:
+  what_happened: Our client secret for the delivery partner's API expired at midnight; every booking came back 401.
+  key_signal: 401 Unauthorized with "client secret expired" in the delivery adapter log; warehouse healthy.
+  why_not_restart: The adapter reloads the same expired secret.
+  runbook:
+    - Read the status code: 401 is our credentials, not their outage.
+    - Rotate the client secret from the vault with approval.
+    - Confirm the backlog of shipments is booked before the dispatch cut-off.

@@ -22,6 +22,8 @@ Both are static files, so the split keeps answers off the participant's screen b
 
 **Example system to build yourself:** `examples/fraud-aml-platform.yaml` is a bank's real-time fraud and AML monitoring platform (core banking, card switch and UPI switch → ingestion gateway → Kafka → detection engine using a customer profile store and sanctions/PEP watchlists → decisions back to channels, case management, FIU-IND reporting). It is not built in: paste it into the instructor page's Design tab, or rebuild it in the System Builder, and its seven use cases appear as soon as it is saved: payments slow down across every channel (profile store pool exhausted), sanctions screening on yesterday's list (stale watchlists), UPI stops reaching screening, detection engine crash loop, some transactions never scored (poison message), FIU-IND reports failing (HTTP 401), and a mystery. Five AML use cases sit alongside them: high-risk customers look low-risk (KYC risk ratings failed to load), AML alerts pile up unreviewed (case management lost an instance), monthly reports crawl to FIU-IND (HTTP 429 on deadline day), cases created slowly after a quiet configuration change, and an AML mystery.
 
+**Second example to build yourself:** `examples/online-shopping.yaml` is an online shopping platform (website, Android and iOS apps → API gateway → checkout using the product catalogue and inventory database → payment gateway → Kafka → fulfilment → warehouse → delivery partner, plus SMS and email notifications). Seven use cases appear once it is saved: flash sale items fail at checkout (catalogue load failed), checkout slows for everyone (inventory DB pool), customers cannot pay (gateway outage), paid orders not shipped (delivery partner HTTP 401), checkout crash loop in a sale, orders stuck after an app release (poison message), and a mystery.
+
 Every system has a **flow diagram** with groups (who owns what) and numbered steps describing the business flow. Participants see it before they start and can open it at any time during a drill.
 
 ## How a drill works
@@ -186,7 +188,7 @@ debrief:
 | `src/builder.js`, `src/builder.template.html` | System Builder: forms that write and validate blueprint YAML. |
 | `src/style.css`, `src/index.template.html` | Page design and layout. |
 | `build.py` | Bundles everything, including the YAML files, into `dist/index.html` (participant page), `dist/admin.html` (instructor page) and `dist/builder.html` (System Builder). |
-| `tests/drills.test.js` | 193 automated tests (Node's built-in runner). |
+| `tests/drills.test.js` | 223 automated tests (Node's built-in runner). |
 | `vendor/js-yaml.min.js` | YAML parser (MIT licence, see `vendor/js-yaml.LICENSE`). |
 
 ## Develop

@@ -1,0 +1,29 @@
+id: shop-flash-sale-prices
+title: Flash sale items fail at checkout
+systems: [online-shop]
+level: Medium
+summary: The sale went live at 15:00. Some customers get an error at checkout; most orders go through.
+brief: >
+  15:00. A flash sale with new prices on 2,000 products has just started. Marketing reports
+  customers posting screenshots of checkout errors.
+faults:
+  - {at: "15:05", component: catalog, fault: feed_failed, params: {last_refresh_minutes_ago: 26}}
+root_cause: {component: catalog, fault: feed_failed}
+accepted_fixes: [catalog.force_refresh]
+risky_actions: [checkout.restart, api_gw.restart, checkout.scale_out]
+hints:
+  - {after_min: 2, text: "Checkout is fast and has all its instances. Why does it reject some carts?"}
+  - {after_min: 4, text: "When did the product catalogue last load?"}
+debrief:
+  what_happened: >
+    The catalogue load with the flash sale prices failed (the feed's SFTP refused connections), so
+    checkout had no current price for the sale items and rejected those carts.
+  key_signal: >
+    "No current price for SKU ..." in the checkout log, checkout failures above 2%, and a catalogue
+    load that failed. Capacity and latency are normal.
+  why_not_restart: Restarting or scaling checkout keeps the same stale catalogue. The data is the problem, not the service.
+  runbook:
+    - When failures are partial and capacity is fine, look at the data being used.
+    - Check the catalogue load log.
+    - Re-run the load from the secondary source with approval.
+    - Tell marketing which window was affected; customers who saw errors may need a coupon.
