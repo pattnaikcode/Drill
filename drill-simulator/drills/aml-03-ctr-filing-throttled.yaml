@@ -1,0 +1,29 @@
+id: aml-ctr-filing-throttled
+title: Monthly reports crawl to FIU-IND
+systems: [fraud-aml]
+level: Medium
+summary: Filing deadline day. Some reports go through, most are refused.
+brief: >
+  18:00. Today is the deadline for the monthly cash transaction reports to FIU-IND. Every bank is
+  filing at the same time.
+faults:
+  - {at: "18:06", component: fiu, fault: api_rate_limited, params: {quota_per_min: 1500}}
+root_cause: {component: fiu, fault: api_rate_limited}
+accepted_fixes: [fiu.enable_retry_backoff]
+risky_actions: [fiu.restart_adapter, case_mgmt.scale_out, fiu.purge_queue]
+hints:
+  - {after_min: 2, text: "Some filings succeed. What HTTP status do the others get?"}
+  - {after_min: 4, text: "What does our adapter do when it is told to slow down? Check its retry policy."}
+debrief:
+  what_happened: >
+    The reporting gateway answered with 429 Too Many Requests during the filing rush. Our adapter
+    retried throttled calls immediately, so most of its quota went on retries and the queue grew.
+  key_signal: 429 with Retry-After in the FIU adapter log and retry-policy immediate in its configuration.
+  why_not_restart: >
+    A restart replays the whole queue at full speed and is throttled harder. Purging the queue means
+    reports are not filed: a compliance breach.
+  runbook:
+    - Tell "they are down" (5xx) from "we are too fast" (429).
+    - Switch the adapter to exponential back-off with approval.
+    - Track the remaining filings against the deadline and warn the compliance officer early.
+    - Problem record - file earlier in the month and respect Retry-After.

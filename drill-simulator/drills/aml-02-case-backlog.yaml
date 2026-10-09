@@ -1,0 +1,28 @@
+id: aml-case-backlog
+title: AML alerts pile up unreviewed
+systems: [fraud-aml]
+level: Medium
+summary: Detection is producing alerts normally. Investigators cannot keep up because case management has slowed.
+brief: >
+  18:00. Month-end. The AML operations team must review every alert within its service level,
+  and anything suspicious feeds the STR filed with FIU-IND.
+faults:
+  - {at: "18:06", component: case_mgmt, fault: instances_lost, params: {remaining: 1}}
+root_cause: {component: case_mgmt, fault: instances_lost}
+accepted_fixes: [case_mgmt.scale_out]
+risky_actions: [case_mgmt.purge_queue, case_mgmt.restart, detection.restart]
+hints:
+  - {after_min: 2, text: "Detection is fine. Where is the backlog building, and how many case management instances are running?"}
+debrief:
+  what_happened: >
+    One of the two case management pods was evicted because its node ran out of memory, and could not
+    be rescheduled. With half the capacity, AML alerts queued faster than they could be created as cases.
+  key_signal: Case management backlog alert with 1 of 2 instances ready and a Pending pod.
+  why_not_restart: >
+    Restarting the remaining instance halves capacity again for several minutes. Purging the queue
+    deletes AML alerts that must be reviewed: never acceptable.
+  runbook:
+    - Find where the backlog is building.
+    - Check instances and why a pod is Pending.
+    - Reschedule onto healthy nodes with approval and watch the backlog drain.
+    - Tell AML operations how many alerts were delayed and by how long.

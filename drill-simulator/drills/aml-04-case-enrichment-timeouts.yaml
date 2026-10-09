@@ -1,0 +1,31 @@
+id: aml-case-enrichment-timeouts
+title: Cases are created slowly after a quiet change
+systems: [fraud-aml]
+level: Medium
+summary: Case management is up with all instances, but it processes a fraction of its usual volume.
+brief: >
+  18:00. The change calendar shows no deployments today. The KYC team moved their customer lookup
+  API to a new load balancer yesterday.
+faults:
+  - {at: "18:06", component: case_mgmt, fault: config_change, params: {api: kyc-lookup-api, timeout_ms: 50}}
+root_cause: {component: case_mgmt, fault: config_change}
+accepted_fixes: [case_mgmt.revert_config]
+risky_actions: [case_mgmt.restart, case_mgmt.rollback_deployment, case_mgmt.scale_out]
+hints:
+  - {after_min: 2, text: "All instances are up. What do the case management errors say?"}
+  - {after_min: 5, text: "Where did a 50 ms timeout come from? Look just before the errors started."}
+debrief:
+  what_happened: >
+    While case management enriches each AML alert with customer details, it calls the KYC lookup API.
+    A configuration refresh set that call's timeout to 50 ms, so most lookups timed out and cases
+    were created at a fraction of the normal rate.
+  key_signal: >
+    SocketTimeoutException after 50ms calling kyc-lookup-api, and the config-server refresh line
+    just before. "No deployment" is not "no change".
+  why_not_restart: >
+    A restart reads the same configuration; rolling back a deployment does nothing because there was
+    none; more instances time out the same way.
+  runbook:
+    - Find the first error and what changed just before it, including configuration.
+    - Compare the running timeout with the known-good value.
+    - Revert the configuration change with approval and confirm cases are created normally.

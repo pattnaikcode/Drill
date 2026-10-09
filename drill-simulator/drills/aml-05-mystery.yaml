@@ -1,0 +1,40 @@
+id: aml-mystery
+title: Mystery incident in AML operations
+systems: [fraud-aml]
+level: Hard
+summary: One of six AML-side faults, chosen at random. No hints.
+mystery: true
+brief: >
+  18:00, month-end. The AML team reports something is off with alerts or filings today. You do not
+  know what or where.
+pool:
+  - faults: [{at: "18:07", component: kyc_ratings, fault: feed_failed, params: {last_refresh_minutes_ago: 42}}]
+    root_cause: {component: kyc_ratings, fault: feed_failed}
+    accepted_fixes: [kyc_ratings.force_refresh, detection.reprocess_rejected]
+    risky_actions: [detection.restart]
+    debrief: {what_happened: "KYC risk ratings failed to load; events were parked.", key_signal: "No current KYC risk rating in the detection log."}
+  - faults: [{at: "18:07", component: watchlists, fault: feed_failed, params: {last_refresh_minutes_ago: 26}}]
+    root_cause: {component: watchlists, fault: feed_failed}
+    accepted_fixes: [watchlists.force_refresh, detection.reprocess_rejected]
+    risky_actions: [detection.restart]
+    debrief: {what_happened: "The sanctions and PEP watchlists failed to load.", key_signal: "Watchlists stale; events parked for re-screening."}
+  - faults: [{at: "18:07", component: case_mgmt, fault: instances_lost, params: {remaining: 1}}]
+    root_cause: {component: case_mgmt, fault: instances_lost}
+    accepted_fixes: [case_mgmt.scale_out]
+    risky_actions: [case_mgmt.purge_queue]
+    debrief: {what_happened: "Case management lost an instance; alerts piled up.", key_signal: "1 of 2 instances; Pending pod."}
+  - faults: [{at: "18:07", component: fiu, fault: api_rate_limited, params: {quota_per_min: 1500}}]
+    root_cause: {component: fiu, fault: api_rate_limited}
+    accepted_fixes: [fiu.enable_retry_backoff]
+    risky_actions: [fiu.restart_adapter]
+    debrief: {what_happened: "FIU-IND throttled our immediate retries.", key_signal: "429 Too Many Requests; retry-policy immediate."}
+  - faults: [{at: "18:07", component: fiu, fault: api_auth_expired}]
+    root_cause: {component: fiu, fault: api_auth_expired}
+    accepted_fixes: [fiu.rotate_api_credentials]
+    risky_actions: [fiu.restart_adapter]
+    debrief: {what_happened: "Our FIU-IND client secret expired.", key_signal: "401 Unauthorized, client secret expired."}
+  - faults: [{at: "18:07", component: case_mgmt, fault: config_change, params: {api: kyc-lookup-api, timeout_ms: 50}}]
+    root_cause: {component: case_mgmt, fault: config_change}
+    accepted_fixes: [case_mgmt.revert_config]
+    risky_actions: [case_mgmt.restart]
+    debrief: {what_happened: "A config refresh set the KYC lookup timeout to 50 ms.", key_signal: "SocketTimeoutException after 50ms."}

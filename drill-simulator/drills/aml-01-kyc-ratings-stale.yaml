@@ -1,0 +1,34 @@
+id: aml-kyc-ratings-stale
+title: High-risk customers look like low-risk ones
+systems: [fraud-aml]
+level: Hard
+summary: Payments and fraud decisions are normal. AML monitoring is quietly working with missing customer risk ratings.
+brief: >
+  18:00. The KYC periodic-updation batch re-rated several thousand customers last night. The AML
+  team is asking why a known high-risk account generated no alerts today.
+faults:
+  - {at: "18:05", component: kyc_ratings, fault: feed_failed, params: {last_refresh_minutes_ago: 42}}
+root_cause: {component: kyc_ratings, fault: feed_failed}
+accepted_fixes: [kyc_ratings.force_refresh, detection.reprocess_rejected]
+risky_actions: [detection.restart, detection.purge_queue, watchlists.force_refresh]
+hints:
+  - {after_min: 3, text: "The fraud side is healthy. Which data does AML monitoring need that fraud scoring does not?"}
+  - {after_min: 6, text: "Check when the KYC risk ratings last loaded, and what the detection log says about parked events."}
+debrief:
+  what_happened: >
+    The KYC risk rating load failed after last night's re-rating batch. AML scenarios set their
+    thresholds by customer risk category, so events for customers without a current rating were
+    parked instead of monitored, including newly high-risk customers.
+  key_signal: >
+    "No current KYC risk rating for customer ..." in the detection log, a growing re-screening queue,
+    and a KYC load that has not succeeded for over 45 minutes, while fraud latency and throughput are normal.
+  why_not_restart: >
+    Restarting detection reloads the same old ratings. Purging the parked events means those
+    transactions are never monitored, which is a regulatory breach. Reloading the watchlists is the
+    wrong data set.
+  runbook:
+    - When AML alerts drop but payments are fine, check the data AML depends on, not just the services.
+    - Check the KYC risk rating load and why it failed.
+    - Reload the ratings with approval, then reprocess the parked events.
+    - Tell the AML team which period was monitored late so alerts can be reviewed.
+    - Problem record - alert on rating freshness and reconcile the re-rating batch with the load.

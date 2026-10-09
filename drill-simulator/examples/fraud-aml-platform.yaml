@@ -31,10 +31,12 @@ components:
   - {id: upi_switch, type: source, role: Channel, name: UPI Switch, session: UPI01, rate_per_min: 1500}
   - {id: ingest_gw, type: service, role: Ingestion, name: Event Ingestion Gateway, capacity_per_min: 4200, instances: 3}
   - {id: events_topic, type: kafka_topic, name: txn.events, partitions: 8, consumer_group: detection}
-  - {id: detection, type: service, role: Real-time scoring, name: Detection Engine, capacity_per_min: 4000, instances: 4, uses: [customer_db, watchlists]}
+  - {id: detection, type: service, role: Real-time scoring, name: Detection Engine, capacity_per_min: 4000, instances: 4, uses: [customer_db, watchlists, kyc_ratings]}
   - {id: customer_db, type: database, name: Customer Profile Store, pool_size: 80, big_table: CUSTOMER_TXN_HIST}
   - {id: watchlists, type: ref_data, name: Sanctions and PEP Watchlists, refresh_every_min: 15, stale_after_min: 30,
      missing_msg: "Screening list older than 30 min: payment {key} parked for re-screening"}
+  - {id: kyc_ratings, type: ref_data, name: KYC Customer Risk Ratings, refresh_every_min: 30, stale_after_min: 45, stale_reject_share: 0.15,
+     missing_msg: "No current KYC risk rating for customer {key}: AML scenario thresholds cannot be applied; event parked"}
   - {id: channel_responses, type: external_party, role: Channels, name: Channel Decision Responses, capacity_per_min: 4500}
   - {id: case_mgmt, type: service, role: Alerts and cases, name: Case Management, capacity_per_min: 4200, instances: 2}
   - {id: fiu, type: external_party, role: Regulator, name: FIU-IND Reporting, capacity_per_min: 4500}
@@ -54,13 +56,14 @@ alerts:
   - {name: "Detection throughput low", on: detection, metric: out_rate, below: 2400, severity: P2}
   - {name: "Customer profile store pool saturated", on: customer_db, metric: pool_pct, above: 90, severity: P2}
   - {name: "Watchlists stale", on: watchlists, metric: staleness_min, above: 30, severity: P2}
+  - {name: "KYC risk ratings stale", on: kyc_ratings, metric: staleness_min, above: 50, severity: P3}
   - {name: "Case management backlog", on: case_mgmt, metric: backlog, above: 3000, severity: P3}
   - {name: "FIU reporting failures", on: fiu, metric: error_rate, above: 5, severity: P2}
 
 diagram:
   notes: >
     Fraud decisions are real time: a slow detection engine delays every payment, not just reports.
-    AML and sanctions screening depend on fresh watchlists.
+    AML and sanctions screening depend on fresh watchlists and current KYC risk ratings.
   groups:
     - {label: "Payment channels", ids: [core_banking, card_switch, upi_switch]}
     - {label: "Financial crime platform", ids: [ingest_gw, events_topic, detection, case_mgmt]}
@@ -70,6 +73,7 @@ diagram:
     - {from: events_topic, to: detection, text: "The detection engine scores each event in real time with rules and models."}
     - {from: detection, to: customer_db, text: "It compares the transaction with the customer's profile and history."}
     - {from: detection, to: watchlists, text: "It screens parties against sanctions and PEP watchlists."}
+    - {from: detection, to: kyc_ratings, text: "AML scenarios use each customer's KYC risk rating (low, medium, high) to set thresholds."}
     - {from: detection, to: channel_responses, text: "Allow, hold or decline goes back to the channel within the SLA."}
     - {from: detection, to: case_mgmt, text: "Suspicious events become alerts and cases for investigators."}
     - {from: case_mgmt, to: fiu, text: "Reportable cases are filed with FIU-IND (STR/CTR)."}

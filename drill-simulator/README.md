@@ -20,7 +20,7 @@ Both are static files, so the split keeps answers off the participant's screen b
 | **Middle-office trade allocation** (with Kafka) | OMS and execution desk → Kafka → allocation engine (SSI reference data, allocation DB) → confirmation platform → settlement | Allocations falling behind · One partition stuck · Missing settlement instructions · Confirmations not matching · Allocation engine choking · **Allocation engine keeps restarting** (out of memory) · **Confirmations crawl through** (API rate limit, HTTP 429) · **Confirmation platform rejects everything** (expired API credentials, HTTP 401) · Mystery (9 possible faults) |
 | **Middle-office trade allocation** (direct) | Same system without Kafka, to compare designs | All of the above except the stuck partition |
 
-**Example system to build yourself:** `examples/fraud-aml-platform.yaml` is a bank's real-time fraud and AML monitoring platform (core banking, card switch and UPI switch → ingestion gateway → Kafka → detection engine using a customer profile store and sanctions/PEP watchlists → decisions back to channels, case management, FIU-IND reporting). It is not built in: paste it into the instructor page's Design tab, or rebuild it in the System Builder, and its seven use cases appear as soon as it is saved: payments slow down across every channel (profile store pool exhausted), sanctions screening on yesterday's list (stale watchlists), UPI stops reaching screening, detection engine crash loop, some transactions never scored (poison message), FIU-IND reports failing (HTTP 401), and a mystery.
+**Example system to build yourself:** `examples/fraud-aml-platform.yaml` is a bank's real-time fraud and AML monitoring platform (core banking, card switch and UPI switch → ingestion gateway → Kafka → detection engine using a customer profile store and sanctions/PEP watchlists → decisions back to channels, case management, FIU-IND reporting). It is not built in: paste it into the instructor page's Design tab, or rebuild it in the System Builder, and its seven use cases appear as soon as it is saved: payments slow down across every channel (profile store pool exhausted), sanctions screening on yesterday's list (stale watchlists), UPI stops reaching screening, detection engine crash loop, some transactions never scored (poison message), FIU-IND reports failing (HTTP 401), and a mystery. Five AML use cases sit alongside them: high-risk customers look low-risk (KYC risk ratings failed to load), AML alerts pile up unreviewed (case management lost an instance), monthly reports crawl to FIU-IND (HTTP 429 on deadline day), cases created slowly after a quiet configuration change, and an AML mystery.
 
 Every system has a **flow diagram** with groups (who owns what) and numbered steps describing the business flow. Participants see it before they start and can open it at any time during a drill.
 
@@ -186,7 +186,7 @@ debrief:
 | `src/builder.js`, `src/builder.template.html` | System Builder: forms that write and validate blueprint YAML. |
 | `src/style.css`, `src/index.template.html` | Page design and layout. |
 | `build.py` | Bundles everything, including the YAML files, into `dist/index.html` (participant page), `dist/admin.html` (instructor page) and `dist/builder.html` (System Builder). |
-| `tests/drills.test.js` | 169 automated tests (Node's built-in runner). |
+| `tests/drills.test.js` | 193 automated tests (Node's built-in runner). |
 | `vendor/js-yaml.min.js` | YAML parser (MIT licence, see `vendor/js-yaml.LICENSE`). |
 
 ## Develop

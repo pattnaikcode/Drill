@@ -73,7 +73,7 @@ test('blueprint validation catches common mistakes', () => {
 test('every system is healthy with no alerts when nothing is broken', () => {
   for (const bp of Object.values(BLUEPRINTS)) {
     const sim = new S.Simulator(bp, { seed: 3 });
-    for (let i = 0; i < 180; i++) sim.step(5);
+    for (let i = 0; i < 12 * 75; i++) sim.step(5); // a full drill window: catches reference data that goes stale between loads
     assert.strictEqual(sim.alerts.length, 0, bp.id + ' alerted: ' + sim.alerts.map(a => a.name).join(', '));
     const bad = Object.keys(sim.c).filter(id => sim.health(id) !== 'ok');
     assert.deepStrictEqual(bad, [], bp.id + ' unhealthy: ' + bad.join(', '));
