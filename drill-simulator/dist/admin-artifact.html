@@ -2514,6 +2514,15 @@ debrief:
     - Second step
 `;
   }
+  function savedDesigns() { // designs saved in this browser; built-in ones come from the project files
+    const sys = Object.entries(SYSTEMS).filter(([, x]) => !x.builtIn), ucs = CUSTOM_DRILLS;
+    const row = (kind, id, title, sub) => `<div class="row between" style="border:1px solid var(--line);border-radius:6px;padding:6px 10px"><span>${esc(title)} <span class="small muted mono">${esc(id)}</span>${sub ? `<br><span class="small muted">${esc(sub)}</span>` : ''}</span><button class="btn sm danger" data-del-${kind}="${esc(id)}">Delete</button></div>`;
+    return `<section class="panel stack"><h2>Your saved designs</h2>
+      <p class="small muted" style="margin:0">Systems and use cases you saved in this browser. Deleting one removes it from this browser only; built-in systems come from the project files and cannot be deleted here.</p>
+      ${sys.length ? `<span class="label">Systems</span>${sys.map(([id, x]) => row('sys', id, x.bp.system, `${x.bp.components.length} components · ${allDrills().filter(d => D.drillFor(d.d, x.bp)).length} use cases`)).join('')}` : '<p class="small muted" style="margin:0">No saved systems.</p>'}
+      ${ucs.length ? `<span class="label">Use cases</span>${ucs.map(x => row('uc', x.d.id, x.d.title, 'for ' + ((x.d.systems || []).join(', ') || 'any system'))).join('')}` : '<p class="small muted" style="margin:0">No saved use cases.</p>'}
+    </section>`;
+  }
   function viewDesign() {
     const sysText = A.designSys != null ? A.designSys : SYSTEMS[A.sysId].text;
     const ucText = A.designUC != null ? A.designUC : ucTemplate(A.bp);
@@ -2534,6 +2543,7 @@ debrief:
           <p class="small muted" style="margin:0">Saved designs live in this browser. To keep them in the project, copy the YAML into <code>blueprints/</code> or <code>drills/</code> and rebuild.</p>
         </section>
       </div>
+      ${savedDesigns()}
       <section class="panel stack"><h2>What can fail in “${esc(A.bp.system)}”, and how it is fixed</h2>
         <div class="tablewrap"><table><thead><tr><th>Component id</th><th>Name</th><th>Faults (<code>fault:</code>)</th><th>Actions (<code>component.action</code>)</th></tr></thead><tbody>
         ${comps.map(c => `<tr><td><code>${c.id}</code></td><td>${esc(c.name)}</td><td class="small">${Object.entries(S.faultsFor(c.type)).map(([k, f]) => `<code>${k}</code> ${esc(f.label)}${f.host ? ' <span class="muted">(host)</span>' : ''}`).join('<br>') || '—'}</td><td class="small">${Object.entries(S.actionsFor(c.type)).map(([k, a]) => `<code>${c.id}.${k}</code>${(a.fixes || []).length ? ' fixes ' + a.fixes.filter(f => S.faultsFor(c.type)[f]).map(f => `<code>${f}</code>`).join(', ') : ''}`).join('<br>') || '—'}</td></tr>`).join('')}
@@ -2693,6 +2703,22 @@ debrief:
       A.drillId = r.d.id; A.designUC = null; A.ucMsg = ''; A.tab = 'drills'; renderAll(); toast(`Use case “${r.d.title}” added to ${A.bp.system}.`);
     });
     on('#ucCopy', 'click', e => copyText($('#ucText').value, e.target));
+    each('[data-del-sys]', b => b.addEventListener('click', () => {
+      const id = b.dataset.delSys, x = SYSTEMS[id]; if (!x || x.builtIn) return;
+      if (!confirm(`Delete the system “${x.bp.system}” from this browser? Its use cases stay saved.`)) return;
+      delete SYSTEMS[id];
+      Object.values(C.blueprints).forEach(text => { const r = S.parseBlueprint(text, yaml); if (!r.errors.length && r.blueprint.id === id) SYSTEMS[id] = { text, bp: r.blueprint, builtIn: true }; }); // an edited built-in goes back to the original
+      saveCustom();
+      if (A.sysId === id) { if (A.session) A.session = null; useSystem(SYSTEMS[C.default_blueprint] ? C.default_blueprint : Object.keys(SYSTEMS)[0]); }
+      A.designSys = null; renderAll(); toast(`Deleted “${x.bp.system}”.`);
+    }));
+    each('[data-del-uc]', b => b.addEventListener('click', () => {
+      const id = b.dataset.delUc, x = CUSTOM_DRILLS.find(d => d.d.id === id); if (!x) return;
+      if (!confirm(`Delete the use case “${x.d.title}” from this browser?`)) return;
+      CUSTOM_DRILLS = CUSTOM_DRILLS.filter(d => d.d.id !== id); saveCustom();
+      if (A.drillId === id) { const list = drillsFor(A.bp); A.drillId = list.length ? list[0].d.id : null; }
+      renderAll(); toast(`Deleted “${x.d.title}”.`);
+    }));
     // debrief
     on('#againBtn', 'click', startDrill);
     on('#otherBtn', 'click', () => { A.tab = 'drills'; renderAll(); });

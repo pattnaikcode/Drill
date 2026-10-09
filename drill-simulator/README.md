@@ -73,7 +73,7 @@ The instructor page's **Design** tab has two editors:
 1. **System**: write or edit a blueprint, check it, and save. It appears as a new system on the Drills tab.
 2. **Use case**: write a drill for the loaded system, starting from a template or a copy of an existing one. It appears under that system.
 
-A reference table lists every component of the loaded system with the faults it can have and the actions that fix them, so you can write use cases without reading code. Designs are saved in the browser; to keep them in the project, copy the YAML into `blueprints/` or `drills/` and run `python3 build.py`.
+A **Your saved designs** list shows what you have saved in this browser, each with a Delete button (an edited built-in system goes back to its original). A reference table lists every component of the loaded system with the faults it can have and the actions that fix them, so you can write use cases without reading code. Designs are saved in the browser; to keep them in the project, copy the YAML into `blueprints/` or `drills/` and run `python3 build.py`.
 
 ## How it works
 
