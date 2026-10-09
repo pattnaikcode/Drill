@@ -1,6 +1,6 @@
 # OpsPilot
 
-Incident drills and investigation tooling for production support teams in capital markets.
+Incident drills and investigation tooling for production support teams .
 
 Support teams are judged on how they handle business incidents: trades not allocated before cut-off, a Kafka partition that silently stops, settlement instructions missing, a vendor platform down. These are hard to practise safely. OpsPilot simulates realistic trading and middle-office systems, injects real faults, and scores how a responder detects, diagnoses and fixes them.
 
