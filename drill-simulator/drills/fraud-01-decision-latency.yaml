@@ -1,0 +1,35 @@
+id: fraud-decision-latency
+title: Payments slow down across every channel
+systems: [fraud-aml]
+level: Medium
+summary: Fraud decisions breach the SLA for UPI, cards and core banking at once.
+brief: >
+  18:00, start of the evening UPI peak. The analytics team said they would run a month-end
+  customer behaviour report today. Payment channels must get a fraud decision within the SLA.
+faults:
+  - {at: "18:06", component: customer_db, fault: pool_exhausted}
+noise:
+  - {at: "18:09", name: "CPU 78% on case-mgmt-node-2", severity: P4}
+root_cause: {component: customer_db, fault: pool_exhausted}
+accepted_fixes: [customer_db.kill_blocking_session]
+risky_actions: [detection.restart, ingest_gw.restart, events_topic.purge_queue]
+hints:
+  - {after_min: 2, text: "The detection engine has all its instances. What does it wait on for every transaction?"}
+  - {after_min: 5, text: "Look at who holds the customer profile store's connections."}
+debrief:
+  what_happened: >
+    A month-end analytics report ran a full scan on CUSTOMER_TXN_HIST and held almost every
+    connection to the customer profile store. The detection engine waits for a profile lookup on every
+    transaction, so decisions slowed down on every channel and the Kafka backlog grew.
+  key_signal: >
+    Decision latency above the SLA together with the profile store pool at 100% and connection
+    timeouts in the detection log. One shared dependency, every channel affected.
+  why_not_restart: >
+    Restarting detection drops in-flight decisions and comes back to the same exhausted pool. Purging
+    the topic would mean transactions were never screened, a regulatory problem.
+  runbook:
+    - Check what detection depends on before touching detection itself.
+    - Find the session holding the profile store's connections.
+    - Kill it with approval and tell the report owner.
+    - Watch latency return under the SLA and the backlog drain.
+    - Problem record - run analytics on a replica, never on the real-time store.

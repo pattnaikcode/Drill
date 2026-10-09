@@ -1,0 +1,26 @@
+id: fraud-detection-crashloop
+title: Detection engine keeps restarting
+systems: [fraud-aml]
+level: Medium
+summary: Festival sale traffic. Fraud decisions come in bursts and then stop.
+brief: >
+  18:00. A festival sale has pushed UPI and card volumes well above normal since the afternoon.
+faults:
+  - {at: "18:06", component: detection, fault: memory_oom}
+root_cause: {component: detection, fault: memory_oom}
+accepted_fixes: [detection.increase_memory_limit]
+risky_actions: [detection.restart, detection.scale_out, events_topic.purge_queue]
+hints:
+  - {after_min: 2, text: "Throughput goes up and down in a regular pattern. What is happening to the pods?"}
+  - {after_min: 5, text: "kubectl describe pod shows why the container last stopped."}
+debrief:
+  what_happened: >
+    Larger customer profiles cached during the sale pushed the detection engine past its memory limit.
+    It was OOMKilled, restarted, and died again: a crash loop.
+  key_signal: CrashLoopBackOff, OOMKilled with exit code 137, and Java heap errors in the log.
+  why_not_restart: More restarts or more pods with the same limit fail the same way. Purging loses unscreened transactions.
+  runbook:
+    - A regular up-and-down pattern means something is restarting; check pod status.
+    - Read the termination reason.
+    - Raise the memory limit with approval and confirm the pods stay up.
+    - Problem record - capacity test for festival peaks.

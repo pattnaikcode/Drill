@@ -1,0 +1,41 @@
+id: fraud-mystery
+title: Mystery incident on the fraud platform
+systems: [fraud-aml]
+level: Hard
+summary: One of six real faults, chosen at random. No hints.
+mystery: true
+brief: >
+  18:00, evening UPI peak. Something will go wrong before 19:00. You do not know what or where.
+noise:
+  - {at: "18:10", name: "Disk usage 81% on report-01", severity: P4}
+pool:
+  - faults: [{at: "18:07", component: customer_db, fault: pool_exhausted}]
+    root_cause: {component: customer_db, fault: pool_exhausted}
+    accepted_fixes: [customer_db.kill_blocking_session]
+    risky_actions: [detection.restart]
+    debrief: {what_happened: "A report held the profile store's connections.", key_signal: "Pool at 100%; decision latency above SLA."}
+  - faults: [{at: "18:07", component: upi_switch, fault: session_down}]
+    root_cause: {component: upi_switch, fault: session_down}
+    accepted_fixes: [upi_switch.reset_sequence]
+    risky_actions: [ingest_gw.restart]
+    debrief: {what_happened: "UPI's logon was rejected on a sequence number mismatch.", key_signal: "One channel at zero; logon rejected."}
+  - faults: [{at: "18:07", component: detection, fault: memory_oom}]
+    root_cause: {component: detection, fault: memory_oom}
+    accepted_fixes: [detection.increase_memory_limit]
+    risky_actions: [detection.restart]
+    debrief: {what_happened: "Detection ran out of memory and crash-looped.", key_signal: "OOMKilled, exit 137."}
+  - faults: [{at: "18:07", component: events_topic, fault: poison_message, params: {partition: 5}}]
+    root_cause: {component: events_topic, fault: poison_message}
+    accepted_fixes: [events_topic.skip_poison_message]
+    risky_actions: [detection.restart]
+    debrief: {what_happened: "One unreadable event blocked a partition.", key_signal: "Lag on one partition; repeating offset."}
+  - faults: [{at: "18:07", component: customer_db, fault: disk_full}]
+    root_cause: {component: customer_db, fault: disk_full}
+    accepted_fixes: [customer_db.clear_disk_space]
+    risky_actions: [detection.restart]
+    debrief: {what_happened: "The profile store's archive destination filled up and every commit hung.", key_signal: "ORA-00257 in detection; archive disk at 100%."}
+  - faults: [{at: "18:07", component: detection, fault: config_change}]
+    root_cause: {component: detection, fault: config_change}
+    accepted_fixes: [detection.revert_config]
+    risky_actions: [detection.restart]
+    debrief: {what_happened: "A config refresh set an API timeout to 50 ms.", key_signal: "SocketTimeoutException after 50ms; config refresh just before."}

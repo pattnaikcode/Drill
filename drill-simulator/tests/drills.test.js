@@ -9,8 +9,10 @@ const D = require('../src/session.js');
 
 const dir = p => path.join(__dirname, '..', p);
 const bpText = f => fs.readFileSync(dir('blueprints/' + f), 'utf8');
-const BLUEPRINTS = Object.fromEntries(fs.readdirSync(dir('blueprints')).filter(f => f.endsWith('.yaml')).map(f => {
-  const r = S.parseBlueprint(bpText(f), yaml);
+// built-in systems, plus the example systems in examples/ that participants build themselves
+const BP_FILES = [...fs.readdirSync(dir('blueprints')).filter(f => f.endsWith('.yaml')).map(f => 'blueprints/' + f), ...fs.readdirSync(dir('examples')).filter(f => f.endsWith('.yaml')).map(f => 'examples/' + f)];
+const BLUEPRINTS = Object.fromEntries(BP_FILES.map(f => {
+  const r = S.parseBlueprint(fs.readFileSync(dir(f), 'utf8'), yaml);
   if (r.errors.length) throw new Error(f + ': ' + r.errors.join('; '));
   return [r.blueprint.id, r.blueprint];
 }));
@@ -51,7 +53,7 @@ function careless(s) {
 }
 
 test('all blueprints are valid', () => {
-  assert.deepStrictEqual(Object.keys(BLUEPRINTS).sort(), ['exchange', 'venue-mtf', 'trade-allocation-direct', 'trade-allocation-kafka']);
+  assert.deepStrictEqual(Object.keys(BLUEPRINTS).sort(), ['exchange', 'fraud-aml', 'venue-mtf', 'trade-allocation-direct', 'trade-allocation-kafka']);
   assert.strictEqual(BLUEPRINTS.exchange.ups.fix_gateway.length, 5, 'five members feed the gateway (fan-in)');
   assert.deepStrictEqual(BLUEPRINTS.exchange.downs.matching.sort(), ['drop_copy', 'md_publisher', 'trade_bus'], 'matching feeds three systems (fan-out)');
 });

@@ -1,0 +1,32 @@
+id: fraud-watchlists-stale
+title: Sanctions screening on yesterday's list
+systems: [fraud-aml]
+level: Hard
+summary: Payments flow normally. The quiet problem is what they are being screened against.
+brief: >
+  18:00. A new sanctions designation was published this afternoon and compliance expects it to be
+  live in screening. Everything looks green.
+faults:
+  - {at: "18:05", component: watchlists, fault: feed_failed, params: {last_refresh_minutes_ago: 26}}
+root_cause: {component: watchlists, fault: feed_failed}
+accepted_fixes: [watchlists.force_refresh, detection.reprocess_rejected]
+risky_actions: [detection.restart, detection.purge_queue]
+hints:
+  - {after_min: 2, text: "Payments are fine. When did the watchlists last load successfully?"}
+  - {after_min: 5, text: "Look at the watchlist load log and the events parked for re-screening."}
+debrief:
+  what_happened: >
+    The sanctions and PEP watchlist feed failed to load (the vendor's SFTP refused connections), so
+    screening ran against an old list and events needing a fresh check were parked for re-screening.
+  key_signal: >
+    "Watchlists stale" and a growing re-screening queue, while throughput and latency look normal.
+    Nothing is down; the data is out of date.
+  why_not_restart: >
+    Restarting detection reloads the same old list. Purging the parked events means they are never
+    screened against the new designation.
+  runbook:
+    - Check when the watchlists last loaded, not just whether services are up.
+    - Re-run the load from the secondary source with approval.
+    - Re-screen the parked events against the fresh list.
+    - Tell compliance the window during which screening used the old list.
+    - Problem record - alert on watchlist freshness well before it goes stale.

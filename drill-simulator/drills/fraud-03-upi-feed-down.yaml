@@ -1,0 +1,24 @@
+id: fraud-upi-feed-down
+title: UPI transactions stop reaching fraud screening
+systems: [fraud-aml]
+level: Easy
+summary: Card and core banking events flow. UPI has gone quiet.
+brief: >
+  18:00. The UPI switch team patched their connector to the platform this afternoon.
+faults:
+  - {at: "18:06", component: upi_switch, fault: session_down}
+root_cause: {component: upi_switch, fault: session_down}
+accepted_fixes: [upi_switch.reset_sequence]
+risky_actions: [ingest_gw.restart, upi_switch.disconnect_participant]
+hints:
+  - {after_min: 2, text: "Only one channel stopped. What does the ingestion gateway say about that channel's logon?"}
+debrief:
+  what_happened: >
+    After the patch, the UPI switch reconnected with a sequence number lower than the gateway
+    expected, and its logon was rejected. UPI events queued on the switch side.
+  key_signal: One channel's events dropped to zero; logon rejected for UPI01 in the gateway log.
+  why_not_restart: Restarting the gateway disconnects the card switch and core banking too, and UPI still fails.
+  runbook:
+    - Identify which channel stopped and read the logon reject reason.
+    - Reset sequence numbers with the UPI switch team, with approval.
+    - Confirm the queued UPI events are screened.

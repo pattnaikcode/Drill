@@ -1,0 +1,24 @@
+id: fraud-card-format-change
+title: Some transactions never get scored
+systems: [fraud-aml]
+level: Medium
+summary: Most events flow, but one slice of transactions is stuck and the backlog keeps growing.
+brief: >
+  18:00. The card switch rolled out a new message format with an extra field this afternoon.
+faults:
+  - {at: "18:06", component: events_topic, fault: poison_message, params: {partition: 3}}
+root_cause: {component: events_topic, fault: poison_message}
+accepted_fixes: [events_topic.skip_poison_message]
+risky_actions: [detection.restart, events_topic.purge_queue]
+hints:
+  - {after_min: 2, text: "Is the lag on all partitions or one? Is the same offset failing again and again?"}
+debrief:
+  what_happened: >
+    One event in the new card format could not be read by the detection engine, which retried it
+    forever. Every event behind it on partition 3 waited unscreened.
+  key_signal: Lag on one partition only and the same offset repeating in the detection errors.
+  why_not_restart: The restarted consumer reads the same event again. Purging deletes every transaction behind it.
+  runbook:
+    - Find the stuck partition and offset.
+    - Park the event to the dead-letter topic with approval and let the backlog drain.
+    - Raise the format change with the card switch team and get it fixed before more arrive.

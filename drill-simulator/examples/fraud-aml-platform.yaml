@@ -33,7 +33,8 @@ components:
   - {id: events_topic, type: kafka_topic, name: txn.events, partitions: 8, consumer_group: detection}
   - {id: detection, type: service, role: Real-time scoring, name: Detection Engine, capacity_per_min: 4000, instances: 4, uses: [customer_db, watchlists]}
   - {id: customer_db, type: database, name: Customer Profile Store, pool_size: 80, big_table: CUSTOMER_TXN_HIST}
-  - {id: watchlists, type: ref_data, name: Sanctions and PEP Watchlists, refresh_every_min: 15, stale_after_min: 30}
+  - {id: watchlists, type: ref_data, name: Sanctions and PEP Watchlists, refresh_every_min: 15, stale_after_min: 30,
+     missing_msg: "Screening list older than 30 min: payment {key} parked for re-screening"}
   - {id: channel_responses, type: external_party, role: Channels, name: Channel Decision Responses, capacity_per_min: 4500}
   - {id: case_mgmt, type: service, role: Alerts and cases, name: Case Management, capacity_per_min: 4200, instances: 2}
   - {id: fiu, type: external_party, role: Regulator, name: FIU-IND Reporting, capacity_per_min: 4500}

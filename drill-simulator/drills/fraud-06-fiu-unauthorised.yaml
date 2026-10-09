@@ -1,0 +1,23 @@
+id: fraud-fiu-unauthorised
+title: Reports to FIU-IND are failing
+systems: [fraud-aml]
+level: Easy
+summary: Payments and screening are fine. Regulatory filing is not.
+brief: >
+  18:00. Today is the deadline for this month's reports to FIU-IND.
+faults:
+  - {at: "18:06", component: fiu, fault: api_auth_expired}
+root_cause: {component: fiu, fault: api_auth_expired}
+accepted_fixes: [fiu.rotate_api_credentials]
+risky_actions: [fiu.restart_adapter, case_mgmt.restart]
+hints:
+  - {after_min: 2, text: "Read the exact HTTP status in the reporting log."}
+debrief:
+  what_happened: The client secret used to file reports with FIU-IND expired at midnight; every call came back 401.
+  key_signal: 401 Unauthorized with "client secret expired" in the FIU adapter log, while everything else is green.
+  why_not_restart: The adapter reloads the same expired secret. Case management was never the problem.
+  runbook:
+    - Severity comes from business impact: payments are fine, but a regulatory deadline is at risk.
+    - Rotate the client secret from the vault with approval.
+    - Confirm the queued reports are filed before the deadline.
+    - Problem record - alert on credential expiry dates.
