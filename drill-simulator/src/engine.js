@@ -60,6 +60,7 @@
       faults: {
         poison_message: { label: 'Poison message blocking a partition', params: { partition: 3 } },
         rebalance_storm: { label: 'Consumer group rebalance storm', params: {} },
+        partition_skew: { label: 'Hot key: one partition overloads its assigned consumer', params: { partition: 0, multiplier: 3 } },
       },
     },
     service: {
@@ -67,7 +68,7 @@
       metrics: {
         in_rate: 'Received per minute', out_rate: 'Processed per minute', backlog: 'Waiting in queue',
         reject_rate: 'Rejected (%)', error_rate: 'Errors and timeouts (%)', instances: 'Healthy instances',
-        latency_ms: 'Processing time (ms)', rejected: 'In exception queue', sessions_down: 'Participant sessions down', ...HOST_METRICS,
+        latency_ms: 'Processing time (ms)', rejected: 'In exception queue', sessions_down: 'Participant sessions down', consumer_lag: 'Kafka lag on its partitions', ...HOST_METRICS,
       },
       faults: {
         instances_lost: { label: 'Instances lost (pods evicted)', params: { remaining: 2 } },
@@ -115,7 +116,7 @@
   const hasHost = type => HOST_TYPES.includes(type);
   // databases default to Oracle; "engine: postgres" changes error messages, mounts and SQL views
   const isPg = s => !!(s && s.def && s.def.engine === 'postgres');
-  const mountOf = s => isPg(s) ? '/var/lib/pgsql/data' : MOUNT[s.type];
+  const mountOf = s => s.def.mount || (isPg(s) ? '/var/lib/pgsql/data' : MOUNT[s.type]);
   function faultsFor(type) { // every fault a component of this type can have, application and host
     const out = { ...(TYPES[type] ? TYPES[type].faults : {}) };
     Object.entries(HOST_FAULTS).forEach(([k, f]) => { if (f.types.includes(type)) out[k] = { ...f, host: true }; });
@@ -146,6 +147,7 @@
     rotate_api_credentials: { label: 'Rotate the API client secret from the vault', types: EXT, fixes: ['api_auth_expired'] },
     skip_poison_message: { label: 'Park the stuck message to a dead-letter topic', types: KAF, fixes: ['poison_message'] },
     tune_consumer_timeout: { label: 'Raise consumer session timeout and rejoin', types: KAF, fixes: ['rebalance_storm'] },
+    rebalance_partitions: { label: 'Rebalance partition assignment across consumers (config change + consumer restart)', types: KAF, fixes: ['partition_skew'] },
     kill_blocking_session: { label: 'Kill the blocking database session', types: DB, fixes: ['pool_exhausted'] },
     increase_pool_size: { label: 'Increase the connection pool size', types: DB },
     force_refresh: { label: 'Re-run the reference data load', types: REF, fixes: ['feed_failed'] },
@@ -166,6 +168,7 @@
     { group: 'Application', key: 'thread_deadlock', label: 'Thread deadlock in the application' },
     { group: 'Messaging', key: 'poison_message', label: 'Poison message blocking a partition' },
     { group: 'Messaging', key: 'rebalance_storm', label: 'Consumer group rebalance storm' },
+    { group: 'Messaging', key: 'partition_skew', label: 'Hot key: partition assignment out of balance' },
     { group: 'Data', key: 'pool_exhausted', label: 'Connection pool exhausted by a long-running query' },
     { group: 'Data', key: 'db_deadlock', label: 'Database deadlocks' },
     { group: 'Data', key: 'feed_failed', label: 'Reference data feed failing (stale data)' },
@@ -218,6 +221,10 @@
       if (c.type === 'kafka_topic' && c.partitions > 64) errors.push(`${where}: at most 64 partitions.`);
       if (c.type === 'service' && c.instances !== undefined && !(Number.isInteger(c.instances) && c.instances > 0)) errors.push(`${where}: "instances" must be a positive whole number.`);
       if (c.type === 'service' && c.rejects !== undefined && !['queue', 'return'].includes(c.rejects)) errors.push(`${where}: "rejects" must be "queue" (held for reprocessing) or "return" (sent back to the sender).`);
+      if (c.host !== undefined && (!hasHost(c.type) || !/^[a-z0-9][a-z0-9-]*$/.test(String(c.host)))) errors.push(`${where}: "host" names the server it runs on (lowercase letters, digits, dashes) and only applies to services, databases, adapters and loaders.`);
+      if (c.mount !== undefined && (!hasHost(c.type) || !String(c.mount).startsWith('/'))) errors.push(`${where}: "mount" must be an absolute path such as /survdata.`);
+      if (c.type === 'kafka_topic' && c.weights !== undefined && (!Array.isArray(c.weights) || c.weights.length !== c.partitions || c.weights.some(w => !(w > 0)))) errors.push(`${where}: "weights" needs one positive number per partition (${c.partitions}).`);
+      if (c.type === 'kafka_topic' && c.keys !== undefined && (!Array.isArray(c.keys) || c.keys.length !== c.partitions)) errors.push(`${where}: "keys" needs one label per partition (${c.partitions}).`);
       if (c.engine !== undefined && (c.type !== 'database' || !['oracle', 'postgres'].includes(c.engine))) errors.push(`${where}: "engine" is only for databases and must be oracle or postgres.`);
       if (c.uses !== undefined && !Array.isArray(c.uses)) errors.push(`${where}: "uses" must be a list of component ids.`);
     });
@@ -260,8 +267,21 @@
       if (c.type === 'source' && ups[c.id].length) errors.push(`${c.id}: a participant (source) cannot receive flow; it only sends.`);
       if (c.type !== 'source' && !ups[c.id].length) errors.push(`${c.id}: nothing flows into it. Every flow starts at a participant (type source).`);
       if (c.type === 'kafka_topic') {
-        if (downs[c.id].length !== 1) errors.push(`${c.id}: a Kafka topic needs exactly one consumer after it (it has ${downs[c.id].length}).`);
-        else if (ids.get(downs[c.id][0]).type !== 'service') errors.push(`${c.id}: the consumer after a Kafka topic must be a service.`);
+        const ds = downs[c.id];
+        if (ds.some(d => ids.get(d).type !== 'service')) errors.push(`${c.id}: the consumers after a Kafka topic must be services.`);
+        else if (!c.assign && ds.length !== 1) errors.push(`${c.id}: a Kafka topic needs exactly one consumer after it (it has ${ds.length}), or an "assign" map giving each consumer its partitions.`);
+        else if (c.assign) {
+          const a = c.assign, seen = new Set();
+          if (typeof a !== 'object' || Array.isArray(a)) errors.push(`${c.id}: "assign" maps each consumer to a list of partitions, e.g. {consumer_1: [0, 1]}.`);
+          else {
+            Object.entries(a).forEach(([k, v]) => {
+              if (!ds.includes(k)) errors.push(`${c.id}: assign names "${k}", which is not a consumer after this topic.`);
+              (Array.isArray(v) ? v : []).forEach(n => { if (!Number.isInteger(n) || n < 0 || n >= c.partitions) errors.push(`${c.id}: partition ${n} for ${k} does not exist.`); else if (seen.has(n)) errors.push(`${c.id}: partition ${n} is assigned twice.`); else seen.add(n); });
+            });
+            ds.forEach(d => { if (!a[d]) errors.push(`${c.id}: consumer ${d} has no partitions in "assign".`); });
+            if (seen.size !== c.partitions) errors.push(`${c.id}: every partition must be assigned to a consumer (${seen.size} of ${c.partitions} are).`);
+          }
+        }
       }
       if (c.type === 'service' && ups[c.id].some(u => ids.get(u).type === 'kafka_topic') && ups[c.id].length > 1)
         errors.push(`${c.id}: a service that consumes a Kafka topic can have only that topic as its input.`);
@@ -346,6 +366,13 @@
     this.c = {};
     bp.components.forEach(def => { this.c[def.id] = this._initState(def); });
     bp.components.forEach(def => { this.c[def.id].ups = bp.ups[def.id] || []; this.c[def.id].downs = bp.downs[def.id] || []; });
+    // processes on the same named server share one host: one full disk or reboot hits all of them
+    const shared = {};
+    Object.values(this.c).forEach(s => { if (s.host && s.def.host) { if (shared[s.def.host]) s.host = shared[s.def.host]; else shared[s.def.host] = s.host; } });
+    // which sources each component's work comes from (for business KPIs)
+    this._srcs = {};
+    const srcOf = id => { if (this._srcs[id]) return this._srcs[id]; const out = new Set(); (bp.ups[id] || []).forEach(u => { if (this.c[u].type === 'source') out.add(u); srcOf(u).forEach(x => out.add(x)); }); this._srcs[id] = out; return out; };
+    Object.keys(this.c).forEach(srcOf);
     this.ruleState = {};
     this.biz = { produced: 0, prevCut: 0, netRate: 0, lost: 0 };
     this.warmup(bp.start - this.t);
@@ -353,8 +380,8 @@
 
   Simulator.prototype._initState = function (def) {
     const s = { def, type: def.type, fault: null, logs: [], hist: {}, rates: {}, tot: { in: 0, out: 0, rej: 0, err: 0 }, win: { in: 0, out: 0, rej: 0, err: 0, n: 0 } };
-    if (def.type === 'source') { s.held = 0; s.seqOut = 10000 + Math.floor(this.rand() * 500); }
-    if (def.type === 'kafka_topic') { s.parts = new Array(def.partitions).fill(0); s.blocked = -1; s.rebalances = 0; s.offsets = new Array(def.partitions).fill(0).map((_, i) => 884000 + i * 3121); s.dlq = 0; }
+    if (def.type === 'source') { s.produced = 0; s.held = 0; s.seqOut = 10000 + Math.floor(this.rand() * 500); }
+    if (def.type === 'kafka_topic') { s.weights = (def.weights || new Array(def.partitions).fill(1)).slice(); s.assign = def.assign ? JSON.parse(JSON.stringify(def.assign)) : null; s.parts = new Array(def.partitions).fill(0); s.blocked = -1; s.rebalances = 0; s.offsets = new Array(def.partitions).fill(0).map((_, i) => 884000 + i * 3121); s.dlq = 0; }
     if (def.type === 'service') { s.inbox = 0; s.retry = 0; s.rejected = 0; s.configured = def.instances || 4; s.instances = s.configured; s.restartUntil = -1; s.rejectLog = []; s.oomRestarts = 0; }
     if (def.type === 'external_party') { s.inbox = 0; s.recoverAt = -1; s.adapterDownUntil = -1; }
     if (def.type === 'ref_data') { s.lastRefresh = this.t; s.records = 48210; }
@@ -431,7 +458,7 @@
   Simulator.prototype.issuersOf = function (refId) { return Object.values(this.c).filter(x => x.type === 'issuer' && x.def.feeds === refId); };
   Simulator.prototype.rejectCauses = function (s) {
     const out = [];
-    this.staleRefs(s).forEach(r => out.push({ share: 0.08, ref: r, kind: 'stale' }));
+    this.staleRefs(s).forEach(r => out.push({ share: typeof r.def.stale_reject_share === 'number' ? r.def.stale_reject_share : 0.08, ref: r, kind: 'stale' }));
     (s.def.uses || []).forEach(u => this.issuersOf(u).forEach(is => {
       if (is.fault && is.fault.type === 'announcement_missed') out.push({ share: is.fault.params.reject_share, ref: this.c[u], issuer: is, kind: 'issuer' });
     }));
@@ -442,10 +469,21 @@
     const s = this.c[id];
     s.tot.in += n; s.win.in += n;
     if (s.type === 'kafka_topic') {
-      const per = n / s.parts.length;
-      for (let i = 0; i < s.parts.length; i++) { s.parts[i] += per; s.offsets[i] += per; }
+      const w = this.partWeights(s), tw = w.reduce((a, b) => a + b, 0);
+      for (let i = 0; i < s.parts.length; i++) { const x = n * w[i] / tw; s.parts[i] += x; s.offsets[i] += x; }
     } else if (s.type === 'service' || s.type === 'external_party') s.inbox += n;
   };
+  // share of a topic's messages per partition: keys hash to partitions, so some partitions are busier
+  Simulator.prototype.partWeights = function (k) {
+    const w = k.weights.slice();
+    const hot = k.hot || (k.fault && k.fault.type === 'partition_skew' ? k.fault.params : null);
+    if (hot) w[hot.partition] *= hot.multiplier;
+    return w;
+  };
+  Simulator.prototype.partitionsOf = function (k, consumerId) { // partitions a consumer reads
+    return k.assign ? (k.assign[consumerId] || []) : k.parts.map((_, i) => i);
+  };
+  Simulator.prototype.kafkaIn = function (s) { const u = s.ups.length === 1 && this.c[s.ups[0]]; return u && u.type === 'kafka_topic' ? u : null; };
   Simulator.prototype.emit = function (s, n) { s.downs.forEach(d => this.accept(d, n)); };
 
   Simulator.prototype.step = function (dt) {
@@ -496,7 +534,7 @@
     if (s.type === 'source') {
       const mult = s.fault && s.fault.type === 'order_flood' ? (s.fault.params.multiplier || 4) : 1;
       const n = def.rate_per_min * mult * min * (0.94 + this.rand() * 0.12);
-      this.biz.produced += n;
+      this.biz.produced += n; s.produced += n;
       if (this.sourceDown(s)) { s.held += n; return; }
       let send = n;
       if (s.held > 0) { const r = Math.min(s.held, def.rate_per_min * 2 * min); s.held -= r; send += r; }
@@ -506,13 +544,14 @@
     }
     if (s.type === 'kafka_topic') return;
     if (s.type === 'service') {
-      const kafkaUp = s.ups.length === 1 && this.c[s.ups[0]].type === 'kafka_topic' ? this.c[s.ups[0]] : null;
+      const kafkaUp = this.kafkaIn(s);
       let cap = def.capacity_per_min * this.serviceFactor(s) * min;
       const r = Math.min(s.retry, cap); s.retry -= r; cap -= r;
       let got = r;
       if (kafkaUp) {
         const up = kafkaUp;
-        const open = up.parts.map((v, i) => i === up.blocked ? 0 : v);
+        const mine = new Set(this.partitionsOf(up, id));
+        const open = up.parts.map((v, i) => i === up.blocked || !mine.has(i) ? 0 : v);
         let remaining = cap;
         for (let pass = 0; pass < 3 && remaining > 1e-9; pass++) {
           const active = open.map((v, i) => [v, i]).filter(([v]) => v > 1e-9);
@@ -591,6 +630,13 @@
               this.log(id, 'WARN', `Session ${this.sessionId(up)} (${up.def.name}) sending ${fmtInt(this.rates(u).out_rate)} msgs/min, above its ${fmtInt(up.def.rate_per_min * 1.5)} msgs/min limit; inbound queue ${fmtInt(s.inbox)}`);
           }
         });
+        const kin = this.kafkaIn(s);
+        if (kin && kin.assign && this.chance(p * 0.8)) {
+          const ps = this.partitionsOf(kin, id), lag = ps.reduce((a, i) => a + kin.parts[i], 0);
+          const keys = kin.def.keys ? ' (' + ps.map(i => kin.def.keys[i]).join(', ') + ')' : '';
+          if (lag > s.def.capacity_per_min * 0.5) this.log(id, 'WARN', `Consumer lag ${fmtInt(lag)} on ${kin.def.name} partitions [${ps.join(', ')}]${keys}; processing ${fmtInt(this.rates(id).out_rate)}/min`);
+          else if (this.chance(0.3)) this.log(id, 'INFO', `Polling ${kin.def.name} partitions [${ps.join(', ')}]${keys}: lag ${fmtInt(lag)}`);
+        }
         if (f === 'instances_lost' && this.chance(p * 0.8))
           this.log(id, 'WARN', `Only ${s.instances}/${s.configured} ${name} instances ready; pods ${id}-${s.instances + 1}, ${id}-${s.configured} Pending (node memory pressure)`);
         (s.def.uses || []).forEach(u => {
@@ -600,13 +646,14 @@
           else if (d.fault && d.fault.type === 'pool_exhausted' && this.chance(p * 1.6)) this.log(id, 'ERROR', `HikariPool-1 - Connection is not available, request timed out after 30000ms (${blk()})`);
           else if (this.hostFault(d) === 'cpu_runaway' && this.chance(p)) this.log(id, 'WARN', `Slow query 3,8${Math.floor(this.rand() * 9)}0ms on ${d.def.name} (expected < 200ms)`);
         });
-        if (hf === 'disk_full' && this.chance(p * 1.4)) this.log(id, 'ERROR', `java.io.IOException: No space left on device (writing ${MOUNT.service}/app/${id}.log); request failed`);
+        if (hf === 'disk_full' && this.chance(p * 1.4)) this.log(id, 'ERROR', s.def.mount ? `java.io.IOException: No space left on device (appending ${s.def.mount}/10/09/tx_${String(Math.floor(this.t / 600)).padStart(6, '0')}.dat); write failed` : `java.io.IOException: No space left on device (writing ${MOUNT.service}/app/${id}.log); request failed`);
         if (hf === 'cpu_runaway' && this.chance(p)) this.log(id, 'WARN', `Request p99 ${fmtInt(2200 + this.rand() * 900)}ms; worker threads waiting for CPU`);
         if (hf === 'fd_exhausted' && this.chance(p * 1.5)) this.log(id, 'ERROR', `java.net.SocketException: Too many open files (accept failed on :8443)`);
         if (f === 'config_change' && this.chance(p * 1.6)) this.log(id, 'ERROR', `java.net.SocketTimeoutException: Read timed out after ${s.fault.params.timeout_ms}ms calling ${s.fault.params.api} POST /v2/check (attempt 3/3); request failed`);
         this.rejectCauses(s).forEach(c => {
           if (!this.chance(p * 1.4)) return;
-          if (c.kind === 'stale') this.log(id, 'ERROR', `Rejected ${blk()}: no SSI for account ACC-${48000 + Math.floor(this.rand() * 900)} in ${c.ref.def.name}`);
+          if (c.kind === 'stale' && c.ref.def.missing_msg) this.log(id, 'ERROR', c.ref.def.missing_msg.replace('{key}', `INS-${1000 + Math.floor(this.rand() * 900)}`) + ` (${blk()})`);
+          else if (c.kind === 'stale') this.log(id, 'ERROR', `Rejected ${blk()}: no SSI for account ACC-${48000 + Math.floor(this.rand() * 900)} in ${c.ref.def.name}`);
           else this.log(id, 'ERROR', `Order rejected: price ${(1100 + this.rand() * 200).toFixed(2)} outside band for ${c.issuer.def.symbol || c.issuer.def.id.toUpperCase()} (band not updated for ${c.issuer.fault.ca})`);
         });
         if (this.t < s.restartUntil && this.chance(p)) this.log(id, 'INFO', `Rolling restart in progress: instance ${1 + Math.floor(this.rand() * s.configured)}/${s.configured} restarting`);
@@ -634,6 +681,7 @@
     });
   };
   Simulator.prototype._consumerCount = function (k) {
+    if (k.assign) return Object.keys(k.assign).length;
     const svc = k.downs.length && this.c[k.downs[0]];
     return svc && svc.type === 'service' ? svc.instances : 1;
   };
@@ -685,6 +733,7 @@
         if (m === 'error_rate') return processed > 1 ? Math.min(100, 100 * r.err_rate / processed) : (r.err_rate > 0 ? 100 : 0);
         if (m === 'instances') return this.hostFault(s) === 'memory_oom' && !this.oomUp(s) ? 0 : this.hostFault(s) === 'disk_full' || this.inOutage(s) ? 0 : s.instances;
         if (m === 'rejected') return s.rejected;
+        if (m === 'consumer_lag') { const k = this.kafkaIn(s); return k ? this.partitionsOf(k, id).reduce((a, i) => a + k.parts[i], 0) : 0; }
         if (m === 'sessions_down') return s.ups.filter(u => this.c[u].type === 'source' && this.sourceDown(this.c[u])).length;
         if (m === 'latency_ms') { const f = this.serviceFactor(s); const q = backlog / Math.max(1, s.def.capacity_per_min * f) * 60000; return Math.round(140 / Math.max(f, 0.05) * (0.95 + this.rand() * 0.1) + Math.min(q, 600000)); }
         return 0;
@@ -710,7 +759,8 @@
   Simulator.prototype.kpi = function (k) {
     const s = this.c[k.at];
     const returned = s.type === 'service' && s.def.rejects === 'return' ? s.tot.rej : 0;
-    const trades = Math.max(0, this.biz.produced - s.tot.out - returned - this._rejectedUpstream(k.at));
+    const produced = [...(this._srcs[k.at] || [])].reduce((a, id) => a + this.c[id].produced, 0);
+    const trades = Math.max(0, produced - s.tot.out - returned - this._rejectedUpstream(k.at));
     return { label: k.label, trades, notional: trades * this.bp.business.avg_notional, cutoff: !!k.cutoff };
   };
   Simulator.prototype._rejectedUpstream = function (at) {
@@ -799,6 +849,7 @@
         if (this.serviceFactor(s) < 0.3 || m('reject_rate') > 5) return 'bad';
         if (s.instances < s.configured || m('error_rate') > 2 || this.serviceFactor(s) < 0.9) return 'warn';
         if (m('reject_rate') > 1 || s.rejected > 5 || m('backlog') > rate * 2 || m('sessions_down') > 0) return 'warn';
+        if (this.kafkaIn(s) && this.kafkaIn(s).assign && m('consumer_lag') > s.def.capacity_per_min) return 'warn';
         return 'ok';
       }
       case 'external_party': return m('error_rate') > 50 ? 'bad' : m('backlog') > rate * 2 || m('error_rate') > 0 ? 'warn' : 'ok';
@@ -873,6 +924,16 @@
         if (f === 'rebalance_storm') { message = 'session.timeout.ms raised to 45000; group rejoined and stable.'; this.clearFault(id, 'consumer session timeout raised'); effect = 'fixed'; }
         else { message = 'Consumer group restarted with new timeout; brief pause while it rejoined.'; s.rebalances++; }
         break;
+      case 'rebalance_partitions': {
+        if (!s.assign) { message = `${name} has one consumer group member list managed by Kafka; there is no static assignment to rebalance.`; break; }
+        const w = this.partWeights(s), cons = Object.keys(s.assign), load = Object.fromEntries(cons.map(c => [c, 0])), next = Object.fromEntries(cons.map(c => [c, []]));
+        w.map((x, i) => [x, i]).sort((a, b) => b[0] - a[0]).forEach(([x, i]) => { const c = cons.reduce((a, b) => (load[a] <= load[b] ? a : b)); next[c].push(i); load[c] += x; });
+        s.assign = next; cons.forEach(c => { this.c[c].restartUntil = this.t + 120; });
+        if (f === 'partition_skew') { s.hot = s.fault.params; this.clearFault(id, 'partition assignment rebalanced'); effect = 'fixed'; }
+        message = `Partition lists in each consumer's config file updated and consumers restarted (2 minutes at half speed): ` + cons.map(c => `${c} → [${next[c].sort((a, b) => a - b).join(', ')}]`).join('; ') + '.';
+        this.log(id, 'INFO', 'Static partition assignment changed by operator; consumers restarting');
+        break;
+      }
       case 'scale_out':
         if (f === 'instances_lost') { s.configured += 1; s.instances = s.configured; message = `Rescheduled on healthy nodes; ${s.instances}/${s.configured} instances ready.`; this.clearFault(id, 'instances rescheduled'); effect = 'fixed'; }
         else { s.configured += 1; s.instances += 1; message = `Added one instance (${s.instances}/${s.configured} ready).` + (hf ? ' It runs on the same kind of host and shows the same problem.' : ' No change to the underlying problem.'); }
@@ -1006,11 +1067,12 @@
   };
 
   Simulator.prototype.activeFaults = function () {
-    const out = [];
+    const out = [], seen = new Set();
     Object.values(this.c).forEach(s => {
       if (s.fault) out.push({ id: s.def.id, type: s.fault.type });
-      if (s.host && s.host.fault) out.push({ id: s.def.id, type: s.host.fault.type, host: true });
-      if (s.host && this.inOutage(s)) out.push({ id: s.def.id, type: 'outage', host: true });
+      if (!s.host || seen.has(s.host)) return; seen.add(s.host);
+      if (s.host.fault) out.push({ id: s.def.id, type: s.host.fault.type, host: true });
+      if (this.inOutage(s)) out.push({ id: s.def.id, type: 'outage', host: true });
     });
     return out;
   };

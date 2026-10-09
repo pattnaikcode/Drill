@@ -231,8 +231,14 @@
   // Hosts exist only for systems the support team owns: services, Kafka brokers, loaders, databases, adapters.
   function hosts(sim) {
     const h = [];
+    const named = {};
     Object.values(sim.c).forEach(s => {
       const id = s.def.id;
+      if (s.def.host && S.hasHost(s.type)) { // several processes on one named server
+        if (named[s.def.host]) named[s.def.host].comps.push(id);
+        else { named[s.def.host] = { host: s.def.host, comp: id, comps: [id] }; h.push(named[s.def.host]); }
+        return;
+      }
       if (s.type === 'service') h.push({ host: `${id.replace(/_/g, '-')}-node1`, comp: id });
       if (s.type === 'kafka_topic') h.push({ host: `kafka-broker1`, comp: id });
       if (s.type === 'ref_data') h.push({ host: `${id.replace(/_/g, '-')}-loader`, comp: id });
@@ -240,7 +246,7 @@
       if (s.type === 'external_party') h.push({ host: `${id.replace(/_/g, '-')}-adapter`, comp: id });
     });
     const seen = new Set();
-    return h.filter(x => (seen.has(x.host) ? false : seen.add(x.host)));
+    return h.filter(x => (seen.has(x.host) ? false : seen.add(x.host))).map(x => ({ comps: [x.comp], ...x }));
   }
   const DENY = /^(rm|mv|cp|kill|pkill|killall|reboot|shutdown|halt|sudo|su|chmod|chown|dd|mkfs|truncate|vi|vim|nano|crontab|iptables|docker|scp|ssh)$/;
   function shell(sim, host, line) {
@@ -260,23 +266,35 @@
     }
     return out;
   }
+  function groupTable(sim, c) { // kafka-consumer-groups.sh --describe output for one topic
+    const d = c.def;
+    const lines = [`GROUP${' '.repeat(12)}${'TOPIC'.padEnd(Math.max(17, d.name.length + 2))}PARTITION  CURRENT-OFFSET  LOG-END-OFFSET  LAG     CONSUMER-ID`];
+    c.parts.forEach((lag, i) => { const end = Math.floor(c.offsets[i]); const cur = Math.floor(end - lag); lines.push(`${(d.consumer_group || 'consumers').padEnd(17)}${d.name.padEnd(Math.max(17, d.name.length + 2))}${String(i).padEnd(11)}${String(cur).padEnd(16)}${String(end).padEnd(16)}${String(Math.round(lag)).padEnd(8)}${c.assign ? (Object.keys(c.assign).find(k => sim.partitionsOf(c, k).includes(i)) || '-') : 'consumer-' + ((i % sim._consumerCount(c)) + 1)}`); });
+    return lines.join('\n');
+  }
   function run(sim, H, cmd) {
-    const a = cmd.split(/\s+/), c = sim.c[H.comp], id = H.comp, d = c.def;
+    const a = cmd.split(/\s+/), vm = H.comps.length > 1 || !!sim.c[H.comp].def.host;
+    const c = sim.c[H.comps.find(x => sim.c[x].def.mount) || H.comp], id = c.def.id, d = c.def;
     if (DENY.test(a[0]) || (a[0] === 'systemctl' && a[1] !== 'status') || (a[0] === 'kubectl' && !['get', 'describe', 'logs', 'top'].includes(a[1])))
       return `Permission denied: ${H.host} is accessed with a read-only support account.\nChanges go through approved actions with a named approver.`;
     if (c.host && sim.inOutage(c)) return `ssh: connect to host ${H.host} port 22: Connection refused`;
     const hf = sim.hostFault(c), f = c.fault && c.fault.type;
     const logFile = `/var/log/app/${id}.log`;
     const logLines = () => c.logs.map(l => l.line);
+    const logOf = file => { const m = /^\/var\/log\/app\/(\w+)\.log$/.exec(file); return m && H.comps.includes(m[1]) ? sim.c[m[1]] : null; };
+    const consumers = H.comps.map(x => sim.c[x]).filter(x => sim.kafkaIn(x) && sim.kafkaIn(x).assign);
     const oomDown = hf === 'memory_oom' && !sim.oomUp(c);
     const skew = hf === 'clock_skew' ? c.host.fault.params.seconds : 0;
     switch (a[0]) {
       case 'help': return ['Read-only support shell. Available:',
         '  hostname  uptime  date  df -h  free -m  ps aux  top  dmesg | tail',
         '  chronyc tracking   ulimit -n   lsof -p 3120 | wc -l',
-        `  ls /var/log/app   tail -n 50 ${logFile}   grep ERROR ${logFile}`,
+        ...H.comps.map(x => `  tail -n 50 /var/log/app/${x}.log   grep ERROR /var/log/app/${x}.log`),
+        '  ls /var/log/app',
+        ...(consumers.length ? ['  cat /opt/surv/conf/partitions.conf   (which partitions this server consumes)'] : []),
+        ...(vm ? ['  systemctl status <process>'] : []),
         '  cat /etc/app/application.yml   curl -s localhost:8080/health',
-        ...(c.type === 'service' ? ['  kubectl get pods   kubectl describe pod <name>   kubectl top pods'] : []),
+        ...(c.type === 'service' && !vm ? ['  kubectl get pods   kubectl describe pod <name>   kubectl top pods'] : []),
         ...(c.type === 'external_party' ? ['  openssl x509 -enddate -noout -in /etc/pki/tls/client.pem'] : []),
         ...(c.type === 'kafka_topic' ? [`  kafka-consumer-groups.sh --describe --group ${d.consumer_group || 'consumers'}`, '  kafka-topics.sh --describe --topic ' + d.name] : []),
         ...(c.type === 'database' ? ['  (use the Database tab for SQL)'] : []),
@@ -325,13 +343,21 @@
           rows.push(`oracle    4410  1.1 12.0 ora_pmon_${id.toUpperCase()}`);
           if (c.fault && c.fault.type === 'pool_exhausted') rows.push('oracle    5872 96.4  9.4 oracle' + id.toUpperCase() + ' (LOCAL=NO)  -- sid 482 month_end_recon_report');
           rows.push('oracle    4422  1.2  2.0 ora_lgwr_' + id.toUpperCase(), `oracle    4431  ${hf === 'disk_full' ? '0.0' : '0.4'}  0.5 ora_arc0_${id.toUpperCase()}${hf === 'disk_full' ? '   (stuck: destination full)' : ''}`);
-        } else if (c.type === 'kafka_topic') rows.push('kafka     2211 14.2 18.5 java -Xmx8g kafka.Kafka /etc/kafka/server.properties');
+        } else if (vm) H.comps.forEach((x, i) => { const cx = sim.c[x]; if (!oomDown) rows.push(`surv     ${3120 + i * 7 + (cx.oomRestarts || 0)} ${hf === 'cpu_runaway' ? (1 + sim.rand() * 2).toFixed(1) : (12 + sim.rand() * 25).toFixed(1)} ${hf === 'memory_oom' ? '31.0' : '9.8'} java -Xmx8g -Dsurv.process=${x} -jar /opt/surv/lib/${x.replace(/_\d+$/, '')}.jar`); });
+        else if (c.type === 'kafka_topic') rows.push('kafka     2211 14.2 18.5 java -Xmx8g kafka.Kafka /etc/kafka/server.properties');
         else if (!oomDown) rows.push(`app       ${3120 + (c.oomRestarts || 0)} ${hf === 'cpu_runaway' ? (1 + sim.rand() * 2).toFixed(1) : (30 + sim.rand() * 20).toFixed(1)} ${hf === 'memory_oom' ? '96.1' : '22.4'} java -Xmx6g -jar /opt/app/${id}.jar`);
         rows.push('root       811  0.3  0.1 /usr/sbin/sshd -D', 'node_exp   902  0.4  0.2 /usr/local/bin/node_exporter');
         return rows.join('\n');
       }
-      case 'ls': return a[1] && a[1].startsWith('/etc') ? 'application.yml' : `${id}.log\n${id}.log.1.gz\ngc.log`;
+      case 'ls':
+        if (a[1] && a[1].startsWith('/etc')) return 'application.yml';
+        if (a[1] && d.mount && a[a.length - 1].startsWith(d.mount)) return hf === 'disk_full' ? 'tx_000096.dat\ntx_000097.dat\ntx_000098.dat  (0 bytes: write failed)' : 'tx_000096.dat\ntx_000097.dat\ntx_000098.dat';
+        return H.comps.map(x => `${x}.log\n${x}.log.1.gz`).join('\n') + '\ngc.log';
       case 'cat': {
+        if (a[1] && a[1].includes('partitions.conf')) {
+          if (!consumers.length) return `cat: ${a[1]}: No such file or directory`;
+          return consumers.map(x => { const k = sim.kafkaIn(x), ps = sim.partitionsOf(k, x.def.id); return `# ${x.def.name}\n${x.def.id}.topic=${k.def.name}\n${x.def.id}.partitions=${ps.join(',')}` + (k.def.keys ? `\n${x.def.id}.underlyings=${ps.map(i => k.def.keys[i]).join(',')}` : ''); }).join('\n\n') + '\n# last changed: 2025-11-14 by surv-admin';
+        }
         if (!a[1] || !a[1].includes('application')) return `cat: ${a[1] || ''}: No such file or directory`;
         const cfg = [`# ${d.name}`, `component: ${id}`, `type: ${d.type}`];
         Object.entries(d).forEach(([k, v]) => { if (!['id', 'type', 'name'].includes(k)) cfg.push(`${k}: ${Array.isArray(v) ? '[' + v.join(', ') + ']' : v}`); });
@@ -344,7 +370,9 @@
       case 'tail': case 'grep': case 'less': {
         const file = a[a.length - 1];
         if (!file.startsWith('/var/log/app/')) return `${a[0]}: ${file}: No such file or directory`;
-        if (file !== logFile) return `${a[0]}: ${file}: No such file or directory (this host has ${logFile})`;
+        const lc = logOf(file);
+        if (!lc) return `${a[0]}: ${file}: No such file or directory (this host has ${H.comps.map(x => '/var/log/app/' + x + '.log').join(', ')})`;
+        const logLines = () => lc.logs.map(l => l.line);
         if (a[0] === 'grep') { const ic = a.includes('-i'); const pat = a.slice(1, -1).filter(x => !x.startsWith('-')).join(' ').replace(/^['"]|['"]$/g, ''); const re = new RegExp(pat.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), ic ? 'i' : ''); return logLines().filter(l => re.test(l)).join('\n'); }
         const n = +((a.find(x => /^-?\d+$/.test(x) && x !== a[a.length - 1]) || '-20').replace('-', '')) || 20;
         return logLines().slice(-n).join('\n');
@@ -356,8 +384,10 @@
           : c.type === 'external_party' ? { upstream: ({ vendor: '503 Service Unavailable', auth: '401 Unauthorized', cert: 'TLS handshake failed', disk: 'spool write failed', restart: 'starting' })[sim.extDown(c)] || (f === 'api_rate_limited' ? '429 Too Many Requests' : '200 OK'), queue: Math.round(c.inbox) } : {};
         return JSON.stringify({ status: h === 'ok' ? 'UP' : h === 'warn' ? 'DEGRADED' : 'DOWN', component: id, checks }, null, 2);
       }
-      case 'systemctl': return `● ${id}.service - ${d.name}\n   Loaded: loaded (/etc/systemd/system/${id}.service; enabled)\n   Active: active (running) since Tue 2026-08-28 06:00:12 IST; 41 days ago` + (a[2] && /chrony|ntp/.test(a[2]) ? (hf === 'clock_skew' ? '\n   (chronyd) Status: "no reachable sources"' : '') : '');
+      case 'systemctl': if (vm) { const x = H.comps.includes(a[2]) ? a[2] : H.comps[0]; return `● ${x}.service - ${sim.c[x].def.name}\n   Loaded: loaded (/etc/systemd/system/${x}.service; enabled)\n   Active: ` + (hf === 'memory_oom' ? `activating (auto-restart) (Result: signal) — Main process exited, code=killed, status=9/KILL` : `active (running) since Fri 2026-10-09 05:30:02 IST`) + `\n   Note: Surveillance starts fresh each day; data under ${sim.c[x].def.mount || '/survdata/datanode/data'}/10/09/`; }
+        return `● ${id}.service - ${d.name}\n   Loaded: loaded (/etc/systemd/system/${id}.service; enabled)\n   Active: active (running) since Tue 2026-08-28 06:00:12 IST; 41 days ago` + (a[2] && /chrony|ntp/.test(a[2]) ? (hf === 'clock_skew' ? '\n   (chronyd) Status: "no reachable sources"' : '') : '');
       case 'kubectl': {
+        if (vm) return `kubectl: ${H.host} is not a Kubernetes node; its processes run under systemd (try systemctl status ${H.comps[0]})`;
         if (c.type !== 'service') return 'error: the server does not have resource type for this host';
         const pods = []; for (let k = 1; k <= c.configured; k++) pods.push({ name: `${id.replace(/_/g, '-')}-7f9c-${k}`, ok: k <= c.instances });
         const st = p => !p.ok ? 'Pending' : hf === 'memory_oom' ? (oomDown ? 'CrashLoopBackOff' : 'Running') : hf === 'disk_full' ? 'Error' : 'Running';
@@ -377,12 +407,13 @@
       }
       case 'kafka-consumer-groups.sh': {
         if (c.type !== 'kafka_topic') return 'bash: kafka-consumer-groups.sh: command not found';
-        const lines = [`GROUP${' '.repeat(12)}TOPIC${' '.repeat(12)}PARTITION  CURRENT-OFFSET  LOG-END-OFFSET  LAG     CONSUMER-ID`];
-        c.parts.forEach((lag, i) => { const end = Math.floor(c.offsets[i]); const cur = Math.floor(end - lag); lines.push(`${(d.consumer_group || 'consumers').padEnd(17)}${d.name.padEnd(17)}${String(i).padEnd(11)}${String(cur).padEnd(16)}${String(end).padEnd(16)}${String(Math.round(lag)).padEnd(8)}consumer-${(i % sim._consumerCount(c)) + 1}`); });
-        return lines.join('\n');
+        const gi = a.indexOf('--group'), topics = Object.values(sim.c).filter(x => x.type === 'kafka_topic');
+        if (gi >= 0 && a[gi + 1]) { const t = topics.find(x => (x.def.consumer_group || 'consumers') === a[gi + 1]); if (!t) return `Error: Consumer group '${a[gi + 1]}' does not exist. Groups: ${topics.map(x => x.def.consumer_group || 'consumers').join(', ')}`; return groupTable(sim, t); }
+        return groupTable(sim, c);
       }
       case 'kafka-topics.sh': {
         if (c.type !== 'kafka_topic') return 'bash: kafka-topics.sh: command not found';
+        const ti = a.indexOf('--topic'); if (ti >= 0 && a[ti + 1]) { const t = Object.values(sim.c).find(x => x.type === 'kafka_topic' && x.def.name === a[ti + 1]); if (t) { const d = t.def; return `Topic: ${d.name}\tPartitionCount: ${d.partitions}\tReplicationFactor: 3\n` + t.parts.map((_, i) => `\tPartition: ${i}\tLeader: ${(i % 3) + 1}${d.keys ? '\tKey: ' + d.keys[i] : ''}`).join('\n'); } return `Error: Topic '${a[ti + 1]}' does not exist.`; }
         return `Topic: ${d.name}\tPartitionCount: ${d.partitions}\tReplicationFactor: 3\tConfigs: retention.ms=86400000\n` + c.parts.map((_, i) => `\tTopic: ${d.name}\tPartition: ${i}\tLeader: ${(i % 3) + 1}\tReplicas: 1,2,3\tIsr: 1,2,3`).join('\n');
       }
     }

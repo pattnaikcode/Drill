@@ -16,7 +16,7 @@ Both are static files, so the split keeps answers off the participant's screen b
 | System | Architecture | Use cases |
 |---|---|---|
 | **Equity exchange trading platform** | 3 brokers and 2 market makers over FIX → gateway → pre-trade risk (instrument master kept current by 3 listed issuers) → matching (order book store) → Kafka trade bus → clearing corporation; matching also feeds market data vendors and drop copy | Broker cannot log in · Market maker floods the gateway · Orders rejected in one stock (missed corporate action) · Matching slows to a crawl · Trades not reaching clearing · Some trades never reach clearing (stuck partition) · **Matching stops committing trades** (archive disk full on the database) · **Every member is disconnected** (gateway clock drift) · **Clearing stops accepting trades again** (expired TLS certificate) · **Orders slow down in pre-trade risk** (bad configuration change to an API timeout) · Mystery (10 possible faults) |
-| **Retail derivatives MTF** (illustrative model) | Brokers over FIX/TCP and retail brokerages over REST into order entry gateways, market makers quoting over FIX → low-latency sequencer → 3-tier matching engine (ingress and Avro encoding, price/time core, egress; instrument reference fed by issuers; order book store) → execution reports back to members, Kafka to post-trade and the CCP, Kafka to market data, and a Surveillance adaptor → Kafka → Surveillance surveillance (data server, query server, Postgres) | None yet; use the sandbox or write your own |
+| **Retail derivatives MTF** (illustrative model) | Brokers over FIX/TCP and retail brokerages over REST into order entry gateways, market makers quoting over FIX → low-latency sequencer → 3-tier matching engine (ingress and Avro encoding, price/time core, egress; instrument reference fed by issuers; order book store) → execution reports back to members, Kafka to post-trade and the CCP, Kafka to market data. Surveillance: the exchange's Surveillance Adaptor (Avro → FIX) and Refinitiv TREP underlying prices on Kafka topics keyed by underlying → four Surveillance data servers, each consuming its own partitions (config file) with a live consumer, an underlying consumer and a node process sharing the server's tx-file disk → Surveillance query server (user data, query, reporting) and Postgres for rules | Surveillance falls behind on one index (hot underlying, partition assignment never rebalanced) · A quarter of the market goes unwatched (data server disk full) · Surveillance is quiet, too quiet (start-of-day reference data missing) · One underlying stops reaching surveillance (poison message after a release) |
 | **Middle-office trade allocation** (with Kafka) | OMS and execution desk → Kafka → allocation engine (SSI reference data, allocation DB) → confirmation platform → settlement | Allocations falling behind · One partition stuck · Missing settlement instructions · Confirmations not matching · Allocation engine choking · **Allocation engine keeps restarting** (out of memory) · **Confirmations crawl through** (API rate limit, HTTP 429) · **Confirmation platform rejects everything** (expired API credentials, HTTP 401) · Mystery (9 possible faults) |
 | **Middle-office trade allocation** (direct) | Same system without Kafka, to compare designs | All of the above except the stuck partition |
 
@@ -46,6 +46,8 @@ Services, databases, adapters and loaders run on **hosts**, and hosts fail under
 | `cert_expired` | adapter | Looks exactly like the external party being down | SSLHandshakeException, `openssl x509 -enddate` | `renew_certificate` |
 
 **API faults:** `api_rate_limited` (HTTP 429; our adapter retries immediately and makes it worse; fix `enable_retry_backoff`), `api_auth_expired` (HTTP 401 invalid_client; fix `rotate_api_credentials`) on external parties, and `config_change` on services (an automated configuration refresh set an API read timeout to 50 ms; "no deployment" is not "no change"; fix `revert_config`).
+
+Components with the same `host:` run on one server and share it: a full disk or a reboot hits every process on it. `mount:` sets the path the host's data lives on.
 
 Rebooting a host or failing over to DR fixes some host faults but takes the component away for four to five minutes; restarting the application fixes none of them.
 
@@ -92,7 +94,7 @@ Every component type also gets the host faults above where they apply, and the f
 | Type | Required | Metrics (for alert rules) | Application faults | Example fix actions |
 |---|---|---|---|---|
 | `source` (participant) | `rate_per_min` (+ `role`, `session`) | `out_rate`, `held` | `session_down`, `order_flood` | `reset_sequence`, `apply_throttle` |
-| `kafka_topic` | `partitions` (+ `consumer_group`) | `lag`, `max_partition_lag`, `in_rate`, `out_rate`, `rebalances` | `poison_message`, `rebalance_storm` | `skip_poison_message`, `tune_consumer_timeout` |
+| `kafka_topic` | `partitions` (+ `consumer_group`, `keys` and `weights` per partition, `assign` to give several consumers their own partitions) | `lag`, `max_partition_lag`, `in_rate`, `out_rate`, `rebalances` | `poison_message`, `rebalance_storm` | `skip_poison_message`, `tune_consumer_timeout` |
 | `service` | `capacity_per_min` (+ `instances`, `uses`, `rejects: queue\|return`) | `in_rate`, `out_rate`, `backlog`, `reject_rate`, `error_rate`, `instances`, `latency_ms`, `rejected`, `sessions_down`, `host_cpu_pct`, `host_mem_pct`, `host_disk_pct` | `instances_lost`, `config_change` | `scale_out`, `revert_config`, `restart`, `reprocess_rejected` |
 | `external_party` | `capacity_per_min` | `in_rate`, `out_rate`, `backlog`, `error_rate`, host metrics | `unavailable`, `api_rate_limited`, `api_auth_expired` | `escalate_to_vendor`, `enable_retry_backoff`, `rotate_api_credentials`, `restart_adapter` |
 | `ref_data` | `refresh_every_min`, `stale_after_min` | `staleness_min` | `feed_failed` | `force_refresh` |
@@ -182,7 +184,7 @@ debrief:
 | `src/builder.js`, `src/builder.template.html` | System Builder: forms that write and validate blueprint YAML. |
 | `src/style.css`, `src/index.template.html` | Page design and layout. |
 | `build.py` | Bundles everything, including the YAML files, into `dist/index.html` (participant page), `dist/admin.html` (instructor page) and `dist/builder.html` (System Builder). |
-| `tests/drills.test.js` | 127 automated tests (Node's built-in runner). |
+| `tests/drills.test.js` | 139 automated tests (Node's built-in runner). |
 | `vendor/js-yaml.min.js` | YAML parser (MIT licence, see `vendor/js-yaml.LICENSE`). |
 
 ## Develop

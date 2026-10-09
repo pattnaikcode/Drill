@@ -112,7 +112,10 @@
   Session.prototype.declare = function (component, fault, evidence) {
     if (this.state !== 'running') return null;
     const rc = this.sc.root_cause || { component: this.faultPlan[0].component, fault: this.faultPlan[0].fault };
-    const correct = rc.component === component && rc.fault === fault;
+    // a host problem is the same answer whichever process on that server it is declared against
+    const rcDef = this.sim.bp.byId[rc.component], dDef = this.sim.bp.byId[component];
+    const sameHost = rcDef && dDef && rcDef.host && rcDef.host === dDef.host && S.HOST_FAULTS[fault];
+    const correct = rc.fault === fault && (rc.component === component || !!sameHost);
     const c = this.sim.c[component];
     const label = `${S.causeLabel(fault)} on ${c ? c.def.name : component}`;
     evidence = String(evidence || '').trim();
