@@ -101,8 +101,15 @@
   function tables(sim, dbId) {
     const T = {};
     const db = sim.c[dbId];
-    // v$session: who holds this database's connections
-    T['v$session'] = () => {
+    // v$session (Oracle) or pg_stat_activity (Postgres): who holds this database's connections
+    const pg = S.isPg(db);
+    const ORA2PG = { ACTIVE: 'active', INACTIVE: 'idle', WAITING: 'active', 'SQL*Net message from client': 'Client: ClientRead', 'ON CPU': null, 'db file scattered read': 'IO: DataFileRead', 'enq: TX - row lock contention': 'Lock: transactionid', 'log file switch (archiving needed)': 'IO: WALWrite', 'resmgr:cpu quantum': null };
+    const toPg = r => r.map(v => typeof v === 'string' ? (v in ORA2PG ? ORA2PG[v] : v.replace(/:(\d)/g, '$$$1').replace(/\/\*\+ FULL\(h\) \*\/ /, '')) : v);
+    T[pg ? 'pg_stat_activity' : 'v$session'] = () => {
+      const t = sessionView();
+      return pg ? { cols: ['pid', 'usename', 'application_name', 'state', 'seconds_in_query', 'connections_held', 'query', 'wait_event'], rows: t.rows.map(toPg) } : t;
+    };
+    function sessionView() {
       const rows = [];
       const users = Object.values(sim.c).filter(s => s.type === 'service' && (s.def.uses || []).includes(dbId));
       const hf = sim.hostFault(db);
@@ -115,7 +122,7 @@
         rows.push([501, 'RPT_USER', 'daily_volume_report', 'INACTIVE', 3, 1, null, 'SQL*Net message from client']);
       }
       return { cols: ['sid', 'username', 'program', 'status', 'seconds_in_call', 'connections_held', 'sql_text', 'event'], rows };
-    };
+    }
     const sources = Object.values(sim.c).filter(s => s.type === 'source');
     if (sources.length) T.sessions = () => ({
       cols: ['session_id', 'participant', 'role', 'status', 'msgs_per_min', 'limit_per_min', 'last_seq_sent', 'expected_seq', 'queued_orders', 'last_reject_reason'],
@@ -171,19 +178,20 @@
     const st = String(statement || '').trim().replace(/;\s*$/, '');
     if (!st) return { error: 'Type a SELECT statement, or SHOW TABLES.' };
     if (!sim.c[dbId] || sim.c[dbId].type !== 'database') return { error: 'Choose a database connection.' };
-    if (/^(update|delete|insert|drop|alter|truncate|create|grant|kill|merge|exec|call|begin)\b/i.test(st) || /alter\s+system/i.test(st))
-      return { error: 'ORA-01031: insufficient privileges. This console is read-only; changes go through approved actions with a named approver.' };
-    const T = tables(sim, dbId);
+    const T = tables(sim, dbId), pg = S.isPg(sim.c[dbId]);
+    const E = (ora, pgm) => pg ? 'ERROR: ' + pgm : ora;
+    if (/^(update|delete|insert|drop|alter|truncate|create|grant|kill|merge|exec|call|begin|select\s+pg_terminate_backend|select\s+pg_cancel_backend)\b/i.test(st) || /alter\s+system/i.test(st))
+      return { error: E('ORA-01031: insufficient privileges', 'permission denied (read-only role)') + '. This console is read-only; changes go through approved actions with a named approver.' };
     if (/^show\s+tables$/i.test(st)) return { cols: ['table'], rows: Object.keys(T).map(t => [t]) };
     let m = /^(?:describe|desc)\s+(\S+)$/i.exec(st);
-    if (m) { const t = T[m[1].toLowerCase()]; if (!t) return { error: `ORA-04043: object ${m[1]} does not exist` }; return { cols: ['column'], rows: t().cols.map(c => [c]) }; }
+    if (m) { const t = T[m[1].toLowerCase()]; if (!t) return { error: E(`ORA-04043: object ${m[1]} does not exist`, `relation "${m[1]}" does not exist`) }; return { cols: ['column'], rows: t().cols.map(c => [c]) }; }
     m = /^select\s+(.+?)\s+from\s+(\S+)(?:\s+where\s+(.+?))?(?:\s+group\s+by\s+(\w+))?(?:\s+order\s+by\s+(\w+)(?:\s+(asc|desc))?)?(?:\s+limit\s+(\d+))?$/is.exec(st);
     if (!m) return { error: 'Supported: SELECT columns FROM table [WHERE col = value AND ...] [GROUP BY col] [ORDER BY col DESC] [LIMIT n]; SHOW TABLES; DESCRIBE table.' };
     const [, colPart, tname, where, groupBy, orderBy, dir, limit] = m;
     const tf = T[tname.toLowerCase()];
-    if (!tf) return { error: `ORA-00942: table or view "${tname}" does not exist. Run SHOW TABLES.` };
+    if (!tf) return { error: E(`ORA-00942: table or view "${tname}" does not exist`, `relation "${tname}" does not exist`) + '. Run SHOW TABLES.' };
     const t = tf();
-    const ci = c => { const i = t.cols.indexOf(c.toLowerCase()); if (i < 0) throw new Error(`ORA-00904: "${c}": invalid identifier`); return i; };
+    const ci = c => { const i = t.cols.indexOf(c.toLowerCase()); if (i < 0) throw new Error(E(`ORA-00904: "${c}": invalid identifier`, `column "${c}" does not exist`)); return i; };
     try {
       let rows = t.rows;
       if (where) {
@@ -211,7 +219,7 @@
       else if (cols.length === 1 && cols[0] === '*') out = { cols: t.cols, rows };
       else { const idx = cols.map(ci); out = { cols: cols.map(c => c.toLowerCase()), rows: rows.map(r => idx.map(i => r[i])) }; }
       if (orderBy) {
-        const oi = out.cols.indexOf(orderBy.toLowerCase()); if (oi < 0) throw new Error(`ORA-00904: "${orderBy}": invalid identifier`);
+        const oi = out.cols.indexOf(orderBy.toLowerCase()); if (oi < 0) throw new Error(E(`ORA-00904: "${orderBy}": invalid identifier`, `column "${orderBy}" does not exist`));
         out.rows = out.rows.slice().sort((a, b) => (a[oi] > b[oi] ? 1 : a[oi] < b[oi] ? -1 : 0) * (dir && dir.toLowerCase() === 'desc' ? -1 : 1));
       }
       out.rows = out.rows.slice(0, Math.min(500, +(limit || 200)));
@@ -279,7 +287,7 @@
       case 'uptime': { const f2 = c.type === 'service' ? sim.serviceFactor(c) : 1; const load = hf === 'cpu_runaway' ? 15.8 : +(c.type === 'service' ? 1.2 + (1 - Math.min(1, f2)) * 2.5 : 0.6).toFixed(2); return ` ${clk(sim.t + skew, true)} up 41 days,  3:12,  1 user,  load average: ${load.toFixed(2)}, ${(load * 0.9).toFixed(2)}, ${(load * 0.8).toFixed(2)}`; }
       case 'df': {
         const rows = ['Filesystem      Size  Used Avail Use% Mounted on', '/dev/nvme0n1p1   50G   21G   29G  42% /'];
-        if (c.host) { const pct = Math.round(sim.hostMetric(c, 'host_disk_pct')); const size = c.type === 'database' ? 500 : 100; const used = Math.round(size * pct / 100); rows.push(`/dev/nvme1n1    ${String(size + 'G').padStart(4)}  ${String(used + 'G').padStart(4)}  ${String((size - used) + 'G').padStart(4)} ${String(pct + '%').padStart(4)} ${S.MOUNT[c.type]}`); }
+        if (c.host) { const pct = Math.round(sim.hostMetric(c, 'host_disk_pct')); const size = c.type === 'database' ? 500 : 100; const used = Math.round(size * pct / 100); rows.push(`/dev/nvme1n1    ${String(size + 'G').padStart(4)}  ${String(used + 'G').padStart(4)}  ${String((size - used) + 'G').padStart(4)} ${String(pct + '%').padStart(4)} ${S.mountOf(c)}`); }
         else rows.push('/dev/nvme1n1    200G   88G  112G  44% /data');
         rows.push('tmpfs            16G  1.1G   15G   7% /dev/shm');
         return rows.join('\n');
@@ -288,7 +296,7 @@
       case 'dmesg': {
         const out = ['[3542311.20] eth0: link up, 25000 Mbps, full duplex', '[3542390.71] EXT4-fs (nvme1n1): mounted filesystem with ordered data mode'];
         if (hf === 'memory_oom') for (let k = Math.max(1, c.oomRestarts - 3); k <= c.oomRestarts; k++) out.push(`[${3550000 + k * 180}.02] Memory cgroup out of memory: Killed process ${3120 + k} (java) total-vm:9873120kB, anon-rss:6291456kB, oom_score_adj:937`);
-        if (hf === 'disk_full') out.push(`[${3550120}.44] EXT4-fs warning (device nvme1n1): ext4_da_writepages: No space left on device (${S.MOUNT[c.type]})`);
+        if (hf === 'disk_full') out.push(`[${3550120}.44] EXT4-fs warning (device nvme1n1): ext4_da_writepages: No space left on device (${S.mountOf(c)})`);
         if (hf === 'clock_skew') out.push('[3550044.10] chronyd[611]: Can\'t synchronise: no selectable sources');
         return out.join('\n');
       }
@@ -310,7 +318,10 @@
       case 'ps': case 'top': {
         const rows = ['USER       PID %CPU %MEM COMMAND'];
         if (hf === 'cpu_runaway') rows.push('root      7731 98.2  1.1 /opt/backup/bin/backup_agent --full --target=/mnt/nfs/backup');
-        if (c.type === 'database') {
+        if (c.type === 'database' && S.isPg(c)) {
+          rows.push('postgres  1201  0.6  4.1 /usr/pgsql-15/bin/postgres -D /var/lib/pgsql/data', `postgres  1210  ${hf === 'disk_full' ? '0.0' : '0.3'}  0.2 postgres: walwriter${hf === 'disk_full' ? '   (blocked: No space left on device)' : ''}`, 'postgres  1209  0.2  0.9 postgres: checkpointer');
+          if (c.fault && c.fault.type === 'pool_exhausted') rows.push('postgres  5872 96.4  9.4 postgres: rpt_user surveillance 10.20.4.17 SELECT  -- pid 482 long-running report');
+        } else if (c.type === 'database') {
           rows.push(`oracle    4410  1.1 12.0 ora_pmon_${id.toUpperCase()}`);
           if (c.fault && c.fault.type === 'pool_exhausted') rows.push('oracle    5872 96.4  9.4 oracle' + id.toUpperCase() + ' (LOCAL=NO)  -- sid 482 month_end_recon_report');
           rows.push('oracle    4422  1.2  2.0 ora_lgwr_' + id.toUpperCase(), `oracle    4431  ${hf === 'disk_full' ? '0.0' : '0.4'}  0.5 ora_arc0_${id.toUpperCase()}${hf === 'disk_full' ? '   (stuck: destination full)' : ''}`);
@@ -357,7 +368,7 @@
           let ev = p.ok ? '  <none>' : `  Warning  FailedScheduling  0/6 nodes are available: 6 Insufficient memory.\n  Normal   Evicted (previous pod) The node was low on resource: memory.`;
           let last = '';
           if (p.ok && hf === 'memory_oom') { last = '\nLast State:   Terminated\n  Reason:     OOMKilled\n  Exit Code:  137\nLimits:\n  memory:     6Gi'; ev = `  Warning  BackOff  Back-off restarting failed container (restarts: ${c.oomRestarts})`; }
-          if (p.ok && hf === 'disk_full') { last = '\nLast State:   Terminated\n  Reason:     Error\n  Exit Code:  1'; ev = `  Warning  Unhealthy  Liveness probe failed: write ${S.MOUNT.service}/app/${id}.log: no space left on device`; }
+          if (p.ok && hf === 'disk_full') { last = '\nLast State:   Terminated\n  Reason:     Error\n  Exit Code:  1'; ev = `  Warning  Unhealthy  Liveness probe failed: write ${S.mountOf(c)}/app/${id}.log: no space left on device`; }
           return `Name:         ${p.name}\nStatus:       ${st(p)}${last}\nEvents:\n` + ev;
         }
         if (a[1] === 'top') return ['NAME' + ' '.repeat(26) + 'CPU(cores)   MEMORY(bytes)', ...pods.filter(p => st(p) === 'Running').map(p => `${p.name.padEnd(30)}${hf === 'cpu_runaway' ? (60 + sim.rand() * 40 | 0) : (400 + sim.rand() * 300 | 0)}m         ${hf === 'memory_oom' ? (5900 + sim.rand() * 250 | 0) : (3100 + sim.rand() * 900 | 0)}Mi`)].join('\n');

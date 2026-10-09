@@ -285,7 +285,8 @@
   }
   const SPLUNK_EXAMPLES = ['level=ERROR earliest=-15m | stats count by component', 'level=ERROR | top pattern', 'rejected | stats count by component', 'level=WARN OR level=ERROR | timechart count'];
   function sqlExamples() {
-    const ex = ['SHOW TABLES', 'SELECT sid, program, status, seconds_in_call, connections_held FROM v$session ORDER BY connections_held DESC'];
+    const pg = A.sqlDb && S.isPg(A.sim.c[A.sqlDb]);
+    const ex = ['SHOW TABLES', pg ? 'SELECT pid, application_name, state, wait_event, connections_held FROM pg_stat_activity ORDER BY connections_held DESC' : 'SELECT sid, program, status, event, connections_held FROM v$session ORDER BY connections_held DESC'];
     if (A.bp.components.some(c => c.type === 'source' && /FIX|Broker|Market/i.test((c.role || '') + c.name)) || A.bp.components.filter(c => c.type === 'source').length > 2) ex.push('SELECT * FROM sessions');
     ex.push('SELECT key, count(*) FROM rejects GROUP BY key');
     if (A.bp.components.some(c => c.type === 'issuer')) ex.push("SELECT * FROM corporate_actions WHERE status = 'SKIPPED'");
@@ -314,7 +315,7 @@
       <div class="chips">${SPLUNK_EXAMPLES.map(q => `<button type="button" class="chip" data-sq="${esc(q)}">${esc(q)}</button>`).join('')}</div>
       <p class="small muted" style="margin:0">Fields: <code>component=</code> <code>level=</code> <code>earliest=-15m</code>, <code>"phrases"</code>, <code>NOT</code>. Commands: <code>stats count by component|level|pattern</code>, <code>top pattern</code>, <code>timechart count</code>, <code>head 20</code>.</p>
       <div id="spBody" class="stack" style="gap:8px">${splunkBody()}</div>`;
-    if (A.toolTab === 'sql') body = A.sqlDb ? `<div class="row"><label class="small muted row" style="gap:6px">Connection<select id="sqlDb">${A.bp.components.filter(c => c.type === 'database').map(c => `<option value="${c.id}"${A.sqlDb === c.id ? ' selected' : ''}>${esc(c.name)} (read-only)</option>`).join('')}</select></label></div>
+    if (A.toolTab === 'sql') body = A.sqlDb ? `<div class="row"><label class="small muted row" style="gap:6px">Connection<select id="sqlDb">${A.bp.components.filter(c => c.type === 'database').map(c => `<option value="${c.id}"${A.sqlDb === c.id ? ' selected' : ''}>${esc(c.name)} (${c.engine === 'postgres' ? 'Postgres' : 'Oracle'}, read-only)</option>`).join('')}</select></label></div>
       <textarea id="sqlQ" class="code sql" spellcheck="false" aria-label="SQL statement">${esc(A.sqlQ)}</textarea>
       <div class="row"><button class="btn primary" id="sqlRun">Run query</button><span class="small muted">Read-only. Changes go through approved actions.</span></div>
       <div class="chips">${sqlExamples().map(q => `<button type="button" class="chip" data-sql="${esc(q)}">${esc(q.length > 60 ? q.slice(0, 58) + '…' : q)}</button>`).join('')}</div>
@@ -612,7 +613,7 @@ debrief:
     const runSql = q => { A.sqlQ = q; A.sqlR = TL.sql(A.sim, A.sqlDb, q); if (A.session) A.session.useTool('SQL', q.replace(/\s+/g, ' ')); $('#sqlBody').innerHTML = resultTable(A.sqlR); };
     on('#sqlRun', 'click', () => runSql($('#sqlQ').value));
     on('#sqlQ', 'keydown', e => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); runSql(e.target.value); } });
-    on('#sqlDb', 'change', e => { A.sqlDb = e.target.value; A.sqlR = null; $('#sqlBody').innerHTML = ''; });
+    on('#sqlDb', 'change', e => { A.sqlDb = e.target.value; A.sqlR = null; A.sqlQ = 'SHOW TABLES'; renderAll(); });
     each('[data-sql]', b => b.addEventListener('click', () => { $('#sqlQ').value = b.dataset.sql; runSql(b.dataset.sql); }));
     const runUnix = cmd => {
       if (!cmd.trim()) return;

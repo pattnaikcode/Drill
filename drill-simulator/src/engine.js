@@ -113,6 +113,9 @@
     cert_expired: { label: 'TLS client certificate expired', types: ['external_party'], params: {} },
   };
   const hasHost = type => HOST_TYPES.includes(type);
+  // databases default to Oracle; "engine: postgres" changes error messages, mounts and SQL views
+  const isPg = s => !!(s && s.def && s.def.engine === 'postgres');
+  const mountOf = s => isPg(s) ? '/var/lib/pgsql/data' : MOUNT[s.type];
   function faultsFor(type) { // every fault a component of this type can have, application and host
     const out = { ...(TYPES[type] ? TYPES[type].faults : {}) };
     Object.entries(HOST_FAULTS).forEach(([k, f]) => { if (f.types.includes(type)) out[k] = { ...f, host: true }; });
@@ -215,6 +218,7 @@
       if (c.type === 'kafka_topic' && c.partitions > 64) errors.push(`${where}: at most 64 partitions.`);
       if (c.type === 'service' && c.instances !== undefined && !(Number.isInteger(c.instances) && c.instances > 0)) errors.push(`${where}: "instances" must be a positive whole number.`);
       if (c.type === 'service' && c.rejects !== undefined && !['queue', 'return'].includes(c.rejects)) errors.push(`${where}: "rejects" must be "queue" (held for reprocessing) or "return" (sent back to the sender).`);
+      if (c.engine !== undefined && (c.type !== 'database' || !['oracle', 'postgres'].includes(c.engine))) errors.push(`${where}: "engine" is only for databases and must be oracle or postgres.`);
       if (c.uses !== undefined && !Array.isArray(c.uses)) errors.push(`${where}: "uses" must be a list of component ids.`);
     });
     comps.forEach(c => (c && Array.isArray(c.uses) ? c.uses : []).forEach(u => {
@@ -591,7 +595,8 @@
           this.log(id, 'WARN', `Only ${s.instances}/${s.configured} ${name} instances ready; pods ${id}-${s.instances + 1}, ${id}-${s.configured} Pending (node memory pressure)`);
         (s.def.uses || []).forEach(u => {
           const d = this.c[u]; if (d.type !== 'database') return;
-          if (this.hostFault(d) === 'disk_full' && this.chance(p * 1.6)) this.log(id, 'ERROR', `ORA-00257: Archiver error. Connect AS SYSDBA only until resolved (${blk()} commit failed)`);
+          if (this.hostFault(d) === 'disk_full' && isPg(d) && this.chance(p * 1.6)) this.log(id, 'ERROR', `org.postgresql.util.PSQLException: ERROR: could not extend file "base/16384/${24576 + Math.floor(this.rand() * 40)}": No space left on device (${blk()} insert failed)`);
+          else if (this.hostFault(d) === 'disk_full' && this.chance(p * 1.6)) this.log(id, 'ERROR', `ORA-00257: Archiver error. Connect AS SYSDBA only until resolved (${blk()} commit failed)`);
           else if (d.fault && d.fault.type === 'pool_exhausted' && this.chance(p * 1.6)) this.log(id, 'ERROR', `HikariPool-1 - Connection is not available, request timed out after 30000ms (${blk()})`);
           else if (this.hostFault(d) === 'cpu_runaway' && this.chance(p)) this.log(id, 'WARN', `Slow query 3,8${Math.floor(this.rand() * 9)}0ms on ${d.def.name} (expected < 200ms)`);
         });
@@ -621,7 +626,8 @@
         else if (!why && !f && this.chance(p * 0.5)) this.log(id, 'INFO', `${name}: ${fmtInt(this.rates(id).out_rate / 2)} messages acknowledged in last 30s`);
       }
       if (s.type === 'database') {
-        if (hf === 'disk_full' && this.chance(p)) this.log(id, 'ERROR', `ARC0: Error 19809 creating archive log file to '${MOUNT.database}/1_${48210 + Math.floor(this.t / 300)}.arc'; ORA-19815: destination is 100% full`);
+        if (hf === 'disk_full' && isPg(s) && this.chance(p)) this.log(id, 'ERROR', `PANIC: could not write to file "pg_wal/00000001000000A2000000${(64 + Math.floor(this.t / 300) % 190).toString(16).toUpperCase()}": No space left on device`);
+        else if (hf === 'disk_full' && this.chance(p)) this.log(id, 'ERROR', `ARC0: Error 19809 creating archive log file to '${MOUNT.database}/1_${48210 + Math.floor(this.t / 300)}.arc'; ORA-19815: destination is 100% full`);
         else if (f === 'pool_exhausted' && this.chance(p)) this.log(id, 'WARN', `Session 482 (month_end_recon_report) running ${Math.round((this.t - s.fault.since) / 60) + 14} min, holding ${s.def.pool_size - 4} connections`);
         else if (this.chance(p * 0.25)) this.log(id, 'INFO', `Pool active ${s.used}/${s.def.pool_size}, idle ${s.def.pool_size - s.used}`);
       }
@@ -929,7 +935,7 @@
         break;
       }
       case 'clear_disk_space':
-        if (hf === 'disk_full') { message = `Archived and removed old files on ${host}: ${MOUNT[s.type]} down from 100% to 46%. ${s.type === 'database' ? 'Archiver resumed; commits flowing again.' : 'Writes succeeding again.'}`; fixHost(`${MOUNT[s.type]} cleared`); }
+        if (hf === 'disk_full') { message = `Archived and removed old files on ${host}: ${mountOf(s)} down from 100% to 46%. ${s.type === 'database' ? (isPg(s) ? 'WAL writes succeeding; the database accepts writes again.' : 'Archiver resumed; commits flowing again.') : 'Writes succeeding again.'}`; fixHost(`${mountOf(s)} cleared`); }
         else message = `Cleared old files on ${host}; disk was already at ${Math.round(s.host.disk)}%. No change.`;
         break;
       case 'kill_runaway_process':
@@ -987,7 +993,7 @@
         break;
       case 'kill_blocking_session':
         if (f === 'pool_exhausted') { message = 'Killed session 482 (month_end_recon_report). Connections released.'; this.log(id, 'INFO', 'Session 482 killed by operator; pool recovering'); this.clearFault(id, 'blocking session killed'); effect = 'fixed'; }
-        else if (hf === 'disk_full') message = 'No blocking sessions. Sessions are waiting on “log file switch (archiving needed)”.';
+        else if (hf === 'disk_full') message = isPg(s) ? 'No blocking sessions. Sessions are waiting on WAL writes (IO: WALWrite).' : 'No blocking sessions. Sessions are waiting on “log file switch (archiving needed)”.';
         else message = 'No blocking sessions found.';
         break;
       case 'increase_pool_size':
@@ -1014,7 +1020,7 @@
     return { rejected, held, lost: this.biz.lost };
   };
 
-  const OpsSim = { TYPES, HOST_TYPES, HOST_FAULTS, MOUNT, ACTIONS, CAUSES, faultsFor, actionsFor, causeLabel, hasHost, parseBlueprint, validateBlueprint, Simulator, clockStr, parseClock, fmtInt, rng };
+  const OpsSim = { TYPES, HOST_TYPES, HOST_FAULTS, MOUNT, mountOf, isPg, ACTIONS, CAUSES, faultsFor, actionsFor, causeLabel, hasHost, parseBlueprint, validateBlueprint, Simulator, clockStr, parseClock, fmtInt, rng };
   if (typeof module === 'object' && module.exports) module.exports = OpsSim;
   else root.OpsSim = OpsSim;
 })(typeof globalThis !== 'undefined' ? globalThis : this);
