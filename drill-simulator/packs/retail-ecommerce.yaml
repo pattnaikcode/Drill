@@ -1,0 +1,222 @@
+# Pack: retail and e-commerce
+#
+# Building blocks of online shops and store chains: an API gateway in front of the services, a
+# message queue between them, a cache, the payment gateway, a search index and the hub that collects
+# sales from store tills. Generic patterns that every large retailer documents publicly; not any
+# vendor's product.
+
+pack: retail-ecommerce
+label: Retail and e-commerce
+description: API gateway, message queue, cache, payment gateway, product search and store sales sync.
+
+types:
+  api_gateway:
+    label: API gateway
+    behaves_like: service
+    help: "Front door for the website and apps: TLS, authentication (tokens), rate limits and routing to the backend services."
+    vars: {ROUTE: "/api/v1/checkout"}
+    faults:
+      rate_limit_too_low:
+        label: Rate limit set too low after a config change
+        effect: {reject: 0.35, reason: "Requests rejected with HTTP 429 Too Many Requests: the per-client rate limit was lowered by a config push."}
+        on_start: "Config v{date}.3 applied: rate_limit.default = 50 req/s (was 500)"
+        logs:
+          - "429 Too Many Requests POST {ROUTE} client=mobile-app limit=50/s"
+          - "Rate limiter: 3,412 requests throttled in the last minute (policy default)"
+        evidence:
+          "gwctl config diff": "- rate_limit.default: 500/s\n+ rate_limit.default: 50/s   (applied {time} by pipeline deploy #8812)"
+        hint: "Restarting reloads the same config: the limit is still 50/s."
+      token_keys_expired:
+        label: Token signing keys out of date (logins rejected)
+        effect: {reject: 0.8, reason: "HTTP 401: access tokens fail validation; the gateway's cached signing keys (JWKS) are older than the identity provider's new key."}
+        on_start: "JWT validation failed: kid 'k-2026-10' not found in cached JWKS (cached keys: k-2026-09)"
+        logs: ["401 Unauthorized {ROUTE}: signature key id 'k-2026-10' unknown"]
+        evidence:
+          "gwctl jwks": "CACHED KEY IDS   FETCHED\nk-2026-09        3 days ago\nIdentity provider now signs with: k-2026-10"
+      upstream_pool_exhausted:
+        label: Connection pool to the backend exhausted (504s)
+        effect: {capacity: 0.5, errors: 0.25, reason: "HTTP 504 Gateway Timeout: all 64 upstream connections to {peer} are busy; requests wait and time out after 3 s."}
+        on_start: "Upstream {peer}: connection pool exhausted (64/64 in use), pending 1,840"
+        logs: ["504 Gateway Timeout {ROUTE} upstream={peerhost}: no free connection after 3000 ms"]
+        evidence:
+          "gwctl upstreams": "UPSTREAM            POOL    IN_USE  PENDING  5xx%\n{peerhost}  64      64      1840     24.1"
+    actions:
+      revert_rate_limit:
+        label: "Roll back the rate-limit config to the previous version"
+        fixes: [rate_limit_too_low]
+        replays_rejected: true
+        fixed_message: "Rate limit back to 500/s; throttled clients retry and succeed."
+      refresh_signing_keys:
+        label: "Refresh the gateway's signing keys (re-fetch JWKS)"
+        fixes: [token_keys_expired]
+        fixed_message: "JWKS refreshed (k-2026-09, k-2026-10); tokens validate again."
+      raise_upstream_pool:
+        label: "Raise the upstream connection pool to 256"
+        fixes: [upstream_pool_exhausted]
+        fixed_message: "Pool raised to 256; pending requests served; 504s stop."
+      raise_upstream_timeout:
+        label: "Raise the upstream timeout to 10 s"
+        message: "Timeout raised: fewer 504s, but requests now hang for longer. The pool is still full."
+    shell:
+      "gwctl status": "ROUTE            UPSTREAM            2xx%   4xx%   5xx%   P99\n{ROUTE}  {peerhost}  99.6   0.3    0.1    180ms"
+    logs_ok: ["{rate} requests/min; 2xx 99.6%; p99 180 ms"]
+
+  message_queue:
+    label: Message queue (broker)
+    behaves_like: service
+    help: "Holds messages between services (orders, stock updates, emails) so a slow consumer does not block the sender. Consumers take messages off and acknowledge them."
+    vars: {QUEUE: "{id}.q", DLQ: "{id}.dlq"}
+    faults:
+      consumers_down:
+        label: No consumers on the queue
+        effect: {down: true, reason: "Queue {QUEUE} has 0 consumers: messages are piling up, nothing is taking them off."}
+        on_start: "Consumer count on {QUEUE} dropped to 0 (last consumer disconnected: connection reset)"
+        logs: ["Queue {QUEUE}: {depth} ready, 0 unacked, 0 consumers"]
+        evidence:
+          "mqctl list_queues": "NAME          READY    UNACKED  CONSUMERS\n{QUEUE}   {depth}   0        0\n{DLQ}  12       0        0"
+        hint: "The broker restarted fine, but the consuming service still has not reconnected."
+      memory_alarm:
+        label: Broker memory alarm (publishers blocked)
+        effect: {capacity: 0.15, reason: "Memory high watermark reached: the broker is blocking publishers until memory frees up."}
+        on_start: "memory resource limit alarm set on node {host}. Publishers will be blocked until this alarm clears."
+        logs: ["connection <0.4211.0> (checkout): blocked because of memory alarm"]
+        evidence:
+          "mqctl status": "Memory used: 6.4 GB / high watermark 6.4 GB (0.4 of RAM)\nAlarms: [memory]"
+      poison_message:
+        label: A bad message is redelivered forever
+        effect: {capacity: 0.1, reason: "One malformed message fails processing and is requeued at the head of {QUEUE}; consumers keep retrying it."}
+        on_start: "Message id 8f12c… redelivered=true (delivery count 412): consumer nack, requeue"
+        logs: ["Consumer error: JSON parse error at line 1 column 88; message requeued (delivery count 413)"]
+        evidence:
+          "mqctl list_queues": "NAME          READY    UNACKED  CONSUMERS  REDELIVER/s\n{QUEUE}   {depth}   1        4          95"
+    actions:
+      restart_consumers:
+        label: "Restart the consuming service so it reconnects"
+        fixes: [consumers_down]
+        fixed_message: "4 consumers attached to {QUEUE}; the {backlog} waiting messages are draining."
+      move_poison_to_dlq:
+        label: "Move the bad message to the dead-letter queue (set a delivery limit)"
+        fixes: [poison_message]
+        fixed_message: "Message moved to {DLQ}; consumers are processing the queue again. Look at the bad message later."
+      raise_memory_watermark:
+        label: "Raise the memory high watermark (temporary)"
+        fixes: [memory_alarm]
+        fixed_message: "Watermark raised; publishers unblocked. Find out why messages built up in memory."
+      purge_queue:
+        label: "Purge the queue (delete every waiting message)"
+        drops_queue: true
+        message: "All messages in {QUEUE} deleted. Those orders/updates are lost and must be rebuilt."
+    shell:
+      "mqctl list_queues": "NAME          READY    UNACKED  CONSUMERS\n{QUEUE}   {depth}   18       4\n{DLQ}  12       0        0"
+      "mqctl status": "Memory used: 1.9 GB / high watermark 6.4 GB\nAlarms: []"
+    logs_ok: ["Queue {QUEUE}: {rate} delivered/min, 4 consumers"]
+
+  cache_cluster:
+    label: Cache (in-memory key-value store)
+    behaves_like: database
+    help: "Keeps hot data (sessions, prices, carts) in memory so services do not hit the database every time."
+    defaults: {pool_size: 200}
+    faults:
+      eviction_storm:
+        label: Cache full, evicting hot keys
+        effect: {pool_full: true, reason: "maxmemory reached: hot keys are evicted and every miss goes to the database."}
+        on_start: "used_memory reached maxmemory (8gb); evicting keys (policy allkeys-lru)"
+        logs: ["evicted_keys +48,211 in the last minute; hit rate 41% (normally 97%)"]
+        evidence:
+          "cache-cli info": "used_memory_human:8.00G\nmaxmemory_human:8.00G\nevicted_keys:1904411\nkeyspace_hit_rate:0.41"
+      keys_without_expiry:
+        label: Keys written without an expiry are filling memory
+        effect: {pool_full: true, reason: "A new release writes cart keys with no TTL; memory fills and connections queue."}
+        on_start: "Release 4.18 deployed: cart:* keys written with SET (no EX)"
+        logs: ["keys without TTL: 9.1M (cart:*)"]
+    actions:
+      raise_maxmemory:
+        label: "Raise maxmemory (scale the cache up)"
+        fixes: [eviction_storm]
+        fixed_message: "maxmemory raised to 16gb; hit rate recovering."
+      fix_ttl_and_flush_carts:
+        label: "Roll back the release and expire the cart:* keys"
+        fixes: [keys_without_expiry]
+        fixed_message: "Release rolled back; cart keys expiring; memory back to normal."
+      flush_all:
+        label: "FLUSHALL (empty the cache)"
+        message: "Cache emptied: every request now misses and goes to the database. Sessions and carts are lost."
+    shell:
+      "cache-cli info": "used_memory_human:3.10G\nmaxmemory_human:8.00G\nkeyspace_hit_rate:0.97"
+
+  card_payment_gateway:
+    label: Payment gateway
+    behaves_like: external_party
+    help: "Third party that takes card, UPI and wallet payments and sends them to the bank (acquirer). Outside our control."
+    faults:
+      acquirer_timeouts:
+        label: Bank (acquirer) behind the gateway timing out
+        effect: {capacity: 0.5, errors: 0.3, reason: "The payment gateway's acquiring bank is timing out; payments fail with 'bank unavailable'."}
+        on_start: "Payment gateway status page: degraded performance with acquirer ACQ-1"
+        logs: ["POST /payments 502: acquirer timeout (gateway code BANK_UNAVAILABLE) order {key}"]
+      three_ds_outage:
+        label: Card authentication (3-D Secure / OTP) failing
+        effect: {errors: 0.45, reason: "Customers do not receive OTPs: the 3-D Secure step fails and payments are abandoned."}
+        on_start: "3DS challenge failures rising: authentication_failed 45%"
+        logs: ["Payment {key}: 3DS authentication failed (no OTP response)"]
+    actions:
+      route_to_backup_acquirer:
+        label: "Route payments to the backup acquirer"
+        fixes: [acquirer_timeouts]
+        fixed_message: "Payments routed through ACQ-2; success rate back to 96%."
+      raise_with_gateway:
+        label: "Raise it with the payment gateway"
+        fixes: [three_ds_outage]
+        after_s: 600
+        pending_message: "Gateway acknowledges the OTP issue with the card network; ETA 10 minutes."
+        fixed_message: "Gateway reports OTP delivery restored."
+    logs_ok: ["Payments: {rate}/min, success 96.2%"]
+
+  search_index:
+    label: Product search index
+    behaves_like: ref_data
+    help: "The search engine's copy of the catalogue (names, prices, stock). Rebuilt from the catalogue on a schedule."
+    defaults: {refresh_every_min: 10, stale_after_min: 20, stale_reject_share: 0.08, missing_msg: "Search showed an old price for SKU {key}: checkout re-priced the cart and the customer abandoned it", key_prefix: SKU}
+    faults:
+      indexing_stuck:
+        label: Indexing job stuck (search shows old prices and stock)
+        effect: {stale: true, reason: "The indexing job is stuck on a bulk request; search results show old prices and sold-out items."}
+        on_start: "Bulk index request failed: cluster_block_exception (index read-only: disk watermark exceeded)"
+        logs: ["Indexer: retrying bulk batch 4,812 (cluster_block_exception [FORBIDDEN/12/index read-only])"]
+        evidence:
+          "searchctl health": "cluster: yellow\nindex products: read_only_allow_delete=true (disk 95%)"
+    actions:
+      clear_read_only_and_reindex:
+        label: "Free disk, clear the read-only block and resume indexing"
+        fixes: [indexing_stuck]
+        fixed_message: "Index writable; indexing caught up; search shows current prices."
+    shell:
+      "searchctl health": "cluster: green\nindex products: docs 1,204,811, last update {time}"
+
+  store_sales_hub:
+    label: Store sales sync hub
+    behaves_like: service
+    help: "Collects sales from store tills (POS) every few minutes and passes them to stock, finance and loyalty."
+    faults:
+      stores_offline:
+        label: Stores' uploads failing (VPN down to a region)
+        effect: {capacity: 0.4, reason: "Stores in the North region cannot reach the hub: their sales are held on the tills."}
+        on_start: "Region NORTH: 212 of 540 stores have not uploaded for 15 minutes (VPN tunnel down)"
+        logs: ["Store S-{key} last upload 17 min ago; tills holding sales locally"]
+      duplicate_uploads:
+        label: Stores re-sending the same sales (duplicates)
+        effect: {reject: 0.2, reason: "Duplicate sales batches rejected after tills retried uploads that had already succeeded."}
+        on_start: "Batch acknowledgements delayed; tills retrying"
+        logs: ["Batch from store {key} rejected: duplicate batch id"]
+    actions:
+      restore_vpn:
+        label: "Get the network team to restore the region's VPN"
+        fixes: [stores_offline]
+        after_s: 300
+        pending_message: "Network team is failing the NORTH tunnel over to the backup link (about 5 minutes)."
+        fixed_message: "VPN restored; stores uploading held sales."
+      fix_ack_and_dedupe:
+        label: "Fix the acknowledgements so tills stop retrying"
+        fixes: [duplicate_uploads]
+        fixed_message: "Acks sent on time; duplicates stop."
+    logs_ok: ["Received {rate} till transactions/min from 540 stores"]

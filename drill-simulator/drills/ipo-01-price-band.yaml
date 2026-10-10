@@ -1,0 +1,24 @@
+id: ipo-price-band
+title: Retail bids rejected on the last day
+systems: [ipo-issuance]
+level: Easy
+summary: Brokers say many bids are rejected as "below band". The offer document says they should be fine.
+brief: >
+  16:00, last hour of bidding. The issue master was updated at 15:50 for the final day.
+faults:
+  - {at: "16:05", component: bidding, fault: price_band_wrong}
+root_cause: {component: bidding, fault: price_band_wrong}
+accepted_fixes: [bidding.correct_price_band]
+risky_actions: [bidding.restart, bidding.scale_out]
+hints:
+  - {after_min: 2, text: "Read the rejection reason and compare the band with the offer document (issuectl show)."}
+debrief:
+  what_happened: >
+    The 15:50 update set the price band to 1,050-1,080 instead of 1,005-1,080, so every bid between
+    1,005 and 1,049 was rejected.
+  key_signal: Rejects 'below band floor 1,050.00' and the band in issuectl show differing from the offer document.
+  why_not_restart: A restart keeps the same band. Correct it (with approvals) and ask brokers to resubmit.
+  runbook:
+    - Read the reject reason and check the issue setup.
+    - Correct the band with approvals before bidding closes.
+    - Get rejected bids resubmitted and inform the regulator if required.

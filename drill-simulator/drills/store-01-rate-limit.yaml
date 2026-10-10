@@ -1,0 +1,22 @@
+id: store-rate-limit
+title: App users get "too many requests"
+systems: [store-chain]
+level: Easy
+summary: A third of app and web requests fail with an error. The storefront is idle.
+brief: >
+  18:00, evening sale. A config pipeline ran on the API gateway at 17:58.
+faults:
+  - {at: "18:05", component: gateway, fault: rate_limit_too_low}
+root_cause: {component: gateway, fault: rate_limit_too_low}
+accepted_fixes: [gateway.revert_rate_limit]
+risky_actions: [gateway.restart, storefront.scale_out]
+hints:
+  - {after_min: 2, text: "Read the HTTP status the gateway returns, then check what changed in its config."}
+debrief:
+  what_happened: The config push lowered the default rate limit from 500/s to 50/s, so the gateway answered 429 to a third of requests.
+  key_signal: 429 Too Many Requests in the gateway log and the diff in gwctl config diff.
+  why_not_restart: Restarting reloads the same config, and scaling the storefront does not help because requests never reach it.
+  runbook:
+    - Read the status code and config history.
+    - Roll back the config.
+    - Fix the pipeline so limits need review.

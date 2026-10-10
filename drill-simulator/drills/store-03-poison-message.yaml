@@ -1,0 +1,22 @@
+id: store-poison-message
+title: Queue stuck on one message
+systems: [store-chain]
+level: Medium
+summary: The orders queue is growing although the stock service is running and connected.
+brief: >
+  18:00. A store in Pune upgraded its till software at 17:45.
+faults:
+  - {at: "18:05", component: orders_q, fault: poison_message}
+root_cause: {component: orders_q, fault: poison_message}
+accepted_fixes: [orders_q.move_poison_to_dlq]
+risky_actions: [orders_q.purge_queue, stock.restart]
+hints:
+  - {after_min: 2, text: "Consumers are connected but nothing moves. Look at redeliveries."}
+debrief:
+  what_happened: One malformed sale from the upgraded till failed parsing and was requeued at the head of the queue forever.
+  key_signal: Very high redeliveries with the same message and 'JSON parse error ... requeued' in the logs.
+  why_not_restart: Restarted consumers pick up the same message again. Move it to the dead-letter queue and look at it later.
+  runbook:
+    - Confirm consumers are connected but redelivering.
+    - Move the bad message to the DLQ (set a delivery limit).
+    - Send it to the till team to fix.

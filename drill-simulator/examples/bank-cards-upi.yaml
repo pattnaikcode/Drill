@@ -1,0 +1,69 @@
+# Retail bank: cards, ATMs and UPI (illustrative model)
+#
+# ATM and card-terminal transactions come to the bank's card switch as ISO 8583 messages; the switch
+# checks PINs with the HSM and authorises against the core banking system. UPI requests arrive from
+# the national network at the bank's UPI switch, which debits or credits accounts in core banking.
+# Customers get SMS alerts. Built from the retail-banking pack. Names and numbers are a training model.
+
+id: bank-cards-upi
+system: Retail bank cards, ATMs and UPI
+description: >
+  ATMs and card terminals send ISO 8583 authorisation requests to the card switch, which verifies
+  PINs with the HSM and authorises against the core banking system. UPI requests from the national
+  network come through the UPI switch to core banking. Every posting triggers an SMS alert.
+
+clock: {start: "19:00", cutoff: "20:00", cutoff_label: Evening peak ends}
+
+business:
+  currency: "₹"
+  unit: Cr
+  unit_name: transactions
+  avg_notional: 0.00003
+  kpis:
+    - {label: "Transactions waiting for authorisation", at: cbs, cutoff: true}
+    - {label: "SMS alerts not sent", at: sms}
+
+components:
+  - {id: atms, type: atm_fleet, role: Card channels, name: ATM Fleet, session: ATM01, rate_per_min: 300}
+  - {id: pos, type: source, role: Card channels, name: Card Terminals, session: POS01, rate_per_min: 700}
+  - {id: card_switch, type: card_switch_iso8583, role: Card switch, name: Card Switch, capacity_per_min: 1500, instances: 2, uses: [hsm]}
+  - {id: hsm, type: hsm, name: HSM}
+  - {id: upi_in, type: source, role: UPI, name: UPI Requests, session: UPI01, rate_per_min: 1200}
+  - {id: upi_switch, type: instant_payment_switch, role: UPI switch, name: UPI Switch, capacity_per_min: 1800, instances: 3}
+  - {id: cbs, type: core_banking_system, role: Ledger, name: Core Banking (CBS), capacity_per_min: 3000, instances: 4, uses: [accounts_db]}
+  - {id: accounts_db, type: database, name: Accounts DB, pool_size: 120, big_table: ACCT_TXN}
+  - {id: sms, type: external_party, role: Alerts, name: SMS Gateway, capacity_per_min: 3200}
+
+flow:
+  - atms -> card_switch
+  - pos -> card_switch
+  - card_switch -> cbs
+  - upi_in -> upi_switch -> cbs
+  - cbs -> sms
+
+alerts:
+  - {name: "Card channel disconnected", on: card_switch, metric: sessions_down, above: 0, severity: P1}
+  - {name: "Card declines high", on: card_switch, metric: reject_rate, above: 2, severity: P1}
+  - {name: "Card switch backlog", on: card_switch, metric: backlog, above: 1000, severity: P1}
+  - {name: "UPI backlog", on: upi_switch, metric: backlog, above: 1000, severity: P1}
+  - {name: "UPI errors", on: upi_switch, metric: error_rate, above: 2, severity: P2}
+  - {name: "CBS declines", on: cbs, metric: reject_rate, above: 2, severity: P1}
+  - {name: "CBS backlog", on: cbs, metric: backlog, above: 1500, severity: P1}
+  - {name: "Accounts DB pool saturated", on: accounts_db, metric: pool_pct, above: 90, severity: P2}
+  - {name: "SMS failures", on: sms, metric: error_rate, above: 5, severity: P3}
+
+diagram:
+  notes: >
+    Card and UPI authorisations must answer within seconds: a slow ledger or switch is a decline at
+    the till, not a delay. PIN checks depend on keys loaded in the HSM.
+  groups:
+    - {label: "Card channels", ids: [atms, pos]}
+    - {label: "Bank", ids: [card_switch, upi_switch, cbs]}
+  steps:
+    - {from: atms, to: card_switch, text: "ATMs and terminals send ISO 8583 requests (0100/0200) to the card switch."}
+    - {from: card_switch, to: hsm, text: "The switch asks the HSM to verify the PIN or card cryptogram."}
+    - {from: card_switch, to: cbs, text: "Core banking checks the balance and posts the debit; the response (0110/0210) goes back."}
+    - {from: upi_in, to: upi_switch, text: "UPI requests from the national network arrive at the bank's UPI switch."}
+    - {from: upi_switch, to: cbs, text: "The UPI switch debits or credits the account in core banking."}
+    - {from: cbs, to: accounts_db, text: "Balances and postings are stored in the accounts database."}
+    - {from: cbs, to: sms, text: "Every posting triggers an SMS alert to the customer."}

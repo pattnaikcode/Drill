@@ -1,0 +1,123 @@
+# Pack: issuance (IPOs and bond issues)
+#
+# Building blocks of a public issue of shares or bonds: bids come in from brokers and apps, the
+# exchange's bidding platform records them, the sponsor bank blocks investors' money (UPI mandates /
+# ASBA), the registrar reconciles bids with blocked funds and computes the basis of allotment, and
+# securities are credited through the depository. Generic, publicly documented patterns; not any
+# vendor's product.
+
+pack: issuance
+label: Issuance (IPOs and bonds)
+description: Bid collection, bidding platform, sponsor bank mandates, registrar, allotment and the security master.
+
+types:
+  bid_channel:
+    label: Bid channel (brokers, banks, apps)
+    behaves_like: source
+    help: "Where investors' bids come from: broker terminals, bank net-banking (ASBA) and investment apps."
+    defaults: {rate_per_min: 400}
+
+  bidding_platform:
+    label: Bidding platform (book building)
+    behaves_like: service
+    help: "The exchange's platform that records every bid during the issue period, validates price band and lot size and shows demand live."
+    faults:
+      price_band_wrong:
+        label: Price band set up wrong for the issue
+        effect: {reject: 0.4, reason: "Bids rejected: price outside band. The issue's band was set up as 1,050-1,080 instead of 1,005-1,080."}
+        on_start: "Issue master updated: price band 1,050 - 1,080 (lot 13)"
+        logs: ["Bid {key} rejected: price 1,020.00 below band floor 1,050.00"]
+        evidence:
+          "issuectl show": "ISSUE        BAND             LOT  OPEN    CLOSE\nACMEIPO      1,050 - 1,080    13   10:00   17:00\nOffer document: 1,005 - 1,080"
+      closing_day_surge:
+        label: Closing-day surge (bids queuing)
+        effect: {capacity: 0.5, reason: "Last-day bid volume is 6x normal; bids are queuing at the platform."}
+        on_start: "Bid rate 6x the previous day's peak; queue building"
+        logs: ["Bid queue {depth}; acceptance latency 4,200 ms"]
+    actions:
+      correct_price_band:
+        label: "Correct the price band to match the offer document (with approvals)"
+        fixes: [price_band_wrong]
+        replays_rejected: true
+        fixed_message: "Band corrected to 1,005-1,080; brokers told to resubmit rejected bids."
+      add_capacity_and_extend:
+        label: "Add platform capacity (and ask the regulator about extending bidding hours)"
+        fixes: [closing_day_surge]
+        fixed_message: "Extra matching capacity live; queue clearing."
+    shell:
+      "issuectl show": "ISSUE        BAND             LOT  OPEN    CLOSE\nACMEIPO      1,005 - 1,080    13   10:00   17:00"
+    logs_ok: ["{rate} bids/min accepted; subscription 3.4x so far"]
+
+  sponsor_bank:
+    label: Sponsor bank (UPI mandates / ASBA)
+    behaves_like: external_party
+    help: "Bank that sends UPI mandate requests to investors and blocks the bid amount in their accounts until allotment."
+    faults:
+      mandates_delayed:
+        label: Mandate requests delayed (investors not receiving them)
+        effect: {capacity: 0.4, errors: 0.25, reason: "UPI mandate requests reach investors late; bids stay 'pending mandate' and may lapse at the deadline."}
+        on_start: "Mandate request latency p95 25 min (normal under 1 min)"
+        logs: ["Bid {key}: mandate pending for 22 minutes"]
+    actions:
+      escalate_sponsor_bank:
+        label: "Escalate to the sponsor bank and ask for the mandate deadline to be extended"
+        fixes: [mandates_delayed]
+        after_s: 900
+        pending_message: "Sponsor bank is clearing its queue with the payment network; ETA 15 minutes."
+        fixed_message: "Mandate requests flowing in under a minute."
+    logs_ok: ["{rate} mandates blocked/min"]
+
+  registrar:
+    label: Registrar (RTA)
+    behaves_like: service
+    help: "Registrar and transfer agent: reconciles bids with blocked funds, computes the basis of allotment, sends refunds and the allotment file."
+    faults:
+      reconciliation_mismatch:
+        label: Bid file and bank file do not reconcile
+        effect: {reject: 0.2, reason: "Bids without matching blocked funds: the sponsor bank file used a different application number format."}
+        on_start: "Reconciliation run 1: 18% of bids have no matching block in the bank file"
+        logs: ["Application {key}: no matching block in sponsor bank file (format ACM/2026/…)"]
+    actions:
+      reload_bank_file_with_mapping:
+        label: "Map the application number format and re-run reconciliation"
+        fixes: [reconciliation_mismatch]
+        replays_rejected: true
+        fixed_message: "Reconciliation re-run: all bids matched."
+    logs_ok: ["Reconciled {rate} applications/min"]
+
+  allotment_engine:
+    label: Allotment engine
+    behaves_like: service
+    help: "Applies the basis of allotment (lottery for retail, proportionate for others) and builds the credit file for the depository."
+    faults:
+      credit_file_rejected:
+        label: Credit file rejected by the depository
+        effect: {reject: 0.3, reason: "The depository rejects credit lines: investor demat accounts closed or frozen."}
+        on_start: "Depository response: 3,412 credit lines rejected (account status)"
+        logs: ["Credit to demat {key} rejected: account closed"]
+    actions:
+      move_to_suspense_and_refund:
+        label: "Credit those shares to the suspense account and start refunds"
+        fixes: [credit_file_rejected]
+        fixed_message: "Rejected credits moved to the suspense account; refunds started."
+    logs_ok: ["{rate} allotment lines/min built"]
+
+  security_master:
+    label: Security master (ISIN and issue details)
+    behaves_like: ref_data
+    help: "ISIN, issue size, price band, lot size and dates for each issue. Every system reads it."
+    defaults: {refresh_every_min: 15, stale_after_min: 30, stale_reject_share: 0.15, key_prefix: APP,
+               missing_msg: "Application {key}: ISIN not in the security master yet; credit held"}
+    faults:
+      isin_not_activated:
+        label: New ISIN not activated
+        effect: {stale: true, reason: "The new issue's ISIN is not activated at the depository; the security master load skips it."}
+        on_start: "Security master load: ISIN INE0ACME01X skipped (status: not active)"
+        logs: ["Security master load: ISIN INE0ACME01X skipped (not active)"]
+    actions:
+      activate_isin:
+        label: "Get the ISIN activated with the depository and reload"
+        fixes: [isin_not_activated]
+        after_s: 600
+        pending_message: "Depository is activating the ISIN (about 10 minutes)."
+        fixed_message: "ISIN active; security master reloaded."

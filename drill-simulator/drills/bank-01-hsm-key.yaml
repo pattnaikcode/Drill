@@ -1,0 +1,27 @@
+id: bank-hsm-key
+title: PIN transactions declined after key rotation
+systems: [bank-cards-upi]
+level: Medium
+summary: ATM withdrawals and PIN purchases are declined. Contactless and UPI work.
+brief: >
+  19:00. The card network's zone PIN key was rotated at 18:30.
+faults:
+  - {at: "19:05", component: hsm, fault: key_not_loaded}
+root_cause: {component: hsm, fault: key_not_loaded}
+accepted_fixes: [hsm.load_new_zone_key]
+risky_actions: [card_switch.restart, hsm.restart_host]
+hints:
+  - {after_min: 2, text: "Only PIN transactions fail. What checks PINs?"}
+  - {after_min: 4, text: "List the HSM keys (hsmctl keys): is the new key loaded?"}
+debrief:
+  what_happened: >
+    The new zone PIN key (ZPK 018) was not loaded into the HSM after the rotation, so PIN translation
+    failed with HSM error 10.
+  key_signal: HSM error 10 (ZPK 018 not loaded) in the card switch log; hsmctl keys shows NOT LOADED.
+  why_not_restart: >
+    Restarting the switch or the HSM does not load a key. Two custodians must load it under dual
+    control; start that early because it takes time.
+  runbook:
+    - Confirm only PIN-based transactions fail.
+    - Check the HSM keys against the rotation notice.
+    - Call the key custodians and load the key under dual control.

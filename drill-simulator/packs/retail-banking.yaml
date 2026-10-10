@@ -1,0 +1,167 @@
+# Pack: retail banking
+#
+# Building blocks of a retail bank's payment estate: the core banking system, the card switch
+# (ISO 8583 messages), the hardware security module that checks PINs, the UPI / instant payment
+# switch, the national payment network, the SWIFT gateway and the ATM fleet. Generic, publicly
+# documented patterns; not any vendor's product.
+
+pack: retail-banking
+label: Retail banking
+description: Core banking, card switch (ISO 8583), HSM, UPI switch, payment network, SWIFT gateway and ATMs.
+
+types:
+  core_banking_system:
+    label: Core banking system (CBS)
+    behaves_like: service
+    help: "The bank's ledger: accounts, balances, holds and postings. Every debit and credit ends here."
+    faults:
+      eod_batch_overrun:
+        label: End-of-day batch overran into the online day
+        effect: {capacity: 0.3, reason: "The end-of-day batch is still running: online postings are queued behind batch locks."}
+        on_start: "EOD batch step INTEREST_ACCRUAL still running (started 23:30, expected end 02:00)"
+        logs: ["Posting for account {key} waited 3,400 ms on ACCT_BAL lock held by EOD_INT_ACCR"]
+        evidence:
+          "batchstat": "JOB              STEP                STARTED  STATUS\nEOD_{date}     INTEREST_ACCRUAL    23:30    RUNNING (82%)"
+      stand_in_mode:
+        label: CBS in stand-in (memo posting) mode
+        effect: {reject: 0.25, reason: "CBS is in stand-in mode: balance checks use a memo balance; large debits are declined."}
+        on_start: "CBS switched to STAND-IN mode after host connection failure"
+        logs: ["Debit {key} declined in stand-in: amount above stand-in limit"]
+    actions:
+      pause_eod_batch:
+        label: "Pause the EOD batch at a safe step and resume after peak"
+        fixes: [eod_batch_overrun]
+        fixed_message: "EOD batch paused at a checkpoint; online postings flowing. Resume it after the peak."
+      exit_stand_in:
+        label: "Bring CBS out of stand-in and post the memo entries"
+        fixes: [stand_in_mode]
+        replays_rejected: true
+        fixed_message: "CBS back online; memo postings applied to the ledger."
+    shell:
+      "batchstat": "JOB              STEP                STARTED  STATUS\nEOD_{date}     COMPLETE            23:30    DONE"
+    logs_ok: ["{rate} postings per minute; ledger in balance"]
+
+  card_switch_iso8583:
+    label: Card switch (ISO 8583)
+    behaves_like: service
+    help: "Routes card transactions (ATM, POS, e-commerce) as ISO 8583 messages: 0100/0200 requests, 0110/0210 responses, 0800 network management (sign-on, echo)."
+    vars: {NETWORK: "{PEER}"}
+    faults:
+      network_signed_off:
+        label: Link to the card network signed off (echo test failing)
+        effect: {down: true, reason: "No reply to 0800 echo messages: the link to {peer} is signed off; transactions cannot be sent."}
+        on_start: "0800 echo test (DE70=301) to {NETWORK}: no 0810 within 30s. Link marked SIGNED_OFF."
+        logs:
+          - "0800 echo to {NETWORK} timed out (3/3); link SIGNED_OFF"
+          - "0200 for STAN 004812 not sent: link to {NETWORK} not signed on"
+        evidence:
+          "swstat links": "LINK      STATE       LAST_0810   PENDING\n{NETWORK}   SIGNED_OFF  {time}-95s   {depth}"
+      issuer_timeouts:
+        label: Issuer not responding (response code 91)
+        effect: {reject: 0.3, reason: "Transactions declined with response code 91 (issuer or switch inoperative) after a timeout."}
+        on_start: "Issuer timeouts rising: 0110 not received within 8 s for 30% of 0100 messages"
+        logs: ["0110 RC=91 (issuer inoperative) for card {key}"]
+    actions:
+      sign_on_link:
+        label: "Send 0800 sign-on (DE70=001) to the network"
+        fixes: [network_signed_off]
+        fixed_message: "0810 sign-on accepted; link to {NETWORK} SIGNED_ON; queued transactions sent."
+      enable_stand_in_processing:
+        label: "Turn on stand-in processing (approve small amounts within limits)"
+        fixes: [issuer_timeouts]
+        fixed_message: "Stand-in on: small transactions approved within limits and logged for advice (0120) later."
+    shell:
+      "swstat links": "LINK      STATE      LAST_0810   PENDING\n{NETWORK}   SIGNED_ON  {time}       0"
+    logs_ok: ["{rate} authorisations/min; approval rate 94%"]
+
+  hsm:
+    label: Hardware security module (HSM)
+    behaves_like: ref_data
+    help: "Tamper-proof box that holds the bank's keys and checks PINs and card cryptograms. Used by the card switch and ATMs; nothing passes through it."
+    defaults: {refresh_every_min: 60, stale_after_min: 120, key_prefix: CARD}
+    faults:
+      key_not_loaded:
+        label: Working key missing after key rotation (PIN checks fail)
+        effect: {reject: 0.4, reason: "PIN verification fails: the new zone PIN key was not loaded into the HSM after rotation."}
+        on_start: "HSM command CA (translate PIN) returned error 10: key parity / key not found (ZPK index 018)"
+        logs: ["PIN verify for card {key} failed: HSM error 10 (ZPK 018 not loaded)"]
+        evidence:
+          "hsmctl keys": "INDEX  TYPE  KCV     LOADED\n017    ZPK   9F2A11  2026-09-01\n018    ZPK   -       NOT LOADED"
+    actions:
+      load_new_zone_key:
+        label: "Load the new zone PIN key (two key custodians, dual control)"
+        fixes: [key_not_loaded]
+        after_s: 600
+        pending_message: "Both key custodians are on their way to load the key under dual control (about 10 minutes)."
+        fixed_message: "ZPK 018 loaded (KCV 4E81C0 matches the network's); PIN checks pass."
+    shell:
+      "hsmctl keys": "INDEX  TYPE  KCV     LOADED\n017    ZPK   9F2A11  2026-09-01\n018    ZPK   4E81C0  {date}"
+
+  instant_payment_switch:
+    label: UPI / instant payment switch
+    behaves_like: service
+    help: "The bank's switch for instant payments (UPI): validates requests, debits or credits accounts in the CBS and replies to the national network within seconds."
+    faults:
+      deemed_approved_pile_up:
+        label: Responses late, transactions going to 'deemed' status
+        effect: {capacity: 0.4, errors: 0.15, reason: "Credit confirmations reach the network after the timeout; transactions become 'deemed approved' and need reconciliation."}
+        on_start: "Response time to network p95 = 9.8 s (timeout 10 s)"
+        logs: ["Txn {key}: response sent after timeout; status DEEMED, reconciliation needed"]
+    actions:
+      scale_out_switch:
+        label: "Add switch instances"
+        fixes: [deemed_approved_pile_up]
+        fixed_message: "Two more instances live; response times back under 2 s."
+    logs_ok: ["{rate} UPI transactions/min; success 98.7%"]
+
+  payment_network:
+    label: National payment network
+    behaves_like: external_party
+    help: "The national scheme that connects banks for card, UPI or instant transfers. Outside the bank's control."
+    faults:
+      network_degraded:
+        label: Network reports degraded service
+        effect: {capacity: 0.5, errors: 0.3, reason: "The national network reports degraded service; many banks are seeing timeouts."}
+        on_start: "Network broadcast: degraded performance, technical declines (U68/U69) rising across members"
+        logs: ["Network reply: technical decline U68 for txn {key}"]
+    actions:
+      check_network_status:
+        label: "Check the network's member status page and log a ticket with them"
+        fixes: [network_degraded]
+        after_s: 900
+        pending_message: "The network confirms an issue on its side affecting all member banks; their ETA is 15 minutes. Nothing to fix here: inform customers and watch."
+        fixed_message: "Network broadcast: service restored for all members."
+    logs_ok: ["Network replies: {rate}/min"]
+
+  swift_gateway:
+    label: SWIFT gateway
+    behaves_like: service
+    help: "Sends and receives cross-border payment messages (MT103, ISO 20022 pacs.008) over the SWIFT network."
+    faults:
+      messages_nacked:
+        label: Messages NAKed by the network (format error)
+        effect: {reject: 0.3, reason: "Outbound payment messages NAKed by the network: field validation error after a template change."}
+        on_start: "Outbound message NAK: error T13 (field 50K: invalid line format)"
+        logs: ["MT103 ref {key} NAK T13: field 50K invalid"]
+      session_closed:
+        label: Network session closed (logical terminal logged out)
+        effect: {down: true, reason: "The SWIFT session (logical terminal) logged out; outbound payments queue in the gateway."}
+        on_start: "LT BANKINBBAXXX logged out by network: session timeout"
+        logs: ["Outbound queue {depth} messages: LT not logged in"]
+    actions:
+      fix_template_and_resend:
+        label: "Correct the message template and resend the NAKed payments"
+        fixes: [messages_nacked]
+        replays_rejected: true
+        fixed_message: "Template fixed; resent payments ACKed."
+      login_lt:
+        label: "Log the logical terminal back in"
+        fixes: [session_closed]
+        fixed_message: "LT logged in; queued messages being sent."
+    logs_ok: ["{rate} messages/min sent, all ACKed"]
+
+  atm_fleet:
+    label: ATM fleet
+    behaves_like: source
+    help: "The bank's ATMs: send withdrawal and balance requests to the card switch."
+    defaults: {rate_per_min: 300}

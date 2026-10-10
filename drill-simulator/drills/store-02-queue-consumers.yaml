@@ -1,0 +1,22 @@
+id: store-queue-consumers
+title: Orders paid but not reaching the warehouse
+systems: [store-chain]
+level: Medium
+summary: Customers pay, but the warehouse sees no new orders. Stock is not updating either.
+brief: >
+  18:00. The stock service was redeployed at 17:55.
+faults:
+  - {at: "18:05", component: orders_q, fault: consumers_down}
+root_cause: {component: orders_q, fault: consumers_down}
+accepted_fixes: [orders_q.restart_consumers]
+risky_actions: [orders_q.purge_queue, orders_q.restart]
+hints:
+  - {after_min: 2, text: "Messages are going into the queue. Is anything taking them off? (mqctl list_queues)"}
+debrief:
+  what_happened: The redeployed stock service did not reconnect to the queue, so it had zero consumers and orders piled up.
+  key_signal: CONSUMERS 0 and a growing READY count in mqctl list_queues.
+  why_not_restart: Restarting the broker does not bring consumers back, and purging deletes paid orders.
+  runbook:
+    - Check consumer count and queue depth.
+    - Restart the consuming service so it reconnects.
+    - Watch the queue drain before the warehouse cut-off.

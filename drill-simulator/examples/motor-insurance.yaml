@@ -1,0 +1,81 @@
+# Motor insurance: quote to policy, and claims (illustrative model)
+#
+# Agents, comparison websites and the insurer's app ask for quotes through an API gateway. The rating
+# engine prices each quote from the rate tables; customers who buy get a policy in the policy
+# administration system, and the document service sends the schedule and certificate. Claims come in
+# separately and health/cashless claims go to the third-party administrator.
+# Built from the insurance and retail-ecommerce packs. Names and numbers are a training model.
+
+id: motor-insurance
+system: Motor insurance (quote, buy, claim)
+description: >
+  Quotes from agents, comparison sites and the app go through the API gateway to the rating engine,
+  which prices them from the rate tables. Sold quotes become policies in the policy administration
+  system; the document service sends policy schedules and certificates to the customer. Claims are
+  registered in the claims system and cashless repairs approved by the third-party administrator.
+
+clock: {start: "11:00", cutoff: "12:00", cutoff_label: Comparison-site midday peak ends}
+
+business:
+  currency: "₹"
+  unit: L
+  unit_name: quotes
+  avg_notional: 0.002
+  kpis:
+    - {label: "Quotes not yet priced", at: rating, cutoff: true}
+    - {label: "Policies without documents", at: docs}
+
+components:
+  - {id: agents, type: quote_channel, role: Channels, name: Agent Portal, session: AGT01, rate_per_min: 250}
+  - {id: comparison, type: quote_channel, role: Channels, name: Comparison Websites, session: AGG01, rate_per_min: 500}
+  - {id: app, type: quote_channel, role: Channels, name: Insurer App, session: APP01, rate_per_min: 150}
+  - {id: quote_api, type: api_gateway, role: Front door, name: Quote API Gateway, capacity_per_min: 1500, instances: 2}
+  - {id: rating, type: rating_engine, role: Pricing, name: Rating Engine, capacity_per_min: 1400, instances: 3, uses: [rate_tables]}
+  - {id: rate_tables, type: rate_tables, name: Motor Rate Tables}
+  - {id: pas, type: policy_admin_system, role: Policies, name: Policy Administration (PAS), capacity_per_min: 1400, instances: 2, uses: [policy_db]}
+  - {id: policy_db, type: database, name: Policy DB, pool_size: 60, big_table: POLICY_VERSIONS}
+  - {id: docs, type: document_service, role: Documents, name: Document Generation, capacity_per_min: 1400, instances: 4}
+  - {id: comms, type: external_party, role: Customer comms, name: Email and Post Provider, capacity_per_min: 1600}
+  - {id: claim_intake, type: source, role: Claims, name: Claims Intake, session: FNOL01, rate_per_min: 60}
+  - {id: claims, type: claims_system, role: Claims, name: Claims System, capacity_per_min: 200, instances: 2}
+  - {id: tpa, type: third_party_administrator, role: Partners, name: Cashless Repairs TPA, capacity_per_min: 200}
+
+flow:
+  - agents -> quote_api
+  - comparison -> quote_api
+  - app -> quote_api
+  - quote_api -> rating -> pas -> docs -> comms
+  - claim_intake -> claims -> tpa
+
+alerts:
+  - {name: "Quote channel disconnected", on: quote_api, metric: sessions_down, above: 0, severity: P1}
+  - {name: "Quote API errors", on: quote_api, metric: error_rate, above: 2, severity: P2}
+  - {name: "Quote API rejecting requests", on: quote_api, metric: reject_rate, above: 2, severity: P1}
+  - {name: "Quotes blocked by rating", on: rating, metric: reject_rate, above: 2, severity: P1}
+  - {name: "Rating backlog", on: rating, metric: backlog, above: 1500, severity: P2}
+  - {name: "Rate tables stale", on: rate_tables, metric: staleness_min, above: 60, severity: P2}
+  - {name: "Policy issue failures", on: pas, metric: reject_rate, above: 2, severity: P1}
+  - {name: "Policy backlog", on: pas, metric: backlog, above: 1500, severity: P2}
+  - {name: "Policy DB pool saturated", on: policy_db, metric: pool_pct, above: 90, severity: P2}
+  - {name: "Documents failing", on: docs, metric: reject_rate, above: 2, severity: P2}
+  - {name: "Document backlog", on: docs, metric: backlog, above: 1500, severity: P3}
+  - {name: "Claims backlog", on: claims, metric: backlog, above: 300, severity: P3}
+  - {name: "Claims referred", on: claims, metric: reject_rate, above: 10, severity: P3}
+  - {name: "TPA failures", on: tpa, metric: error_rate, above: 5, severity: P2}
+
+diagram:
+  notes: >
+    Comparison sites drop quotes that take longer than their timeout, so slow rating is lost business,
+    not just a delay. Premiums come from the rate tables; a bad rate release is a pricing incident.
+  groups:
+    - {label: "Quote and buy", ids: [quote_api, rating, pas, docs]}
+  steps:
+    - {from: comparison, to: quote_api, text: "Agents, comparison sites and the app send quote requests to the API gateway."}
+    - {from: quote_api, to: rating, text: "The gateway checks the caller and passes the request to the rating engine."}
+    - {from: rating, to: rate_tables, text: "The rating engine prices the risk from the rate tables (base rates, factors, discounts)."}
+    - {from: rating, to: pas, text: "When the customer buys, the policy is issued in the policy administration system."}
+    - {from: pas, to: policy_db, text: "The policy and each change to it are stored as versions."}
+    - {from: pas, to: docs, text: "The document service builds the schedule and certificate."}
+    - {from: docs, to: comms, text: "Documents go to the customer by email or post."}
+    - {from: claim_intake, to: claims, text: "Claims are registered in the claims system."}
+    - {from: claims, to: tpa, text: "Cashless repairs are approved through the third-party administrator."}

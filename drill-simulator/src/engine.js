@@ -156,6 +156,8 @@
     Object.entries(pk.types || {}).forEach(([t, d]) => { PACK_TYPES[t] = { ...d, pack: pk.pack, packLabel: pk.label || pk.pack }; });
     return [];
   }
+  // sizes a pack component gets when neither the pack nor the system gives them
+  const PACK_SIZES = { source: { rate_per_min: 300 }, service: { capacity_per_min: 1000, instances: 2 }, external_party: { capacity_per_min: 1200 }, database: { pool_size: 50 }, ref_data: { refresh_every_min: 15, stale_after_min: 30 }, kafka_topic: { partitions: 6 } };
   const packTypeOf = def => (def && def.pack_type && PACK_TYPES[def.pack_type]) || null;
   const baseType = t => (PACK_TYPES[t] ? PACK_TYPES[t].behaves_like : t);
   const typeLabel = def => { const P = packTypeOf(def); return P ? P.label || def.pack_type : (TYPES[def.type] || {}).label || def.type; };
@@ -310,7 +312,7 @@
 
   function validateBlueprint(input) {
     const ex = expandKinds(input || {});
-    const bp = { ...ex.bp, components: (ex.bp.components || []).map(c => (c && PACK_TYPES[c.type] ? { ...c, type: PACK_TYPES[c.type].behaves_like, pack_type: c.type } : c)) };
+    const bp = { ...ex.bp, components: (ex.bp.components || []).map(c => (c && PACK_TYPES[c.type] ? { ...(PACK_SIZES[PACK_TYPES[c.type].behaves_like] || {}), ...(PACK_TYPES[c.type].defaults || {}), ...c, type: PACK_TYPES[c.type].behaves_like, pack_type: c.type } : c)) };
     const errors = [...ex.errors];
     const comps = Array.isArray(bp.components) ? bp.components : [];
     if (!bp.system) errors.push('Missing "system" (the system name).');
@@ -830,7 +832,7 @@
         if (f === 'config_change' && this.chance(p * 1.6)) this.log(id, 'ERROR', `java.net.SocketTimeoutException: Read timed out after ${s.fault.params.timeout_ms}ms calling ${s.fault.params.api} POST /v2/check (attempt 3/3); request failed`);
         this.rejectCauses(s).forEach(c => {
           if (!this.chance(p * 1.4)) return;
-          if (c.kind === 'pack') { this.log(id, 'ERROR', this.packText(s, c.msg).replace('{key}', `REF-${10000 + Math.floor(this.rand() * 9000)}`)); return; }
+          if (c.kind === 'pack') { this.log(id, 'ERROR', this.packText(c.ref || s, c.msg).replace('{key}', `REF-${10000 + Math.floor(this.rand() * 9000)}`)); return; }
           if (c.kind === 'stale' && c.ref.def.missing_msg) this.log(id, 'ERROR', c.ref.def.missing_msg.replace('{key}', `${c.ref.def.key_prefix || 'REF'}-${1000 + Math.floor(this.rand() * 900)}`) + ` (${blk()})`);
           else if (c.kind === 'stale') this.log(id, 'ERROR', `Rejected ${blk()}: no SSI for account ACC-${48000 + Math.floor(this.rand() * 900)} in ${c.ref.def.name}`);
           else this.log(id, 'ERROR', `Order rejected: price ${(1100 + this.rand() * 200).toFixed(2)} outside band for ${c.issuer.def.symbol || c.issuer.def.id.toUpperCase()} (band not updated for ${c.issuer.fault.ca})`);
@@ -872,7 +874,7 @@
     if (s.fault && s.fault.params) Object.entries(s.fault.params).forEach(([k, x]) => { v[k] = x; });
     return v;
   };
-  Simulator.prototype.packText = function (s, t) { const v = this.packVars(s); return String(t).replace(/\{(\w+)\}/g, (m, x) => (v[x] !== undefined ? v[x] : m)); };
+  Simulator.prototype.packText = function (s, t) { const v = this.packVars(s); if (v.key === undefined && String(t).includes('{key}')) v.key = `${s.def.key_prefix || 'REF'}-${10000 + Math.floor(this.rand() * 89999)}`; return String(t).replace(/\{(\w+)\}/g, (m, x) => (v[x] !== undefined ? v[x] : m)); };
   Simulator.prototype._packLog = function (s, level) {
     const lines = (s.fault && s.fault.pack && s.fault.pack.logs) || [];
     if (lines.length) this.log(s.def.id, level || 'ERROR', this.packText(s, lines[Math.floor(this.rand() * lines.length)]));

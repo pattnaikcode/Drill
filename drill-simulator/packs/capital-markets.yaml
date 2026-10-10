@@ -1,0 +1,171 @@
+# Pack: capital markets
+#
+# Common building blocks of trading and post-trade systems, based on widely documented public
+# patterns (FIX sessions, market data feed handlers, order management, smart order routing,
+# settlement at a central securities depository). Generic components, not any vendor's product.
+
+pack: capital-markets
+label: Capital markets
+description: FIX gateways, market data, order management, routing and settlement.
+
+types:
+  fix_session_gateway:
+    label: FIX session gateway
+    behaves_like: service
+    help: "Terminates FIX sessions over TCP: logon, heartbeats, sequence numbers, resend requests, throttles. Passes valid messages on."
+    vars: {SESSION: "{ID}-CPTY"}
+    faults:
+      resend_storm:
+        label: Resend request storm after a sequence gap
+        effect: {capacity: 0.35, reason: "Counterparty is replaying a sequence gap (ResendRequest 35=2); new messages wait behind the replay."}
+        on_start: "Session {SESSION}: MsgSeqNum gap detected (expected 48211, received 48903). Sending ResendRequest 35=2 BeginSeqNo=48211 EndSeqNo=0."
+        logs:
+          - "Session {SESSION}: processing PossDupFlag=Y replay, 692 messages behind (ResendRequest 35=2 outstanding)"
+          - "Session {SESSION}: SequenceReset-GapFill 35=4 received for 48211-48244"
+        evidence:
+          "fixstat": "SESSION            STATE      IN_SEQ   OUT_SEQ  PENDING_RESEND\n{SESSION}   RESENDING  48211    90122    692"
+        hint: "The restart reconnects the session and asks for the same gap again."
+      heartbeat_timeout:
+        label: Session dropped on heartbeat timeout
+        effect: {down: true, reason: "FIX session {SESSION} is down: no Heartbeat (35=0) or reply to TestRequest (35=1) within 2 x HeartBtInt."}
+        on_start: "Session {SESSION}: no data for 60s; TestRequest 35=1 sent; no response. Disconnecting (Logout 35=5)."
+        logs:
+          - "Session {SESSION}: logon attempt failed: connection refused by {peerhost}:9876; retrying in 30s"
+        evidence:
+          "fixstat": "SESSION            STATE         IN_SEQ   OUT_SEQ  LAST_RECV\n{SESSION}   DISCONNECTED  48210    90121    {time} - 62s"
+          "netstat": "tcp  0  0 {host}:51544  {peerhost}:9876  SYN_SENT"
+    actions:
+      gap_fill_reset:
+        label: "Agree a SequenceReset-GapFill with the counterparty and skip the replay"
+        fixes: [resend_storm]
+        fixed_message: "Counterparty sent SequenceReset 35=4 GapFillFlag=Y; session {SESSION} back to live messages."
+      reconnect_session:
+        label: "Reconnect the session (Logon 35=A with the counterparty)"
+        fixes: [heartbeat_timeout]
+        after_s: 120
+        pending_message: "Counterparty's network team is checking their side; logon expected within about 2 minutes."
+        fixed_message: "Logon 35=A accepted; session {SESSION} ACTIVE."
+      reset_sequence_numbers:
+        label: "Reset both sequence numbers to 1 (ResetSeqNumFlag 141=Y)"
+        message: "Sequence numbers reset to 1. Any messages in the gap are now lost and must be reconciled with the counterparty by hand."
+      restart_gateway:
+        label: "Restart the FIX gateway"
+        restart_s: 180
+        message: "Gateway restarting: every FIX session on it disconnects and must log on again."
+    shell:
+      "fixstat": "SESSION            STATE     IN_SEQ   OUT_SEQ  PENDING_RESEND\n{SESSION}   ACTIVE    48302    90240    0"
+      "netstat": "tcp  0  0 {host}:51544  {peerhost}:9876  ESTABLISHED"
+    logs_ok:
+      - "Session {SESSION}: Heartbeat 35=0 sent; {rate} application messages per minute"
+
+  market_data_handler:
+    label: Market data feed handler
+    behaves_like: service
+    help: "Receives a venue's market data (often multicast A/B lines), arbitrates the two lines, rebuilds order books and publishes prices to internal consumers."
+    faults:
+      line_gap:
+        label: Gaps on the A and B lines, books being recovered
+        effect: {capacity: 0.5, errors: 0.2, reason: "Packet gaps on both multicast lines; books in recovery, prices stale for affected symbols."}
+        on_start: "Line A: sequence gap 9120411-9120488; line B also missing 9120430-9120488. Requesting retransmission / snapshot."
+        logs:
+          - "Book recovery in progress for 214 symbols: waiting for snapshot cycle"
+          - "Arbitration: gap on both lines (A and B); cannot fill from the other line"
+        evidence:
+          "mdstat": "LINE  GROUP          PKTS/S   GAPS(1m)  STATE\nA     239.1.1.10     48211    63        RECOVERING\nB     239.1.1.11     48190    59        RECOVERING"
+      stale_prices:
+        label: Feed silent (no updates from the venue)
+        effect: {down: true, reason: "No market data packets received for 45 s on either line; prices are stale."}
+        on_start: "No packets on 239.1.1.10 or 239.1.1.11 for 30s: feed marked STALE."
+        logs: ["Feed STALE: last packet at {time} minus 45s on both lines"]
+        evidence:
+          "mdstat": "LINE  GROUP          PKTS/S   GAPS(1m)  STATE\nA     239.1.1.10     0        0         STALE\nB     239.1.1.11     0        0         STALE"
+    actions:
+      request_snapshot:
+        label: "Force a snapshot / retransmission request to rebuild books"
+        fixes: [line_gap]
+        fixed_message: "Snapshot received; 214 books rebuilt; publishing live prices again."
+      fail_over_to_backup_feed:
+        label: "Switch to the backup feed (other site or vendor)"
+        fixes: [stale_prices]
+        after_s: 60
+        pending_message: "Switching to the backup feed; prices resume in about a minute."
+        fixed_message: "Backup feed live; prices updating."
+      restart_handler:
+        label: "Restart the feed handler"
+        restart_s: 120
+        message: "Handler restarting: all books are rebuilt from snapshots; prices stale for about 2 minutes."
+    shell:
+      "mdstat": "LINE  GROUP          PKTS/S   GAPS(1m)  STATE\nA     239.1.1.10     48211    0         OK\nB     239.1.1.11     48190    0         OK"
+    logs_ok: ["Arbitration OK: {rate} updates/min, no gaps on line A or B"]
+
+  order_management:
+    label: Order management system (OMS)
+    behaves_like: service
+    help: "Holds client orders, checks limits and positions, and sends child orders to brokers or venues."
+    faults:
+      limits_not_loaded:
+        label: Start-of-day limits not loaded
+        effect: {reject: 0.6, reason: "Orders rejected: no trading limit loaded for the account (start-of-day limit load did not complete)."}
+        on_start: "SOD limit load: 0 of 4,812 accounts loaded (source file missing)."
+        logs: ["Order rejected: no limit for account {key}"]
+      position_lock:
+        label: Position updates blocked by a stuck batch lock
+        effect: {capacity: 0.3, reason: "Position updates are waiting on a lock held by the intraday P&L batch."}
+        on_start: "Intraday P&L batch started; holding POSITIONS table lock"
+        logs: ["Order waited 4,812 ms for position lock (held by PNL_BATCH)"]
+    actions:
+      reload_limits:
+        label: "Re-run the start-of-day limit load"
+        fixes: [limits_not_loaded]
+        replays_rejected: true
+        fixed_message: "Limits loaded for 4,812 accounts; rejected orders can be resent by the desks."
+      stop_pnl_batch:
+        label: "Stop the intraday P&L batch and reschedule it"
+        fixes: [position_lock]
+        fixed_message: "P&L batch stopped; position lock released; orders flowing."
+      restart_oms:
+        label: "Restart the OMS"
+        restart_s: 240
+        message: "OMS restarting: traders cannot enter orders for about 4 minutes."
+    logs_ok: ["{rate} orders per minute; limit checks OK"]
+
+  smart_order_router:
+    label: Smart order router (SOR)
+    behaves_like: service
+    help: "Splits and routes orders to the venues with the best price and liquidity."
+    faults:
+      venue_marked_down:
+        label: Primary venue marked down; orders routed to a worse venue
+        effect: {capacity: 0.6, reason: "The router marked the primary venue down after a connection blip and never marked it up again."}
+        on_start: "Venue PRIMARY marked DOWN (3 consecutive rejects); excluding from routing."
+        logs: ["Routing around PRIMARY (state DOWN since {time}); best price there not used"]
+    actions:
+      mark_venue_up:
+        label: "Mark the primary venue back up in the router"
+        fixes: [venue_marked_down]
+        fixed_message: "Venue PRIMARY back in routing."
+      restart_router:
+        label: "Restart the router"
+        restart_s: 120
+        message: "Router restarting: orders queue for about 2 minutes."
+    logs_ok: ["Routed {rate} child orders per minute across 4 venues"]
+
+  securities_depository:
+    label: Central securities depository (CSD)
+    behaves_like: external_party
+    help: "Settles trades: moves securities and cash between participants' accounts. Outside our control."
+    faults:
+      settlement_instructions_rejected:
+        label: Settlement instructions rejected (matching failure)
+        effect: {capacity: 0.5, errors: 0.4, reason: "The depository rejects instructions: counterparty details do not match."}
+        on_start: "CSD status message: instruction rejected, reason code: counterparty account mismatch."
+        logs: ["Instruction {key} REJECTED by depository: counterparty safekeeping account mismatch"]
+    actions:
+      correct_ssi_and_resend:
+        label: "Correct the settlement instructions (SSI) and resend"
+        fixes: [settlement_instructions_rejected]
+        fixed_message: "Corrected SSIs resent; depository matched the instructions."
+      escalate_to_depository:
+        label: "Raise it with the depository's help desk"
+        message: "Depository confirms their system is fine: the instructions do not match the counterparty's."
+    logs_ok: ["{rate} settlement instructions matched per minute"]

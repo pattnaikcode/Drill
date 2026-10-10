@@ -1,0 +1,24 @@
+id: ins-document-template
+title: New customers get no policy documents
+systems: [motor-insurance]
+level: Easy
+summary: Policies are being issued, but customers call to say no documents arrived.
+brief: >
+  11:00. The documents team published a new policy schedule layout this morning.
+faults:
+  - {at: "11:06", component: docs, fault: template_error}
+root_cause: {component: docs, fault: template_error}
+accepted_fixes: [docs.revert_template]
+risky_actions: [docs.restart, pas.restart]
+hints:
+  - {after_min: 2, text: "Read the document service's error: which template and which field?"}
+debrief:
+  what_happened: >
+    POLICY_SCHEDULE v8 referenced a field (insured.middleName) that the policy data does not have, so
+    every schedule using it failed to render.
+  key_signal: "'Render failed ... unknown field' errors naming one template version."
+  why_not_restart: Restarting renders the same template again. Revert to v7 and re-render the failures.
+  runbook:
+    - Find the failing template and version from the render errors.
+    - Revert the template and re-render failed documents.
+    - Tell the documents team which field broke it.

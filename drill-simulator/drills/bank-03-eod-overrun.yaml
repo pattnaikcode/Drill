@@ -1,0 +1,26 @@
+id: bank-eod-overrun
+title: Slow authorisations every evening
+systems: [bank-cards-upi]
+level: Medium
+summary: Card and UPI authorisations are slow and some time out. Core banking CPU looks normal.
+brief: >
+  19:00. Month-end interest accrual was moved into the evening batch window this month.
+faults:
+  - {at: "19:06", component: cbs, fault: eod_batch_overrun}
+root_cause: {component: cbs, fault: eod_batch_overrun}
+accepted_fixes: [cbs.pause_eod_batch]
+risky_actions: [cbs.restart, accounts_db.increase_pool_size]
+hints:
+  - {after_min: 3, text: "Core banking is waiting, not busy. Waiting on what? Read its log."}
+debrief:
+  what_happened: >
+    The interest accrual step ran into the evening peak and held balance locks, so online postings
+    queued behind it.
+  key_signal: "'waited ... on ACCT_BAL lock held by EOD_INT_ACCR' and batchstat showing the step running."
+  why_not_restart: >
+    Restarting core banking kills both the batch and online work. Pause the batch at a checkpoint
+    and resume it after the peak.
+  runbook:
+    - See what online postings are waiting on.
+    - Pause the batch at a safe step with the batch team.
+    - Reschedule the step outside peak hours.

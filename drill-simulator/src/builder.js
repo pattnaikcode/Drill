@@ -68,7 +68,7 @@
   Object.entries(S.PACK_TYPES).forEach(([t, P]) => {
     TYPE_HELP[t] = { label: `${P.label || t} (${P.packLabel} pack)`, ex: '', text: P.help || `Behaves like ${TYPE_HELP[P.behaves_like].label.split(' (')[0].toLowerCase()}.` };
     FIELDS[t] = [...FIELDS[P.behaves_like], ...((P.required || []).filter(k => !FIELDS[P.behaves_like].some(f => f.k === k)).map(k => ({ k, label: k, kind: 'text', req: true, help: 'Required by this pack.' })))];
-    DEFAULTS[t] = { ...DEFAULTS[P.behaves_like] };
+    DEFAULTS[t] = { ...DEFAULTS[P.behaves_like], ...(P.defaults || {}) };
     if (FLOW_TYPES.includes(P.behaves_like)) FLOW_TYPES.push(t);
   });
 

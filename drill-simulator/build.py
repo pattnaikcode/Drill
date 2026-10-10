@@ -27,7 +27,8 @@ def build(template: str = "src/index.template.html", role: str = "participant") 
         code = (ROOT / rel).read_text(encoding="utf-8")
         page = page.replace(f"/*INLINE:{rel}*/", code.replace("</script", "<\\/script"))
     content = {
-        "blueprints": {p.stem: p.read_text(encoding="utf-8") for p in sorted((ROOT / "blueprints").glob("*.yaml"))},
+        # built-in systems plus the sector examples, so every example can be picked in the apps
+        "blueprints": {p.stem: p.read_text(encoding="utf-8") for p in [*sorted((ROOT / "blueprints").glob("*.yaml")), *sorted((ROOT / "examples").glob("*.yaml"))]},
         "default_blueprint": DEFAULT_BLUEPRINT,
         "drills": [p.read_text(encoding="utf-8") for p in sorted((ROOT / "drills").glob("*.yaml"))],
         "packs": [p.read_text(encoding="utf-8") for p in sorted((ROOT / "packs").glob("*.yaml"))],

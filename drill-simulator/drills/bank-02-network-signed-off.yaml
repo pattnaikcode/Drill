@@ -1,0 +1,24 @@
+id: bank-network-signed-off
+title: All card transactions stop
+systems: [bank-cards-upi]
+level: Easy
+summary: No card or ATM authorisations at all. UPI is fine.
+brief: >
+  19:00. The network team changed a firewall rule at 18:50.
+faults:
+  - {at: "19:05", component: card_switch, fault: network_signed_off}
+root_cause: {component: card_switch, fault: network_signed_off}
+accepted_fixes: [card_switch.sign_on_link]
+risky_actions: [card_switch.restart, cbs.restart]
+hints:
+  - {after_min: 2, text: "Check the link state on the card switch (swstat links)."}
+debrief:
+  what_happened: >
+    After the firewall change the 0800 echo test got no reply, so the switch marked the link
+    SIGNED_OFF and stopped sending transactions.
+  key_signal: "'0800 echo ... timed out; link SIGNED_OFF' and SIGNED_OFF in swstat links."
+  why_not_restart: A restart drops every in-flight authorisation. Send a sign-on (0800 DE70=001) once the path is open.
+  runbook:
+    - Check the link state and the echo log.
+    - Sign the link back on.
+    - Watch queued transactions clear.

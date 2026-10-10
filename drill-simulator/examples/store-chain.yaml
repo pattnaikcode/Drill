@@ -1,0 +1,77 @@
+# Retail store chain with online shop (illustrative model)
+#
+# The website and app call an API gateway. The storefront reads product data from the search index
+# and carts from the cache; checkout takes payment through the payment gateway and puts orders on a
+# message queue for the warehouse. Store tills upload their sales to a sync hub, which puts stock
+# movements on the same queue. Built from the retail-ecommerce pack. Names and numbers are a training model.
+
+id: store-chain
+system: Store chain and online shop
+description: >
+  Web and app traffic goes through the API gateway to the storefront (search index, cart cache) and
+  checkout, which takes payment through the payment gateway. Paid orders and store sales go onto a
+  message queue; the stock service updates stock and sends web orders to the warehouse.
+
+clock: {start: "18:00", cutoff: "19:00", cutoff_label: Evening sale ends}
+
+business:
+  currency: "₹"
+  unit: L
+  unit_name: orders
+  avg_notional: 0.012
+  kpis:
+    - {label: "Orders not yet paid", at: payments, cutoff: true}
+    - {label: "Orders and sales not processed", at: stock}
+
+components:
+  - {id: web, type: source, role: Customers, name: Website, session: WEB01, rate_per_min: 600}
+  - {id: app, type: source, role: Customers, name: Mobile App, session: APP01, rate_per_min: 700}
+  - {id: gateway, type: api_gateway, role: Front door, name: API Gateway, capacity_per_min: 2000, instances: 3}
+  - {id: storefront, type: service, role: Storefront, name: Storefront and Checkout, capacity_per_min: 1900, instances: 4, uses: [cart_cache, search]}
+  - {id: cart_cache, type: cache_cluster, name: Cart and Session Cache}
+  - {id: search, type: search_index, name: Product Search Index}
+  - {id: payments, type: card_payment_gateway, role: Payments, name: Payment Gateway, capacity_per_min: 2000}
+  - {id: tills, type: source, role: Stores, name: Store Tills, session: POS01, rate_per_min: 500}
+  - {id: store_hub, type: store_sales_hub, role: Stores, name: Store Sales Hub, capacity_per_min: 900, instances: 2}
+  - {id: orders_q, type: message_queue, role: Messaging, name: Orders and Stock Queue, capacity_per_min: 2600, instances: 2}
+  - {id: stock, type: service, role: Stock, name: Stock and Fulfilment Service, capacity_per_min: 2500, instances: 3}
+  - {id: warehouse, type: external_party, role: Warehouse, name: Warehouse (3PL) API, capacity_per_min: 2700}
+
+flow:
+  - web -> gateway
+  - app -> gateway
+  - gateway -> storefront -> payments -> orders_q
+  - tills -> store_hub -> orders_q
+  - orders_q -> stock -> warehouse
+
+alerts:
+  - {name: "Web or app traffic stopped", on: gateway, metric: sessions_down, above: 0, severity: P1}
+  - {name: "API gateway rejecting requests", on: gateway, metric: reject_rate, above: 2, severity: P1}
+  - {name: "API gateway errors", on: gateway, metric: error_rate, above: 2, severity: P2}
+  - {name: "API gateway backlog", on: gateway, metric: backlog, above: 1500, severity: P2}
+  - {name: "Checkout failures", on: storefront, metric: reject_rate, above: 3, severity: P1}
+  - {name: "Checkout slow", on: storefront, metric: latency_ms, above: 600, severity: P2}
+  - {name: "Cache saturated", on: cart_cache, metric: pool_pct, above: 90, severity: P2}
+  - {name: "Search index stale", on: search, metric: staleness_min, above: 20, severity: P3}
+  - {name: "Payment failures", on: payments, metric: error_rate, above: 5, severity: P1}
+  - {name: "Store sales delayed", on: store_hub, metric: backlog, above: 800, severity: P3}
+  - {name: "Store sales rejected", on: store_hub, metric: reject_rate, above: 2, severity: P3}
+  - {name: "Queue building up", on: orders_q, metric: backlog, above: 2000, severity: P2}
+  - {name: "Warehouse API errors", on: warehouse, metric: error_rate, above: 5, severity: P2}
+
+diagram:
+  notes: >
+    The message queue lets the shop keep taking orders when stock or the warehouse is slow; the cost
+    is a growing queue that must drain before dispatch. Cache and search problems show up as a slow
+    or wrong storefront, not as errors in the queue.
+  steps:
+    - {from: app, to: gateway, text: "The website and app call the API gateway (authentication, rate limits)."}
+    - {from: gateway, to: storefront, text: "The gateway routes to the storefront and checkout service."}
+    - {from: storefront, to: search, text: "Product pages and prices come from the search index."}
+    - {from: storefront, to: cart_cache, text: "Sessions and carts are kept in the cache."}
+    - {from: storefront, to: payments, text: "Checkout takes payment through the payment gateway."}
+    - {from: payments, to: orders_q, text: "Paid orders go onto the queue."}
+    - {from: tills, to: store_hub, text: "Store tills upload sales to the sync hub every few minutes."}
+    - {from: store_hub, to: orders_q, text: "The hub puts stock movements from stores on the same queue."}
+    - {from: orders_q, to: stock, text: "The stock service takes messages off the queue and updates stock."}
+    - {from: stock, to: warehouse, text: "Web orders are sent to the warehouse to pick and ship."}

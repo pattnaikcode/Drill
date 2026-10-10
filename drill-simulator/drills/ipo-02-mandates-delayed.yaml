@@ -1,0 +1,26 @@
+id: ipo-mandates-delayed
+title: Investors not getting UPI mandates
+systems: [ipo-issuance]
+level: Medium
+summary: Bids are accepted, but investors complain the payment request never reached their app.
+brief: >
+  16:00, last hour of bidding. Mandates must be approved by 17:00 for a bid to count.
+faults:
+  - {at: "16:04", component: sponsor, fault: mandates_delayed}
+root_cause: {component: sponsor, fault: mandates_delayed}
+accepted_fixes: [sponsor.escalate_sponsor_bank]
+risky_actions: [bidding.restart, sponsor.restart_adapter]
+hints:
+  - {after_min: 2, text: "The bidding platform is healthy. Where do bids wait for money to be blocked?"}
+debrief:
+  what_happened: >
+    The sponsor bank's mandate requests were delayed by 25 minutes at peak, so bids stayed 'pending
+    mandate' and risked lapsing at the deadline.
+  key_signal: A growing queue and errors at the sponsor bank while the bidding platform stays green.
+  why_not_restart: >
+    The delay is inside the sponsor bank. Escalate early and ask for the mandate deadline to be
+    extended; restarting our side changes nothing.
+  runbook:
+    - Find where bids are waiting (the sponsor bank).
+    - Escalate to the sponsor bank and the exchange; request a deadline extension.
+    - Track pending mandates down to zero before close.

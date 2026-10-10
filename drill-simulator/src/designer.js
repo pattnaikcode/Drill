@@ -138,12 +138,25 @@
   // ------------------------------------------------------------ rendering
   function render() { renderPalette(); renderCanvas(); renderProps(); $('#undoBtn').disabled = !undo.length; if (!$('#yamlBox').hidden) $('#yamlOut').textContent = toYaml(); }
 
+  let palFilter = '';
+  const palOpen = new Set();
   function renderPalette() {
     const tiles = [...BUILTIN.map(b => ({ ...b, key: 'type:' + b.type, color: COLOR[b.type] }))];
     Object.entries(S.PACK_TYPES).forEach(([t, P]) => tiles.push({ key: 'type:' + t, type: t, label: P.label || t, sub: (P.help || '').split('.')[0], group: `${P.packLabel} pack`, color: COLOR[P.behaves_like] }));
     Object.entries(B.kinds || {}).forEach(([k, d]) => tiles.push({ key: 'kind:' + k, label: d.role || k, sub: `Kind "${k}"${d.connects_to ? ' · connects to ' + [].concat(d.connects_to).join(', ') : ''}`, group: 'Kinds in this system', color: COLOR[S.baseType(d.type)] }));
-    const groups = [...new Set(tiles.map(t => t.group))];
-    $('#palette').innerHTML = groups.map(g => `<h3>${esc(g)}</h3>` + tiles.filter(t => t.group === g).map(t => `<button class="tile" draggable="true" data-add="${esc(t.key)}" style="--tc:${t.color || 'var(--line)'}"><b>${esc(t.label)}</b><small>${esc(t.sub || '')}</small></button>`).join('')).join('');
+    // built-in boxes and this system's kinds stay open; each sector library folds away unless it is
+    // used in this design, opened by hand, or matches the search
+    const q = palFilter.trim().toLowerCase();
+    const used = new Set(B.components.map(c => typeOf(c)));
+    const shown = tiles.filter(t => !q || `${t.label} ${t.sub || ''} ${t.group}`.toLowerCase().includes(q));
+    const groups = [...new Set(shown.map(t => t.group))];
+    const tileHtml = t => `<button class="tile" draggable="true" data-add="${esc(t.key)}" style="--tc:${t.color || 'var(--line)'}"><b>${esc(t.label)}</b><small>${esc(t.sub || '')}</small></button>`;
+    $('#palette').innerHTML = (groups.length ? '' : '<p class="small muted">No component matches.</p>') + groups.map(g => {
+      const ts = shown.filter(t => t.group === g);
+      if (!/ pack$/.test(g)) return `<h3>${esc(g)}</h3>` + ts.map(tileHtml).join('');
+      const open = q || palOpen.has(g) || ts.some(t => used.has(t.type));
+      return `<details class="pgrp" data-grp="${esc(g)}"${open ? ' open' : ''}><summary>${esc(g.replace(/ pack$/, ''))} <span class="muted">${ts.length}</span></summary><div class="pgrid">${ts.map(tileHtml).join('')}</div></details>`;
+    }).join('');
   }
 
   function edgeList() { // flow arrows (yours and kind-made), uses and feeds links
@@ -268,7 +281,7 @@
     change(() => {
       let c;
       if (what === 'kind') { const d = B.kinds[name]; const id = slug(name); c = { id, kind: name, name: `New ${(d.role || name).toLowerCase()}` }; if (S.baseType(d.type) === 'source' && !d.session) c.session = id.toUpperCase().replace(/_/g, '').slice(0, 6) + '01'; }
-      else { const P = S.PACK_TYPES[name], b = S.baseType(name); c = { id: slug((P ? P.label : (BUILTIN.find(x => x.type === name) || {}).label) || name), type: name, name: `New ${((P ? P.label : (BUILTIN.find(x => x.type === name) || {}).label) || name).toLowerCase()}`, ...(DEFAULTS[b] || {}) }; }
+      else { const P = S.PACK_TYPES[name], b = S.baseType(name); c = { id: slug((P ? P.label : (BUILTIN.find(x => x.type === name) || {}).label) || name), type: name, name: `New ${((P ? P.label : (BUILTIN.find(x => x.type === name) || {}).label) || name).toLowerCase()}`, ...(DEFAULTS[b] || {}), ...((P && P.defaults) || {}) }; }
       if (what !== 'kind' && S.baseType(typeOf(c)) === 'source' && !c.session) c.session = c.id.toUpperCase().replace(/_/g, '').slice(0, 6) + '01'; // a kind can template its own session names
       B.components.push(c);
       if (!at && sel && sel.node && B.diagram.place[sel.node]) { // build left to right: next to the selected box
@@ -380,6 +393,8 @@
     }
   });
   // palette: drag onto the canvas, or click to add
+  $('#palFilter').addEventListener('input', ev => { palFilter = ev.target.value; renderPalette(); });
+  $('#palette').addEventListener('toggle', ev => { const g = ev.target.dataset && ev.target.dataset.grp; if (!g) return; if (ev.target.open) palOpen.add(g); else palOpen.delete(g); }, true);
   $('#palette').addEventListener('dragstart', ev => { const t = ev.target.closest('[data-add]'); if (t) ev.dataTransfer.setData('text/plain', t.dataset.add); });
   $('#palette').addEventListener('click', ev => { const t = ev.target.closest('[data-add]'); if (t) addComponent(t.dataset.add); });
   wrap.addEventListener('dragover', ev => { ev.preventDefault(); wrap.classList.add('drop'); });

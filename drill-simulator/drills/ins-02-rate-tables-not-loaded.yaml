@@ -1,0 +1,26 @@
+id: ins-rate-tables-not-loaded
+title: Quotes refused in some regions
+systems: [motor-insurance]
+level: Medium
+summary: A growing share of quotes is refused with "no rate". Nothing was deployed today.
+brief: >
+  11:00. Pricing sent the daily rate table file at 10:30 as usual.
+faults:
+  - {at: "11:05", component: rate_tables, fault: load_failed}
+root_cause: {component: rate_tables, fault: load_failed}
+accepted_fixes: [rate_tables.reload_corrected_tables]
+risky_actions: [rating.restart, rate_tables.force_refresh]
+hints:
+  - {after_min: 3, text: "The rating engine is fine. What does it read prices from, and when was that last loaded?"}
+  - {after_min: 5, text: "Read the rate table load log: why did the load fail?"}
+debrief:
+  what_happened: >
+    The rate table file failed validation (the REGION column was missing), so the engine kept the old
+    tables. Once they passed their freshness limit, quotes for affected products were refused.
+  key_signal: Rate table staleness rising and 'header mismatch (REGION missing)' in the load log.
+  why_not_restart: >
+    A restart or a forced refresh loads the same bad file. Pricing has to re-issue a correct file.
+  runbook:
+    - Check the staleness of the rate tables and the load log.
+    - Ask pricing to re-issue the file and reload it.
+    - Re-rate refused quotes and confirm staleness is back to normal.

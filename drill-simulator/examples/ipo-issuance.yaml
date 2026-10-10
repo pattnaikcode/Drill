@@ -1,0 +1,67 @@
+# IPO issuance: last day of bidding (illustrative model)
+#
+# Investors bid through brokers and investment apps. The exchange's bidding platform validates every
+# bid against the issue's price band and lot size from the security master. The sponsor bank sends
+# UPI mandates and blocks the money; the registrar reconciles bids with blocked funds; the allotment
+# engine applies the basis of allotment and the depository credits shares.
+# Built from the issuance and capital-markets packs. Names and numbers are a training model.
+
+id: ipo-issuance
+system: IPO issuance (bidding to allotment)
+description: >
+  Brokers and investment apps send bids to the bidding platform, which checks them against the
+  issue details in the security master. The sponsor bank blocks investors' money through UPI
+  mandates; the registrar reconciles bids with blocked funds; the allotment engine builds the credit
+  file and the depository credits shares to investors' demat accounts.
+
+clock: {start: "16:00", cutoff: "17:00", cutoff_label: Bidding closes}
+
+business:
+  currency: "₹"
+  unit: Cr
+  unit_name: bids
+  avg_notional: 0.0015
+  kpis:
+    - {label: "Bids without blocked funds", at: sponsor, cutoff: true}
+    - {label: "Bids not yet reconciled", at: registrar}
+
+components:
+  - {id: brokers, type: bid_channel, role: Bid channels, name: Broker Terminals, session: BRK01, rate_per_min: 500}
+  - {id: apps, type: bid_channel, role: Bid channels, name: Investment Apps (UPI), session: APP01, rate_per_min: 700}
+  - {id: bidding, type: bidding_platform, role: Exchange, name: Bidding Platform, capacity_per_min: 1800, instances: 3, uses: [secmaster]}
+  - {id: secmaster, type: security_master, name: Security Master}
+  - {id: sponsor, type: sponsor_bank, role: Banks, name: Sponsor Bank, capacity_per_min: 1800}
+  - {id: registrar, type: registrar, role: Registrar, name: Registrar (RTA), capacity_per_min: 1800, instances: 2}
+  - {id: allotment, type: allotment_engine, role: Registrar, name: Allotment Engine, capacity_per_min: 1800, instances: 2}
+  - {id: depository, type: securities_depository, role: Depository, name: Depository (demat credit), capacity_per_min: 1900}
+
+flow:
+  - brokers -> bidding
+  - apps -> bidding
+  - bidding -> sponsor -> registrar -> allotment -> depository
+
+alerts:
+  - {name: "Bid channel disconnected", on: bidding, metric: sessions_down, above: 0, severity: P1}
+  - {name: "Bids rejected", on: bidding, metric: reject_rate, above: 2, severity: P1}
+  - {name: "Bid queue building", on: bidding, metric: backlog, above: 1500, severity: P2}
+  - {name: "Security master stale", on: secmaster, metric: staleness_min, above: 30, severity: P2}
+  - {name: "Mandates failing", on: sponsor, metric: error_rate, above: 5, severity: P1}
+  - {name: "Mandates waiting", on: sponsor, metric: backlog, above: 1500, severity: P2}
+  - {name: "Reconciliation mismatches", on: registrar, metric: reject_rate, above: 2, severity: P2}
+  - {name: "Allotment credit rejects", on: allotment, metric: reject_rate, above: 2, severity: P2}
+  - {name: "Depository rejects", on: depository, metric: error_rate, above: 5, severity: P2}
+
+diagram:
+  notes: >
+    On the last day most bids arrive in the final hour. A bid only counts if the money is blocked
+    before the mandate deadline, so a slow sponsor bank loses bids even though the platform accepted them.
+  groups:
+    - {label: "Bid channels", ids: [brokers, apps]}
+    - {label: "Registrar", ids: [registrar, allotment]}
+  steps:
+    - {from: apps, to: bidding, text: "Brokers and apps send bids to the exchange's bidding platform."}
+    - {from: bidding, to: secmaster, text: "Each bid is checked against the price band, lot size and dates in the security master."}
+    - {from: bidding, to: sponsor, text: "The sponsor bank sends a UPI mandate to the investor and blocks the money."}
+    - {from: sponsor, to: registrar, text: "The registrar reconciles bids with blocked funds."}
+    - {from: registrar, to: allotment, text: "After close, the allotment engine applies the basis of allotment."}
+    - {from: allotment, to: depository, text: "Shares are credited to investors' demat accounts; unsuccessful bids are unblocked."}

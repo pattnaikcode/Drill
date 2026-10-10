@@ -1,0 +1,27 @@
+id: ins-wrong-rate-release
+title: Quotes blocked after the rate release
+systems: [motor-insurance]
+level: Easy
+summary: Comparison sites report missing quotes for some customers. Rating is up and fast.
+brief: >
+  11:00, the midday comparison-site peak. Pricing deployed rate release R-2026-10 at 10:55.
+faults:
+  - {at: "11:06", component: rating, fault: wrong_factor_table}
+root_cause: {component: rating, fault: wrong_factor_table}
+accepted_fixes: [rating.roll_back_rate_release]
+risky_actions: [rating.restart, rating.scale_out]
+hints:
+  - {after_min: 2, text: "Read why the quotes are blocked: the rating engine log says which check failed."}
+  - {after_min: 4, text: "What changed at 10:55? Compare the rate releases (ratectl releases)."}
+debrief:
+  what_happened: >
+    Rate release R-2026-10 shipped a new AGE_BAND factor table (v14) that multiplied some premiums by
+    ten. The premium sanity check blocked those quotes, so comparison sites showed nothing for them.
+  key_signal: "Sanity check blocks in the rating log ('premium 10.2x the previous quote') starting right after the release."
+  why_not_restart: >
+    Restarting or scaling the rating engine reloads the same bad table. Rolling the release back fixes
+    the price; re-rating the blocked quotes gets the customers back.
+  runbook:
+    - Confirm what the quotes are rejected for and when it started.
+    - Match the start time with the rate release.
+    - Roll back the release (pricing approves) and re-rate the blocked quotes.

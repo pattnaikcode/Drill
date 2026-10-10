@@ -1,0 +1,25 @@
+id: ipo-reconciliation
+title: Bids without blocked funds
+systems: [ipo-issuance]
+level: Medium
+summary: The registrar reports thousands of bids with no matching blocked funds.
+brief: >
+  16:00. The sponsor bank changed its file format this week.
+faults:
+  - {at: "16:05", component: registrar, fault: reconciliation_mismatch}
+root_cause: {component: registrar, fault: reconciliation_mismatch}
+accepted_fixes: [registrar.reload_bank_file_with_mapping]
+risky_actions: [registrar.restart, sponsor.escalate_to_vendor]
+hints:
+  - {after_min: 2, text: "Look at one unmatched application in the registrar's log. What format is its number in?"}
+debrief:
+  what_happened: >
+    The sponsor bank's file used a new application number format, so the registrar could not match
+    18% of bids to their blocked funds.
+  key_signal: "'no matching block in sponsor bank file (format ACM/2026/…)' in the registrar log."
+  why_not_restart: >
+    The money is blocked; only the match fails. Map the new format and re-run reconciliation.
+  runbook:
+    - Check the unmatched bids and the bank file format.
+    - Map the format and re-run reconciliation.
+    - Confirm every bid has a matching block.

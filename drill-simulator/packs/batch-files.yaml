@@ -13,6 +13,7 @@ types:
     label: Start-of-day file load
     behaves_like: ref_data
     help: "A file sent each morning and loaded before the day starts. If it is missing or incomplete, the systems that depend on it cannot map or validate work."
+    defaults: {refresh_every_min: 1440, stale_after_min: 1440, stale_reject_share: 0.9}
     base_faults: false
     base_actions: false
     vars:

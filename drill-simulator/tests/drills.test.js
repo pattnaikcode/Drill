@@ -55,7 +55,7 @@ function careless(s) {
 }
 
 test('all blueprints are valid', () => {
-  assert.deepStrictEqual(Object.keys(BLUEPRINTS).sort(), ['exchange', 'fraud-aml', 'online-shop', 'payments-mq', 'trade-allocation-direct', 'trade-allocation-kafka']);
+  assert.deepStrictEqual(Object.keys(BLUEPRINTS).sort(), ['bank-cards-upi', 'exchange', 'fraud-aml', 'ipo-issuance', 'motor-insurance', 'online-shop', 'payments-mq', 'store-chain', 'trade-allocation-direct', 'trade-allocation-kafka']);
   assert.strictEqual(BLUEPRINTS.exchange.ups.fix_gateway.length, 5, 'five members feed the gateway (fan-in)');
   assert.deepStrictEqual(BLUEPRINTS.exchange.downs.matching.sort(), ['drop_copy', 'md_publisher', 'surv_bus', 'trade_bus'], 'matching feeds four systems (fan-out)');
 });

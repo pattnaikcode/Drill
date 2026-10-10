@@ -1,0 +1,184 @@
+# Pack: insurance
+#
+# Building blocks of an insurer's systems: quotes from agents and comparison sites, the rating
+# engine and its rate tables, policy administration, document generation, claims, the third-party
+# administrator for health claims, and reinsurance. Generic, publicly documented patterns; not any
+# vendor's product.
+
+pack: insurance
+label: Insurance
+description: Quote channels, rating engine and rate tables, policy admin, documents, claims, TPA and reinsurance.
+
+types:
+  quote_channel:
+    label: Quote channel (agents, comparison sites, app)
+    behaves_like: source
+    help: "Where quote and buy requests come from: agent portals, comparison websites and the insurer's own app."
+    defaults: {rate_per_min: 200}
+
+  rating_engine:
+    label: Rating engine
+    behaves_like: service
+    help: "Prices a policy: applies the rate tables, the customer's risk factors and discounts and returns a premium."
+    faults:
+      rating_timeouts:
+        label: Rating calls timing out (comparison sites drop the quote)
+        effect: {capacity: 0.45, errors: 0.2, reason: "Quotes take over 5 s; comparison sites drop quotes that miss their timeout."}
+        on_start: "p95 rating time 5,400 ms (comparison site timeout 5,000 ms)"
+        logs: ["Quote {key}: rating took 6,120 ms; aggregator timed out, quote not shown"]
+      wrong_factor_table:
+        label: Wrong factor table deployed (premiums wrong)
+        effect: {reject: 0.25, reason: "Premium sanity check fails: the new factor table multiplies some premiums by 10."}
+        on_start: "Rate release R-2026-10 deployed: factor table AGE_BAND v14"
+        logs: ["Quote {key} blocked by sanity check: premium 10.2x the previous quote for the same risk"]
+        evidence:
+          "ratectl releases": "RELEASE      TABLE      VERSION  DEPLOYED\nR-2026-10    AGE_BAND   v14      {time}\nR-2026-09    AGE_BAND   v13      last month"
+    actions:
+      roll_back_rate_release:
+        label: "Roll back the rate release to the previous version"
+        fixes: [wrong_factor_table]
+        replays_rejected: true
+        fixed_message: "AGE_BAND back to v13; blocked quotes re-rated."
+      scale_rating:
+        label: "Add rating engine instances"
+        fixes: [rating_timeouts]
+        fixed_message: "Rating p95 back to 900 ms; comparison sites showing our quotes again."
+    shell:
+      "ratectl releases": "RELEASE      TABLE      VERSION  DEPLOYED\nR-2026-09    AGE_BAND   v13      last month"
+    logs_ok: ["{rate} quotes rated/min, p95 900 ms"]
+
+  rate_tables:
+    label: Rate tables
+    behaves_like: ref_data
+    help: "Base rates, factors and discounts by product and region, loaded into the rating engine. Changed by pricing actuaries in releases."
+    defaults: {refresh_every_min: 30, stale_after_min: 60, stale_reject_share: 0.1, key_prefix: QTE,
+               missing_msg: "No rate for region/product on quote {key}: rate table not loaded; quote refused"}
+    faults:
+      load_failed:
+        label: Rate table load failed (bad file from pricing)
+        effect: {stale: true, reason: "Today's rate table file fails validation (missing region column); the engine keeps the old one."}
+        on_start: "Rate table load FAILED: header mismatch (expected 14 columns, found 13: REGION missing)"
+        logs: ["Rate table load FAILED: header mismatch (REGION missing)"]
+    actions:
+      reload_corrected_tables:
+        label: "Get pricing to re-issue the file and reload it"
+        fixes: [load_failed]
+        after_s: 300
+        pending_message: "Pricing is re-issuing the rate file (about 5 minutes)."
+        fixed_message: "Corrected rate table loaded."
+
+  policy_admin_system:
+    label: Policy administration system (PAS)
+    behaves_like: service
+    help: "The system of record for policies: issues new policies, endorsements, renewals and cancellations, and bills premiums."
+    faults:
+      renewal_batch_overrun:
+        label: Renewal batch running into business hours
+        effect: {capacity: 0.35, reason: "The overnight renewal batch is still running and holding policy locks; new business waits."}
+        on_start: "Renewal batch REN_{date}: 61% complete at 09:00 (expected done at 06:00)"
+        logs: ["Policy {key}: issue waited 2,800 ms on lock held by REN batch"]
+      issuance_failures:
+        label: Policies failing to issue (product setup missing)
+        effect: {reject: 0.2, reason: "Policies fail to issue: product setup for a new variant is missing in PAS."}
+        on_start: "Product variant MOTOR-PLUS-2026 launched in channels; PAS setup not migrated"
+        logs: ["Issue failed for policy {key}: product variant MOTOR-PLUS-2026 not found"]
+    actions:
+      pause_renewal_batch:
+        label: "Pause the renewal batch until after peak"
+        fixes: [renewal_batch_overrun]
+        fixed_message: "Renewal batch paused at a checkpoint; new business flowing."
+      migrate_product_setup:
+        label: "Migrate the product setup to PAS and re-issue failed policies"
+        fixes: [issuance_failures]
+        replays_rejected: true
+        fixed_message: "Product variant set up; failed policies re-issued."
+    logs_ok: ["{rate} policies issued/min"]
+
+  document_service:
+    label: Document generation service
+    behaves_like: service
+    help: "Builds policy schedules, certificates and letters from templates and sends them by email or post."
+    faults:
+      template_error:
+        label: Template error (documents fail to render)
+        effect: {reject: 0.3, reason: "Policy documents fail to render: a template references a field that no longer exists."}
+        on_start: "Template POLICY_SCHEDULE v8 published"
+        logs: ["Render failed for policy {key}: unknown field 'insured.middleName' in POLICY_SCHEDULE v8"]
+      render_backlog:
+        label: Render queue backing up (PDF workers stuck)
+        effect: {capacity: 0.2, reason: "PDF render workers are stuck on very large documents; the queue is growing."}
+        on_start: "Render worker 3/4 busy for 900 s on fleet policy schedule (4,200 pages)"
+        logs: ["Render queue {depth} documents; 3 of 4 workers busy > 600 s"]
+    actions:
+      revert_template:
+        label: "Revert the template to the previous version and re-render"
+        fixes: [template_error]
+        replays_rejected: true
+        fixed_message: "POLICY_SCHEDULE back to v7; failed documents re-rendered."
+      restart_render_workers:
+        label: "Restart the stuck render workers and move large documents to a separate queue"
+        fixes: [render_backlog]
+        fixed_message: "Workers restarted; large documents on their own queue; backlog draining."
+    logs_ok: ["{rate} documents rendered/min"]
+
+  claims_system:
+    label: Claims system
+    behaves_like: service
+    help: "Registers first notice of loss, checks cover, reserves, approves and pays claims."
+    faults:
+      cover_check_failing:
+        label: Cover check failing (policy lookups time out)
+        effect: {capacity: 0.4, errors: 0.15, reason: "Claims cannot confirm cover: policy lookups to PAS time out."}
+        on_start: "Policy lookup p95 7,800 ms; claim registration timeouts"
+        logs: ["Claim {key}: cover check timed out calling PAS"]
+      fraud_rule_too_strict:
+        label: Fraud rule referring too many claims
+        effect: {reject: 0.3, reason: "A new fraud rule refers 30% of claims to investigation instead of 3%."}
+        on_start: "Fraud rule FR-118 enabled: refer claims within 30 days of policy start"
+        logs: ["Claim {key} referred by FR-118"]
+    actions:
+      disable_rule:
+        label: "Disable fraud rule FR-118 and release referred claims"
+        fixes: [fraud_rule_too_strict]
+        replays_rejected: true
+        fixed_message: "FR-118 off; referred claims back in the normal queue."
+      add_lookup_cache:
+        label: "Turn on the policy lookup cache"
+        fixes: [cover_check_failing]
+        fixed_message: "Cover checks answered from cache; claims registering."
+    logs_ok: ["{rate} claims events/min"]
+
+  third_party_administrator:
+    label: Third-party administrator (TPA)
+    behaves_like: external_party
+    help: "Outside firm that handles health claims and hospital cashless approvals for the insurer."
+    faults:
+      tpa_api_down:
+        label: TPA API failing (cashless approvals delayed)
+        effect: {errors: 0.6, reason: "The TPA's API returns 503; hospitals cannot get cashless approvals."}
+        on_start: "TPA API 503 Service Unavailable"
+        logs: ["Pre-authorisation {key}: TPA returned 503"]
+    actions:
+      call_tpa:
+        label: "Call the TPA's operations desk"
+        fixes: [tpa_api_down]
+        after_s: 900
+        pending_message: "TPA is restarting its API servers; ETA 15 minutes. Hospitals told to use the phone line."
+        fixed_message: "TPA API responding; queued approvals sent."
+    logs_ok: ["{rate} pre-authorisations/min to the TPA"]
+
+  reinsurer:
+    label: Reinsurer
+    behaves_like: external_party
+    help: "Takes part of the insurer's risk. Receives bordereaux (lists of policies and claims) and pays its share."
+    faults:
+      bordereau_rejected:
+        label: Bordereau rejected by the reinsurer
+        effect: {errors: 0.4, reason: "The reinsurer rejects the bordereau file: currency codes missing for some lines."}
+        on_start: "Reinsurer portal: bordereau BX-{date} rejected (validation errors on 412 lines)"
+        logs: ["Bordereau line {key} rejected: currency missing"]
+    actions:
+      correct_and_resubmit:
+        label: "Correct the bordereau and resubmit"
+        fixes: [bordereau_rejected]
+        fixed_message: "Bordereau accepted by the reinsurer."
