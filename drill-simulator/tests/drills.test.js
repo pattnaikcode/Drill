@@ -55,7 +55,7 @@ function careless(s) {
 test('all blueprints are valid', () => {
   assert.deepStrictEqual(Object.keys(BLUEPRINTS).sort(), ['exchange', 'fraud-aml', 'online-shop', 'trade-allocation-direct', 'trade-allocation-kafka']);
   assert.strictEqual(BLUEPRINTS.exchange.ups.fix_gateway.length, 5, 'five members feed the gateway (fan-in)');
-  assert.deepStrictEqual(BLUEPRINTS.exchange.downs.matching.sort(), ['drop_copy', 'md_publisher', 'trade_bus'], 'matching feeds three systems (fan-out)');
+  assert.deepStrictEqual(BLUEPRINTS.exchange.downs.matching.sort(), ['drop_copy', 'md_publisher', 'surv_bus', 'trade_bus'], 'matching feeds four systems (fan-out)');
 });
 
 test('blueprint validation catches common mistakes', () => {

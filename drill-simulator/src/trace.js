@@ -50,7 +50,7 @@
       seq: 10400 + (n * 37) % 600,                                                  // FIX MsgSeqNum (34)
       sending_time: `20261009-${S.clockStr(Math.floor(this.t), true)}.000`, // stamped by the broker as it sends // FIX SendingTime (52)
     };
-    const tr = { id: 'TRACE-' + n, journey: j, vars, step: 0, clock: this.t, sentAt: this.t, status: 'moving', reason: null, waitSince: null, done: [] };
+    const tr = { id: 'TRACE-' + n, journey: j, vars, step: 0, clock: this.t, sentAt: this.t, status: 'moving', reason: null, waitSince: null, where: j.steps[0].at, done: [], blocked: {}, transit: {} };
     this.traces.unshift(tr);
     if (this.traces.length > 20) this.traces.pop();
     return tr;
@@ -93,7 +93,7 @@
       return out;
     }
     if (s.type === 'kafka_topic') {
-      const p = v.partition !== undefined ? v.partition : hash(v.symbol || v.order_id) % s.parts.length;
+      const p = hash(v.symbol || v.order_id) % s.parts.length; // keyed by symbol: same symbol, same partition
       v.partition = p;
       if (s.blocked === p) { out.wait = `Stuck in ${s.def.name} partition ${p}: the consumer keeps failing on the message at offset ${Math.floor(s.stuckOffset)} ahead of it.`; return out; }
       const cons = s.assign ? Object.keys(s.assign).find(k => this.partitionsOf(s, k).includes(p)) : s.downs[0];
@@ -141,33 +141,54 @@
     return `${m[1]}: UPDATE ${Object.entries(set).map(([k, x]) => `${k}=${x}`).join(' ')} WHERE ${key}=${tr.vars[key]}`;
   };
 
+  // a step follows the previous step, or the step named in "from" (a branch, e.g. the same trade to clearing and to surveillance)
+  function parentOf(j, i) {
+    const st = j.steps[i];
+    if (st.from === undefined) return i - 1;
+    for (let k = i - 1; k >= 0; k--) if (j.steps[k].at === st.from) return k;
+    return i - 1;
+  }
+
   P._advanceTraces = function () {
     if (!this.traces) return;
     this.traces.forEach(tr => {
       if (tr.status === 'done' || tr.status === 'rejected') return;
       const steps = tr.journey.steps;
-      for (let guard = 0; guard < 20 && tr.step < steps.length; guard++) {
-        const st = steps[tr.step], h = this._hop(tr, st);
-        if (h.wait) { // blocked: time passes while it waits
-          if (tr.status !== 'waiting' || tr.reason !== h.wait) { tr.waitSince = tr.waitSince || this.t; }
-          tr.status = 'waiting'; tr.reason = h.wait; tr.clock = this.t; return;
+      tr.eta = tr.eta || {}; tr.waits = tr.waits || {};
+      const blocked = {}, transit = {};
+      for (let pass = 0, moved = true; moved && pass < 40; pass++) {
+        moved = false;
+        for (let i = 0; i < steps.length; i++) {
+          if (tr.done[i] || tr.status === 'rejected') continue;
+          const pi = parentOf(tr.journey, i);
+          if (pi >= 0 && !tr.done[pi]) continue;
+          const st = steps[i], h = this._hop(tr, st);
+          if (h.wait) { blocked[i] = h.wait; if (tr.waits[i] === undefined) tr.waits[i] = this.t; delete tr.eta[i]; continue; }
+          if (tr.eta[i] === undefined) { // arrival time here: after the parent step, or now if it had to wait
+            const base = tr.waits[i] !== undefined ? this.t : (pi >= 0 ? tr.done[pi].t : tr.sentAt);
+            tr.eta[i] = { t: base + h.delay, note: h.note };
+          }
+          if (tr.eta[i].t > this.t) { transit[i] = tr.eta[i].note; continue; } // still queued or in transit
+          const t = tr.eta[i].t, waited = tr.waits[i] !== undefined ? this.t - tr.waits[i] : 0;
+          tr.clock = t;
+          if (this.c[st.at].type === 'kafka_topic') tr.vars.offset = Math.floor(this.c[st.at].offsets[tr.vars.partition]);
+          if (h.reject) {
+            const writes = (st.on_reject && st.on_reject.writes) || (this.traceTables.orders ? [`orders: update status=REJECTED reject_reason="${h.reject}"`] : []);
+            tr.done[i] = { t, at: st.at, does: `Rejected: ${h.reject}`, message: fill(st.reject_message || '', tr.vars), writes: writes.map(x => this._traceWrite(tr, x)).filter(Boolean), rejected: true, waited };
+            tr.status = 'rejected'; tr.reason = h.reject; tr.where = st.at;
+            this.log(st.at, 'WARN', `Order ${tr.vars.order_id} (${tr.vars.symbol}) rejected: ${h.reject}`);
+            return;
+          }
+          tr.done[i] = { t, at: st.at, does: fill(st.does, tr.vars), message: fill(st.message, tr.vars), writes: (st.writes || []).map(x => this._traceWrite(tr, x)).filter(Boolean), note: tr.eta[i].note, waited };
+          moved = true;
         }
-        const arrive = Math.max(tr.clock, tr.status === 'waiting' ? this.t : tr.clock) + h.delay;
-        if (arrive > this.t) { tr.status = 'moving'; tr.reason = h.note; return; } // still in transit or queued
-        const waited = tr.waitSince ? this.t - tr.waitSince : 0;
-        tr.clock = arrive; tr.waitSince = null;
-        if (h.reject) {
-          const writes = (st.on_reject && st.on_reject.writes) || (this.traceTables.orders ? [`orders: update status=REJECTED reject_reason="${h.reject}"`] : []);
-          tr.done.push({ t: tr.clock, at: st.at, does: st.on_reject && st.on_reject.does ? fill(st.on_reject.does, tr.vars) : `Rejected: ${h.reject}`, message: fill((st.on_reject && st.on_reject.message) || st.reject_message || '', tr.vars), writes: writes.map(x => this._traceWrite(tr, x)).filter(Boolean), rejected: true });
-          tr.status = 'rejected'; tr.reason = h.reject;
-          this.log(st.at, 'WARN', `Order ${tr.vars.order_id} (${tr.vars.symbol}) rejected: ${h.reject}`);
-          return;
-        }
-        if (this.c[st.at].type === 'kafka_topic') { const k = this.c[st.at]; tr.vars.offset = Math.floor(k.offsets[tr.vars.partition]); }
-        tr.done.push({ t: tr.clock, at: st.at, does: fill(st.does, tr.vars), message: fill(st.message, tr.vars), writes: (st.writes || []).map(x => this._traceWrite(tr, x)).filter(Boolean), note: h.note, waited: waited > 0 ? waited : 0 });
-        tr.step++; tr.status = 'moving'; tr.reason = null;
       }
-      if (tr.step >= steps.length) { tr.status = 'done'; tr.reason = null; }
+      tr.blocked = blocked; tr.transit = transit;
+      tr.step = steps.findIndex((_, i) => !tr.done[i]); // first unfinished step (-1 when all done)
+      const b = Object.keys(blocked)[0];
+      if (tr.step < 0) { tr.status = 'done'; tr.reason = null; tr.where = null; tr.step = steps.length; }
+      else if (b !== undefined) { tr.status = 'waiting'; tr.reason = blocked[b]; tr.where = steps[b].at; tr.waitSince = tr.waits[b]; }
+      else { const k = Object.keys(transit)[0]; tr.status = 'moving'; tr.reason = k !== undefined ? transit[k] : null; tr.where = k !== undefined ? steps[k].at : steps[tr.step].at; tr.waitSince = null; }
     });
   };
 

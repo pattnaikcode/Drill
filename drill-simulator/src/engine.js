@@ -357,7 +357,9 @@
         const c = st && ids.get(st.at);
         if (!c) { errors.push(`${w}: "at" must be a component id.`); return; }
         if (!TYPES[c.type] || !TYPES[c.type].flow) { errors.push(`${w}: ${st.at} is not in the flow; record its work as "writes" on the step that uses it.`); return; }
-        if (prev && !edgeSet.has(prev + '>' + st.at)) errors.push(`${w}: ${prev} does not send to ${st.at} in the flow.`);
+        if (st.from !== undefined && !steps.slice(0, k).some(x => x && x.at === st.from)) errors.push(`${w}: "from: ${st.from}" must name an earlier step's component (it starts a branch from there).`);
+        const parent = st.from !== undefined ? st.from : prev;
+        if (parent && !edgeSet.has(parent + '>' + st.at)) errors.push(`${w}: ${parent} does not send to ${st.at} in the flow.`);
         prev = st.at;
         (st.writes || []).forEach(x => {
           const m = WRITE.exec(String(x));

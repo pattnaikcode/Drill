@@ -58,6 +58,8 @@ Rebooting a host or failing over to DR fixes some host faults but takes the comp
 
 The **Follow an order** tool sends one order through the live system and shows it hop by hop: the raw FIX message at each step (with `|` for the SOH separator), what each component does with it, and the database rows it writes. The exchange has three journeys: fully filled, rejected by risk checks, and partly filled with the rest left on the book. Rows land in `orders` and `trades` on the Order Book Store, so you can query them in the Database tab.
 
+A journey can branch with `from:`. After matching, the same trade is followed to clearing and, through its own Kafka consumer group, to market surveillance. If clearing is stuck, surveillance still receives the trade, and the other way round, just as with two independent consumer groups.
+
 Orders move through the same simulation as the bulk traffic, so a fault stops them where the problem is. A stuck Kafka partition holds only the orders keyed to that partition. A missed corporate action rejects the order at risk. A full archive disk leaves it waiting at matching. An expired certificate stops it at clearing. A gateway clock problem leaves it queued at the broker, because its TCP session cannot log on. Fix the fault and the order resumes, recording how long it waited.
 
 Journeys are data in the system YAML:

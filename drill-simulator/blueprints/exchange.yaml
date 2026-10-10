@@ -49,6 +49,10 @@ components:
   - {id: clearing_feed, type: service, role: Exchange, name: Clearing Feed Adapter, capacity_per_min: 2600, instances: 2}
   - {id: clearing, type: external_party, role: Clearing corporation, name: Clearing Corporation, capacity_per_min: 3600}
 
+  # market surveillance: a second consumer group reading the same trades from Kafka
+  - {id: surv_bus, type: kafka_topic, role: "Kafka: surveillance group", name: trades.matched, partitions: 8, consumer_group: surveillance}
+  - {id: surveillance, type: service, role: Surveillance, name: Market Surveillance, capacity_per_min: 3000, instances: 2}
+
   # market data and drop copy
   - {id: md_publisher, type: service, role: Exchange, name: Market Data Publisher, capacity_per_min: 3000, instances: 2}
   - {id: md_vendors, type: external_party, role: Subscribers, name: Market Data Vendors, capacity_per_min: 3200}
@@ -63,6 +67,7 @@ flow:
   - fix_gateway -> risk -> matching -> trade_bus -> clearing_feed -> clearing
   - matching -> md_publisher -> md_vendors
   - matching -> drop_copy
+  - matching -> surv_bus -> surveillance
 
 # ---------------------------------------------------------------- follow an order
 # Tables written by orders as they move, and the journeys a learner can follow hop by hop.
@@ -89,8 +94,8 @@ journeys:
         message: "8=FIX.4.4|35=8|49=OEGW|56=KEST01|11={clordid}|37={order_id}|150=0|39=0|  (new: order accepted onto the book)"
         writes: ["orders: update status=NEW"]
       - at: matching
-        does: "OEGW passed the order on and risk checks cleared it, so it reaches the matching engine. Arcline Markets (market maker) is quoting KONSTL 1203.10 bid / 1203.40 offer for 250. The matching rules (price, then time priority) match Kestrel's buy at 1203.40 against that quote: 100 trade at 1203.40."
-        message: "8=FIX.4.4|35=8|49=OEGW|56=KEST01|11={clordid}|37={order_id}|150=F|39=2|32=100|31=1203.40|14=100|151=0|  (trade: filled; Arcline gets its own 35=8 for its side)"
+        does: "OEGW passed the order on and risk checks cleared it, so it reaches the matching engine. Arcline Markets (market maker) is quoting KONSTL 1203.10 bid / 1203.40 offer for 250. The matching rules (price, then time priority) match Kestrel's buy at 1203.40 against that quote: 100 trade at 1203.40 with trade id {trade_id}. The fill, with the trade id in tag 880 (TrdMatchID), goes back to Kestrel as an ExecutionReport."
+        message: "8=FIX.4.4|35=8|49=OEGW|56=KEST01|11={clordid}|37={order_id}|150=F|39=2|32=100|31=1203.40|14=100|151=0|880={trade_id}|  (sent back to Kestrel over its TCP session via OEGW; Arcline gets its own 35=8 for its side)"
         writes: ["orders: update status=FILLED filled_qty=100", "trades: insert counterparty=ARCL11 clearing_status=PENDING"]
       - at: trade_bus
         does: "Matching publishes the trade to Kafka, keyed by symbol so every KONSTL trade stays in order on one partition."
@@ -101,6 +106,14 @@ journeys:
       - at: clearing
         does: "The clearing corporation accepts the trade and becomes the counterparty to both sides for settlement."
         writes: ["trades: update clearing_status=ACCEPTED"]
+      - at: surv_bus
+        from: matching
+        does: "The same trade on trades.matched is read by the surveillance consumer group, independently of clearing."
+        message: "Kafka trades.matched | group surveillance | partition {partition} offset {offset} key=KONSTL value={trade_id}"
+      - at: surveillance
+        does: "Market surveillance consumes the trade and the order behind it and runs its alert rules (for example wash trades, spoofing, unusual price moves)."
+        message: "Surveillance event: trade {trade_id}, order {order_id}, KEST01 vs ARCL11, KONSTL 100 @ 1203.40"
+
 
   - id: rejected
     name: Order rejected by risk checks
@@ -135,7 +148,7 @@ journeys:
         writes: ["orders: update status=NEW"]
       - at: matching
         does: "Delta Quotes (market maker) is quoting CHLKFD 286.10 bid for 600. The matching rules match 600 of Bluewater's sell against that quote; the remaining 400 rests on the book at 286.10 until it trades, is cancelled or the day ends."
-        message: "8=FIX.4.4|35=8|49=OEGW|56=BLUW03|11={clordid}|37={order_id}|150=F|39=1|32=600|31=286.10|14=600|151=400|  (partially filled: 400 still open)"
+        message: "8=FIX.4.4|35=8|49=OEGW|56=BLUW03|11={clordid}|37={order_id}|150=F|39=1|32=600|31=286.10|14=600|151=400|880={trade_id}|  (partially filled: 400 still open)"
         writes: ["orders: update status=PARTIALLY_FILLED filled_qty=600", "trades: insert qty=600 counterparty=DLTQ12 clearing_status=PENDING"]
       - at: trade_bus
         does: "The trade for the 600 filled is published to Kafka, keyed by symbol."
@@ -146,6 +159,14 @@ journeys:
       - at: clearing
         does: "Clearing accepts the 600. The resting 400 is not a trade yet, so clearing never sees it."
         writes: ["trades: update clearing_status=ACCEPTED"]
+      - at: surv_bus
+        from: matching
+        does: "The trade is also read by the surveillance consumer group."
+        message: "Kafka trades.matched | group surveillance | partition {partition} offset {offset} key=CHLKFD value={trade_id}"
+      - at: surveillance
+        does: "Surveillance runs its alert rules on the trade; the resting 400 is watched as an open order."
+        message: "Surveillance event: trade {trade_id}, order {order_id}, BLUW03 vs DLTQ12, CHLKFD 600 @ 286.10"
+
 
 alerts:
   - {name: "Member session disconnected", on: fix_gateway, metric: sessions_down, above: 0, severity: P2}
@@ -156,17 +177,20 @@ alerts:
   - {name: "Order book store pool saturated", on: orderbook_db, metric: pool_pct, above: 90, severity: P2}
   - {name: "Trade bus partition lag", on: trade_bus, metric: max_partition_lag, above: 400, severity: P2}
   - {name: "Clearing submissions backing up", on: clearing, metric: backlog, above: 2500, severity: P2}
+  - {name: "Surveillance consumer lag", on: surv_bus, metric: lag, above: 3000, severity: P3}
 
 diagram:
   notes: >
     Members cannot see inside the exchange, and the exchange cannot see inside members or issuers.
     Support works from the exchange's own gateway, risk, matching and post-trade signals.
+    trades.matched is drawn twice because each consumer group (clearing feed, surveillance) has its own offsets and lag.
   groups:
     - {label: "Members", ids: [broker_a, broker_b, broker_c, mm_1, mm_2]}
     - {label: "Exchange trading system", ids: [fix_gateway, risk, matching, instrument_master, orderbook_db]}
     - {label: "Listed companies (issuers)", ids: [issuer_1, issuer_2, issuer_3]}
     - {label: "Post-trade", ids: [trade_bus, clearing_feed, clearing]}
     - {label: "Market data and drop copy", ids: [md_publisher, md_vendors, drop_copy]}
+    - {label: "Market surveillance", ids: [surv_bus, surveillance]}
   place:
     broker_a: [0, 0]
     broker_b: [0, 1]
@@ -187,6 +211,8 @@ diagram:
     md_publisher: [4.3, 2.2]
     md_vendors: [5.3, 2.2]
     drop_copy: [4.3, 3.45]
+    surv_bus: [4.3, 4.75]
+    surveillance: [5.3, 4.75]
   steps:
     - {from: broker_a, to: fix_gateway, text: "Brokers send client orders over FIX sessions, one session per member."}
     - {from: mm_1, to: fix_gateway, text: "Market makers stream two-sided quotes to meet their quoting obligations."}
@@ -199,3 +225,4 @@ diagram:
     - {from: clearing_feed, to: clearing, text: "Trades are submitted to the clearing corporation before the 15:30 clearing cut-off."}
     - {from: matching, to: md_publisher, text: "Prices and depth are broadcast to market data vendors."}
     - {from: matching, to: drop_copy, text: "Drop copies of every fill go back to members' risk systems."}
+    - {from: matching, to: surv_bus, text: "The same trades are read from Kafka by the surveillance system's own consumer group, so surveillance lag never slows clearing."}

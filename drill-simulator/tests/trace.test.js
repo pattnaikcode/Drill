@@ -16,7 +16,7 @@ function run(fault, journey, warmSteps = 24) {
   for (let i = 0; i < warmSteps; i++) sim.step(5);
   const tr = sim.sendOrder(journey || 'filled');
   for (let i = 0; i < 12; i++) sim.step(5);
-  return { sim, tr, at: tr.journey.steps[Math.min(tr.step, tr.journey.steps.length - 1)].at };
+  return { sim, tr, at: tr.where };
 }
 
 test('journeys validate, and mistakes are explained', () => {
@@ -49,6 +49,9 @@ test('faults stop the order where the problem is', () => {
   assert.strictEqual(r.at, 'matching'); assert.match(r.tr.reason, /commits hang/);
   r = run(['clearing', 'cert_expired']);
   assert.strictEqual(r.at, 'clearing'); assert.match(r.tr.reason, /certificate has expired/);
+  assert.ok(r.tr.done.some(d => d && d.at === 'surveillance'), 'the surveillance branch still completes: its own consumer group');
+  r = run(['surv_bus', 'poison_message', { partition: p }]);
+  assert.strictEqual(r.at, 'surv_bus'); assert.ok(r.tr.done.some(d => d && d.at === 'clearing'), 'clearing is unaffected by a stuck surveillance consumer');
   r = run(['fix_gateway', 'clock_skew']);
   assert.strictEqual(r.at, 'broker_a'); assert.match(r.tr.reason, /SendingTime/);
   const rows = T.sql(r.sim, 'orderbook_db', 'SELECT * FROM orders').rows;
@@ -61,5 +64,6 @@ test('a stuck order resumes once the fault is fixed', () => {
   r.sim.applyAction('clearing', 'renew_certificate');
   for (let i = 0; i < 120 && r.tr.status !== 'done'; i++) r.sim.step(5);
   assert.strictEqual(r.tr.status, 'done');
-  assert.ok(r.tr.done[r.tr.done.length - 1].waited > 50, 'records how long it waited');
+  const clearingStep = r.tr.done.find(d => d && d.at === 'clearing');
+  assert.ok(clearingStep.waited > 50, 'records how long it waited');
 });

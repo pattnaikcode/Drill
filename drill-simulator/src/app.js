@@ -209,7 +209,7 @@
       g += `</g>`;
     });
     if (live && sim.traces) sim.traces.filter(t => t.status === 'moving' || t.status === 'waiting').slice(0, 3).forEach(t => {
-      const st = t.journey.steps[Math.min(t.step, t.journey.steps.length - 1)], p = L.pos[st.at]; if (!p) return;
+      const p = L.pos[t.where]; if (!p) return;
       g += `<g class="tracer ${t.status}"><circle cx="${p.x + bw - 12}" cy="${p.y + 12}" r="7"/><title>${esc(t.vars.order_id)}: ${esc(t.reason || 'on its way')}</title></g>`;
     });
     badges.forEach(([pt, n]) => { g += `<g class="badge"><circle cx="${pt[0]}" cy="${pt[1]}" r="10"/><text x="${pt[0]}" y="${pt[1] + 4}" text-anchor="middle">${n}</text></g>`; });
@@ -318,13 +318,16 @@
     const o = tr.vars;
     const steps = tr.journey.steps.map((st, i) => {
       const d = tr.done[i];
-      if (d) return `<li class="tstep ${d.rejected ? 'rej' : 'ok'}"><div class="row between"><b>${esc(name(st.at))}</b><span class="mono small muted">${esc(sim.traceStamp(d.t))}</span></div>
+      if (d) return `<li class="tstep ${d.rejected ? 'rej' : 'ok'}"><div class="row between"><b>${esc(name(st.at))}${st.from ? `<span class="small muted"> (branch from ${esc(name(st.from))})</span>` : ''}</b><span class="mono small muted">${esc(sim.traceStamp(d.t))}</span></div>
         <div class="small">${esc(d.does)}</div>${d.message ? `<div class="mono small tmsg">${esc(d.message)}</div>` : ''}
         ${d.writes.map(w => `<div class="mono small twrite">${esc(w)}</div>`).join('')}
         ${d.note || d.waited ? `<div class="small muted">${esc([d.waited ? `waited ${Math.round(d.waited)} s here` : '', d.note || ''].filter(Boolean).join('; '))}</div>` : ''}</li>`;
-      if (i === tr.done.length && (tr.status === 'waiting' || tr.status === 'moving'))
-        return `<li class="tstep ${tr.status === 'waiting' ? 'stuck' : 'now'}"><div class="row between"><b>${esc(name(st.at))}</b><span class="small muted">${tr.status === 'waiting' ? `stuck for ${Math.max(0, Math.round(sim.t - (tr.waitSince || sim.t)))} s` : 'on its way'}</span></div>${tr.reason ? `<div class="small${tr.status === 'waiting' ? ' bad-t' : ''}">${esc(tr.reason)}</div>` : ''}</li>`;
-      return `<li class="tstep todo"><b class="muted">${esc(name(st.at))}</b></li>`;
+      const branch = st.from ? `<span class="small muted"> (branch from ${esc(name(st.from))})</span>` : '';
+      if (tr.blocked && tr.blocked[i] !== undefined)
+        return `<li class="tstep stuck"><div class="row between"><b>${esc(name(st.at))}${branch}</b><span class="small muted">stuck for ${Math.max(0, Math.round(sim.t - (tr.waits[i] ?? sim.t)))} s</span></div><div class="small bad-t">${esc(tr.blocked[i])}</div></li>`;
+      if (tr.transit && i in tr.transit)
+        return `<li class="tstep now"><div class="row between"><b>${esc(name(st.at))}${branch}</b><span class="small muted">on its way</span></div>${tr.transit[i] ? `<div class="small">${esc(tr.transit[i])}</div>` : ''}</li>`;
+      return `<li class="tstep todo"><b class="muted">${esc(name(st.at))}</b>${branch}</li>`;
     }).join('');
     const sqlHint = Object.keys(sim.traceTables || {}).length ? `<p class="small muted" style="margin:0">Query the rows it wrote in the Database tab, e.g. <code>SELECT * FROM ${esc(Object.keys(sim.traceTables)[0])} WHERE order_id = '${esc(o.order_id)}'</code></p>` : '';
     return `${list}<div class="row between"><span><b>${esc(tr.journey.name)}</b> <span class="mono small muted">${esc(o.order_id)} · ${esc([o.side, o.qty, o.symbol, o.price !== undefined ? '@ ' + (typeof o.price === 'number' ? o.price.toFixed(2) : o.price) : ''].filter(Boolean).join(' '))}</span></span>${pill(tr)}</div>
