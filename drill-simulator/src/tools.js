@@ -172,6 +172,8 @@
         }),
       });
     }
+    // tables written by traced orders ("follow an order")
+    if (sim.traceTablesFor) sim.traceTablesFor(dbId).forEach(([name, t]) => { T[name] = () => ({ cols: t.columns, rows: t.rows.map(r => t.columns.map(c => r[c] === undefined ? null : r[c])) }); });
     return T;
   }
   function sql(sim, dbId, statement) {

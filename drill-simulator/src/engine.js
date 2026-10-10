@@ -336,6 +336,37 @@
       else if (!Array.isArray(p) || p.length !== 2 || p.some(v => typeof v !== 'number' || v < 0)) errors.push(`diagram.place.${id}: must be [column, row], for example [2, 0.5].`);
     });
 
+    // tables written by traced orders, and the journeys those orders follow (see trace.js)
+    const tables = bp.tables && typeof bp.tables === 'object' ? bp.tables : {};
+    Object.entries(tables).forEach(([t, d]) => {
+      if (!/^[a-z][a-z0-9_]*$/.test(t)) errors.push(`tables.${t}: table names must be lowercase letters, digits or _.`);
+      if (!d || !ids.has(d.db) || ids.get(d.db).type !== 'database') errors.push(`tables.${t}: "db" must name a database component.`);
+      if (!d || !Array.isArray(d.columns) || !d.columns.length) errors.push(`tables.${t}: needs a list of "columns".`);
+    });
+    const journeys = Array.isArray(bp.journeys) ? bp.journeys : [];
+    const WRITE = /^(\w+)\s*:\s*(insert|update)\b\s*(.*)$/i;
+    journeys.forEach((j, i) => {
+      const where = `journeys[${i}]` + (j && j.id ? ` (${j.id})` : '');
+      if (!j || !j.id || !j.name) { errors.push(`${where}: needs an "id" and a "name".`); return; }
+      if (!j.order || typeof j.order !== 'object') errors.push(`${where}: needs an "order" (the fields of the order, e.g. symbol, side, qty, price).`);
+      const steps = Array.isArray(j.steps) ? j.steps : [];
+      if (!steps.length) errors.push(`${where}: needs "steps".`);
+      let prev = null;
+      steps.forEach((st, k) => {
+        const w = `${where} step ${k + 1}`;
+        const c = st && ids.get(st.at);
+        if (!c) { errors.push(`${w}: "at" must be a component id.`); return; }
+        if (!TYPES[c.type] || !TYPES[c.type].flow) { errors.push(`${w}: ${st.at} is not in the flow; record its work as "writes" on the step that uses it.`); return; }
+        if (prev && !edgeSet.has(prev + '>' + st.at)) errors.push(`${w}: ${prev} does not send to ${st.at} in the flow.`);
+        prev = st.at;
+        (st.writes || []).forEach(x => {
+          const m = WRITE.exec(String(x));
+          if (!m) errors.push(`${w}: write "${x}" must look like "orders: insert status=NEW" or "orders: update status=FILLED".`);
+          else if (!tables[m[1]]) errors.push(`${w}: write to unknown table "${m[1]}" (add it under "tables").`);
+        });
+      });
+    });
+
     if (errors.length) return { errors };
     const sourceRate = comps.filter(c => c.type === 'source').reduce((s, c) => s + c.rate_per_min, 0);
     const model = {
@@ -349,6 +380,7 @@
         kpis, tolerance_trades: typeof biz.tolerance_trades === 'number' ? biz.tolerance_trades : sourceRate * 0.5,
       },
       diagram: { groups: dg.groups || [], steps: dg.steps || [], place: dg.place || {}, notes: dg.notes || '' },
+      tables, journeys,
       clockLabel: clock.cutoff_label || 'Cut-off',
       raw: bp,
     };
@@ -521,6 +553,7 @@
         if (ph >= 45 && ph - dt < 45) this.log(s.def.id, 'INFO', `Starting ${s.def.name} (heap 6144 MB)... CrashLoopBackOff wait`);
       }
     });
+    if (this._advanceTraces) this._advanceTraces(dt); // traced orders (trace.js), if loaded
     this._chatter(dt);
     this._rates(dt);
     this._business(dt);

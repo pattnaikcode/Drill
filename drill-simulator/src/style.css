@@ -228,3 +228,20 @@ textarea.code.sql { min-height: 70px; }
 /* root cause evidence and instructor panel */
 textarea.evidence { width: 100%; box-sizing: border-box; font: inherit; font-size: 14px; background: var(--sunk); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 7px 9px; resize: vertical; }
 .panel.instr { border-style: dashed; border-color: var(--bad); }
+
+/* follow an order */
+ol.tsteps { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.tstep { border: 1px solid var(--line); border-left: 4px solid var(--line); border-radius: 6px; padding: 7px 10px; display: grid; gap: 3px; background: var(--panel); }
+.tstep.ok { border-left-color: var(--ok); }
+.tstep.rej { border-left-color: var(--warn); }
+.tstep.stuck { border-left-color: var(--bad); background: var(--sunk); }
+.tstep.now { border-left-color: var(--accent, #1F5FBF); }
+.tstep.todo { opacity: .55; }
+.tmsg { color: var(--muted); overflow-wrap: anywhere; }
+.twrite { color: var(--ok); overflow-wrap: anywhere; }
+.bad-t { color: var(--bad); }
+.chip[aria-pressed="true"] { border-color: var(--ink); font-weight: 600; }
+.tracer circle { fill: var(--accent); stroke: #fff; stroke-width: 2; }
+.tracer.waiting circle { fill: var(--bad); animation: tpulse 1s ease-in-out infinite; }
+@keyframes tpulse { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .tracer.waiting circle { animation: none; } }

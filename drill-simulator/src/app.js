@@ -41,7 +41,7 @@
     running: true, speed: 2, acc: 0, ended: false, selected: null, approval: null, feed: [], debrief: null, debriefReason: null,
     mapView: 'live', toolTab: 'component', errorsOnly: false,
     grafana: 'overview', splunkQ: 'level=ERROR OR level=WARN earliest=-15m', splunkR: null, sqlDb: null, sqlQ: 'SHOW TABLES', sqlR: null,
-    unixHost: null, unixOut: [], designSys: null, designUC: null, designMsg: '', ucMsg: '',
+    unixHost: null, unixOut: [], designSys: null, designUC: null, designMsg: '', ucMsg: '', traceSel: null, journey: null,
   };
 
   // ------------------------------------------------------------ lifecycle
@@ -208,6 +208,10 @@
       }
       g += `</g>`;
     });
+    if (live && sim.traces) sim.traces.filter(t => t.status === 'moving' || t.status === 'waiting').slice(0, 3).forEach(t => {
+      const st = t.journey.steps[Math.min(t.step, t.journey.steps.length - 1)], p = L.pos[st.at]; if (!p) return;
+      g += `<g class="tracer ${t.status}"><circle cx="${p.x + bw - 12}" cy="${p.y + 12}" r="7"/><title>${esc(t.vars.order_id)}: ${esc(t.reason || 'on its way')}</title></g>`;
+    });
     badges.forEach(([pt, n]) => { g += `<g class="badge"><circle cx="${pt[0]}" cy="${pt[1]}" r="10"/><text x="${pt[0]}" y="${pt[1] + 4}" text-anchor="middle">${n}</text></g>`; });
     return g + '</svg>';
   }
@@ -288,6 +292,7 @@
     const pg = A.sqlDb && S.isPg(A.sim.c[A.sqlDb]);
     const ex = ['SHOW TABLES', pg ? 'SELECT pid, application_name, state, wait_event, connections_held FROM pg_stat_activity ORDER BY connections_held DESC' : 'SELECT sid, program, status, event, connections_held FROM v$session ORDER BY connections_held DESC'];
     if (A.bp.components.some(c => c.type === 'source' && /FIX|Broker|Market/i.test((c.role || '') + c.name)) || A.bp.components.filter(c => c.type === 'source').length > 2) ex.push('SELECT * FROM sessions');
+    if (A.sim.traceTablesFor && A.sim.traceTablesFor(A.sqlDb).length) ex.push(`SELECT * FROM ${A.sim.traceTablesFor(A.sqlDb)[0][0]}`);
     ex.push('SELECT key, count(*) FROM rejects GROUP BY key');
     if (A.bp.components.some(c => c.type === 'issuer')) ex.push("SELECT * FROM corporate_actions WHERE status = 'SKIPPED'");
     const ref = A.bp.components.find(c => c.type === 'ref_data'); if (ref) ex.push(`SELECT * FROM ${ref.id}_load_log LIMIT 5`);
@@ -303,13 +308,42 @@
     ex.push('cat /etc/app/application.yml');
     return ex;
   }
+  function traceBody() {
+    const sim = A.sim, trs = sim.traces || [];
+    if (!trs.length) return '<p class="small muted" style="margin:0">No orders sent yet. Choose a journey and press Send order.</p>';
+    const tr = trs.find(t => t.id === A.traceSel) || trs[0];
+    const pill = t => t.status === 'done' ? '<span class="pill ok">completed</span>' : t.status === 'rejected' ? '<span class="pill warn">rejected</span>' : t.status === 'waiting' ? '<span class="pill bad">stuck</span>' : '<span class="pill info">in progress</span>';
+    const name = id => A.bp.byId[id] ? A.bp.byId[id].name : id;
+    const list = trs.length > 1 ? `<div class="chips">${trs.slice(0, 8).map(t => `<button type="button" class="chip" data-trace="${t.id}" aria-pressed="${t === tr}">${esc(t.vars.order_id)} · ${esc(t.journey.name.split(' ').slice(0, 3).join(' '))} · ${t.status === 'done' ? 'done' : t.status === 'rejected' ? 'rejected' : t.status === 'waiting' ? 'stuck' : '…'}</button>`).join('')}</div>` : '';
+    const o = tr.vars;
+    const steps = tr.journey.steps.map((st, i) => {
+      const d = tr.done[i];
+      if (d) return `<li class="tstep ${d.rejected ? 'rej' : 'ok'}"><div class="row between"><b>${esc(name(st.at))}</b><span class="mono small muted">${esc(sim.traceStamp(d.t))}</span></div>
+        <div class="small">${esc(d.does)}</div>${d.message ? `<div class="mono small tmsg">${esc(d.message)}</div>` : ''}
+        ${d.writes.map(w => `<div class="mono small twrite">${esc(w)}</div>`).join('')}
+        ${d.note || d.waited ? `<div class="small muted">${esc([d.waited ? `waited ${Math.round(d.waited)} s here` : '', d.note || ''].filter(Boolean).join('; '))}</div>` : ''}</li>`;
+      if (i === tr.done.length && (tr.status === 'waiting' || tr.status === 'moving'))
+        return `<li class="tstep ${tr.status === 'waiting' ? 'stuck' : 'now'}"><div class="row between"><b>${esc(name(st.at))}</b><span class="small muted">${tr.status === 'waiting' ? `stuck for ${Math.max(0, Math.round(sim.t - (tr.waitSince || sim.t)))} s` : 'on its way'}</span></div>${tr.reason ? `<div class="small${tr.status === 'waiting' ? ' bad-t' : ''}">${esc(tr.reason)}</div>` : ''}</li>`;
+      return `<li class="tstep todo"><b class="muted">${esc(name(st.at))}</b></li>`;
+    }).join('');
+    const sqlHint = Object.keys(sim.traceTables || {}).length ? `<p class="small muted" style="margin:0">Query the rows it wrote in the Database tab, e.g. <code>SELECT * FROM ${esc(Object.keys(sim.traceTables)[0])} WHERE order_id = '${esc(o.order_id)}'</code></p>` : '';
+    return `${list}<div class="row between"><span><b>${esc(tr.journey.name)}</b> <span class="mono small muted">${esc(o.order_id)} · ${esc([o.side, o.qty, o.symbol, o.price !== undefined ? '@ ' + (typeof o.price === 'number' ? o.price.toFixed(2) : o.price) : ''].filter(Boolean).join(' '))}</span></span>${pill(tr)}</div>
+      <ol class="tsteps">${steps}</ol>${sqlHint}`;
+  }
   function toolsPanel() {
-    const tabs = [['component', 'Component'], ['grafana', 'Grafana'], ['splunk', 'Splunk'], ['sql', 'Database'], ['unix', 'Unix']];
+    const tabs = [['component', 'Component'], ...((A.bp.journeys || []).length ? [['trace', 'Follow an order']] : []), ['grafana', 'Grafana'], ['splunk', 'Splunk'], ['sql', 'Database'], ['unix', 'Unix']];
     let body = '';
     if (A.toolTab === 'component') body = `<div class="row between"><div><h3 id="insTitle"></h3><span class="small muted" id="insType"></span></div></div>
       <div class="tiles" id="tiles"></div>
       <div class="row between"><span class="label">Logs</span><label class="small row" style="gap:6px"><input type="checkbox" id="errOnly" ${A.errorsOnly ? 'checked' : ''}> Warnings and errors only</label></div>
       <div class="term" id="logs" tabindex="0" aria-label="Component logs"></div>`;
+    if (A.toolTab === 'trace') {
+      const js = A.bp.journeys || [];
+      if (!A.journey || !js.some(j => j.id === A.journey)) A.journey = js.length ? js[0].id : null;
+      body = `<p class="small muted" style="margin:0">Send one order and follow it hop by hop through the live system: the message at each step, what each component does, and the rows it writes. If something is broken, the order stops where the problem is.</p>
+      <div class="row"><label class="small muted row" style="gap:6px">Journey<select id="trJourney">${js.map(j => `<option value="${esc(j.id)}"${A.journey === j.id ? ' selected' : ''}>${esc(j.name)}</option>`).join('')}</select></label><button class="btn primary" id="trSend">Send order</button></div>
+      <div id="trBody" class="stack" style="gap:8px"></div>`;
+    }
     if (A.toolTab === 'grafana') body = `<div class="row"><label class="small muted row" style="gap:6px">Dashboard<select id="gDash">${['overview', ...A.bp.components.filter(c => c.type !== 'issuer').map(c => c.id)].map(id => `<option value="${id}"${A.grafana === id ? ' selected' : ''}>${id === 'overview' ? 'Business and throughput overview' : esc(A.bp.byId[id].name)}</option>`).join('')}</select></label><span class="small muted">Last 60 minutes · dashed line = alert threshold</span></div><div class="ggrid" id="gBody"></div>`;
     if (A.toolTab === 'splunk') body = `<form class="row" id="spForm"><input type="text" id="spQ" class="mono grow" value="${esc(A.splunkQ)}" aria-label="Search query" autocomplete="off"><button class="btn primary">Search</button></form>
       <div class="chips">${SPLUNK_EXAMPLES.map(q => `<button type="button" class="chip" data-sq="${esc(q)}">${esc(q)}</button>`).join('')}</div>
@@ -361,6 +395,7 @@
     if (A.mapView === 'live') $('#map').innerHTML = drawSystem(A.bp, sim, 'live');
     if (A.toolTab === 'component') drawInspector();
     if (A.toolTab === 'grafana' && $('#gBody')) $('#gBody').innerHTML = grafanaBody();
+    if (A.toolTab === 'trace' && $('#trBody')) { $('#trBody').innerHTML = traceBody(); document.querySelectorAll('[data-trace]').forEach(b => b.addEventListener('click', () => { A.traceSel = b.dataset.trace; $('#trBody').innerHTML = traceBody(); })); }
     const firing = sim.alerts.filter(a => a.status === 'FIRING').length;
     $('#alertCount').textContent = firing ? `${firing} firing` : 'none firing';
     $('#alerts').innerHTML = sim.alerts.length ? sim.alerts.slice().sort((a, b) => (a.status === 'FIRING' ? 0 : 1) - (b.status === 'FIRING' ? 0 : 1) || b.firedAt - a.firedAt).map(a =>
@@ -617,6 +652,12 @@ debrief:
     // tools
     each('[data-tool]', b => b.addEventListener('click', () => { A.toolTab = b.dataset.tool; if (A.toolTab === 'grafana' && A.session) A.session.useTool('Grafana', A.grafana === 'overview' ? 'overview dashboard' : A.bp.byId[A.grafana].name); renderAll(); }));
     on('#gDash', 'change', e => { A.grafana = e.target.value; if (A.session) A.session.useTool('Grafana', A.grafana === 'overview' ? 'overview dashboard' : A.bp.byId[A.grafana].name); updateLive(); });
+    on('#trJourney', 'change', e => { A.journey = e.target.value; });
+    on('#trSend', 'click', () => {
+      const tr = A.sim.sendOrder(A.journey); A.traceSel = tr.id;
+      if (A.session) A.session.useTool('Follow an order', `${tr.journey.name} (${tr.vars.order_id})`);
+      updateLive();
+    });
     const runSplunk = q => { A.splunkQ = q; A.splunkR = TL.search(A.sim, q); A.splunkR.at = A.sim.time(true); if (A.session) A.session.useTool('Splunk', q); $('#spBody').innerHTML = splunkBody(); };
     on('#spForm', 'submit', e => { e.preventDefault(); runSplunk($('#spQ').value); });
     each('[data-sq]', b => b.addEventListener('click', () => { $('#spQ').value = b.dataset.sq; runSplunk(b.dataset.sq); }));

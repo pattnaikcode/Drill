@@ -69,7 +69,7 @@
   function blank() {
     return {
       meta: { id: 'my-system', system: 'My system', description: '', start: '09:15', cutoff: '10:45', cutoff_label: 'Cut-off', currency: '₹', unit: 'Cr', unit_name: 'orders', avg_notional: 0.05 },
-      comps: [], flows: [], kpis: [], alerts: [], groups: [], steps: [], place: {}, notes: '',
+      comps: [], flows: [], kpis: [], alerts: [], groups: [], steps: [], place: {}, notes: '', extra: {},
     };
   }
   function fromBlueprint(raw) { // load an existing blueprint into the forms
@@ -84,6 +84,7 @@
     b.groups = (dg.groups || []).map(g => ({ label: g.label, ids: [...(g.ids || [])] }));
     b.steps = (dg.steps || []).map(s => ({ ...s }));
     b.place = { ...(dg.place || {}) }; b.notes = (dg.notes || '').trim();
+    ['tables', 'journeys'].forEach(k => { if (raw[k]) b.extra[k] = raw[k]; }); // no forms for these yet: kept exactly as written
     return b;
   }
 
@@ -146,6 +147,11 @@
       if (pl.length) { L.push('  place:'); pl.forEach(([id, p]) => L.push(`    ${id}: [${p.join(', ')}]`)); }
       if (B.steps.length) { L.push('  steps:'); B.steps.forEach(s => L.push('    - ' + inline({ from: s.from, to: s.to, text: s.text }))); }
     }
+    const extra = Object.entries(B.extra || {}).filter(([, v]) => v && (Array.isArray(v) ? v.length : Object.keys(v).length));
+    if (extra.length) {
+      L.push('', '# Follow an order: tables written by traced orders and the journeys they follow (kept from your YAML).');
+      extra.forEach(([k, v]) => L.push(yaml.dump({ [k]: v }, { lineWidth: 110, flowLevel: k === 'tables' ? 2 : 4 }).trimEnd()));
+    }
     return L.join('\n') + '\n';
   }
   function wrap(text, w) {
@@ -169,6 +175,8 @@
       if (Array.isArray(c.uses)) c.uses = c.uses.map(u => u === from ? to : u); if (c.feeds === from) c.feeds = to;
       if (c.assign && c.assign[from]) { c.assign[to] = c.assign[from]; delete c.assign[from]; }
     });
+    (B.extra.journeys || []).forEach(j => (j.steps || []).forEach(st => { if (st.at === from) st.at = to; }));
+    Object.values(B.extra.tables || {}).forEach(t => { if (t.db === from) t.db = to; });
     B.kpis.forEach(k => { if (k.at === from) k.at = to; });
     B.alerts.forEach(a => { if (a.on === from) a.on = to; });
     B.groups.forEach(g => { g.ids = g.ids.map(i => i === from ? to : i); });

@@ -54,6 +54,34 @@ Components with the same `host:` run on one server and share it: a full disk or 
 
 Rebooting a host or failing over to DR fixes some host faults but takes the component away for four to five minutes; restarting the application fixes none of them.
 
+## Follow an order
+
+The **Follow an order** tool sends one order through the live system and shows it hop by hop: the raw FIX message at each step (with `|` for the SOH separator), what each component does with it, and the database rows it writes. The exchange has three journeys: fully filled, rejected by risk checks, and partly filled with the rest left on the book. Rows land in `orders` and `trades` on the Order Book Store, so you can query them in the Database tab.
+
+Orders move through the same simulation as the bulk traffic, so a fault stops them where the problem is. A stuck Kafka partition holds only the orders keyed to that partition. A missed corporate action rejects the order at risk. A full archive disk leaves it waiting at matching. An expired certificate stops it at clearing. A gateway clock problem leaves it queued at the broker, because its TCP session cannot log on. Fix the fault and the order resumes, recording how long it waited.
+
+Journeys are data in the system YAML:
+
+```yaml
+tables:
+  orders: {db: orderbook_db, columns: [order_id, clordid, member, symbol, side, qty, price, filled_qty, status, created_at, updated_at]}
+journeys:
+  - id: filled
+    name: Buy order fully filled
+    order: {member: KEST01, symbol: KONSTL, side: BUY, qty: 100, price: 1203.40}
+    steps:
+      - at: broker_a
+        does: "Kestrel's FIX engine sends a NewOrderSingle (35=D) over its TCP session to our OEGW."
+        message: "8=FIX.4.4|35=D|49=KEST01|56=OEGW|34={seq}|11={clordid}|55=KONSTL|54=1|38=100|40=2|44=1203.40|"
+      - at: fix_gateway
+        does: "Session, sequence and throttle checks; assigns {order_id}; acknowledges with 35=8."
+        writes: ["orders: insert status=PENDING_NEW filled_qty=0"]
+      - at: risk
+        reject: "Price outside band"        # optional: a step that always rejects
+```
+
+Each step must follow the flow (`at` components connected by `->`), and writes must name a declared table. The validator explains any mistake.
+
 ## Investigation tools
 
 All tools read the live simulation, so what you find depends on what is actually broken. All are read-only.
@@ -118,7 +146,7 @@ business:
     - {label: "Trades not with clearing", at: clearing, cutoff: true}
 components:
   - {id: broker_a, type: source, role: Broker, name: Kestrel Securities, session: KEST01, rate_per_min: 420}
-  - {id: fix_gateway, type: service, name: FIX Order Gateway, capacity_per_min: 2700, instances: 3}
+  - {id: fix_gateway, type: service, name: Order Entry Gateway (OEGW), capacity_per_min: 2700, instances: 3}
   - {id: risk, type: service, name: Pre-trade Risk Checks, capacity_per_min: 2800, uses: [instrument_master], rejects: return}
   - {id: issuer_2, type: issuer, name: Konark Steel Ltd, symbol: KONSTL, feeds: instrument_master}
   # ...
@@ -181,13 +209,14 @@ debrief:
 | File | Job |
 |---|---|
 | `src/engine.js` | Component types, hosts and host faults, the runbook action catalogue, the root-cause list, blueprint validation, the simulator (flow graph, metrics, logs, alerts, health, faults, actions). No screen code. |
+| `src/trace.js` | Follow an order: traced orders that move hop by hop through the live simulation, and the tables they write. |
 | `src/session.js` | Drill runner: schedules faults, records acknowledgement, declarations, tool use and approved actions; scores; builds the debrief. |
 | `src/tools.js` | Splunk-style search, read-only SQL console, read-only Unix shell. |
 | `src/app.js` | User interface: system picker, flow diagram, live map, tools, design editors, debrief. |
 | `src/builder.js`, `src/builder.template.html` | System Builder: forms that write and validate blueprint YAML. |
 | `src/style.css`, `src/index.template.html` | Page design and layout. |
 | `build.py` | Bundles everything, including the YAML files, into `dist/index.html` (participant page), `dist/admin.html` (instructor page) and `dist/builder.html` (System Builder). |
-| `tests/drills.test.js` | 212 automated tests (Node's built-in runner). |
+| `tests/*.test.js` | 216 automated tests (Node's built-in runner). |
 | `vendor/js-yaml.min.js` | YAML parser (MIT licence, see `vendor/js-yaml.LICENSE`). |
 
 ## Develop
