@@ -291,7 +291,7 @@
         '  chronyc tracking   ulimit -n   lsof -p 3120 | wc -l',
         ...H.comps.map(x => `  tail -n 50 /var/log/app/${x}.log   grep ERROR /var/log/app/${x}.log`),
         '  ls /var/log/app',
-        ...(consumers.length ? ['  cat /opt/surv/conf/partitions.conf   (which partitions this server consumes)'] : []),
+        ...(consumers.length ? ['  cat /opt/app/conf/partitions.conf   (which partitions this server consumes)'] : []),
         ...(vm ? ['  systemctl status <process>'] : []),
         '  cat /etc/app/application.yml   curl -s localhost:8080/health',
         ...(c.type === 'service' && !vm ? ['  kubectl get pods   kubectl describe pod <name>   kubectl top pods'] : []),
@@ -343,7 +343,7 @@
           rows.push(`oracle    4410  1.1 12.0 ora_pmon_${id.toUpperCase()}`);
           if (c.fault && c.fault.type === 'pool_exhausted') rows.push('oracle    5872 96.4  9.4 oracle' + id.toUpperCase() + ' (LOCAL=NO)  -- sid 482 month_end_recon_report');
           rows.push('oracle    4422  1.2  2.0 ora_lgwr_' + id.toUpperCase(), `oracle    4431  ${hf === 'disk_full' ? '0.0' : '0.4'}  0.5 ora_arc0_${id.toUpperCase()}${hf === 'disk_full' ? '   (stuck: destination full)' : ''}`);
-        } else if (vm) H.comps.forEach((x, i) => { const cx = sim.c[x]; if (!oomDown) rows.push(`surv     ${3120 + i * 7 + (cx.oomRestarts || 0)} ${hf === 'cpu_runaway' ? (1 + sim.rand() * 2).toFixed(1) : (12 + sim.rand() * 25).toFixed(1)} ${hf === 'memory_oom' ? '31.0' : '9.8'} java -Xmx8g -Dsurv.process=${x} -jar /opt/surv/lib/${x.replace(/_\d+$/, '')}.jar`); });
+        } else if (vm) H.comps.forEach((x, i) => { const cx = sim.c[x]; if (!oomDown) rows.push(`app       ${3120 + i * 7 + (cx.oomRestarts || 0)} ${hf === 'cpu_runaway' ? (1 + sim.rand() * 2).toFixed(1) : (12 + sim.rand() * 25).toFixed(1)} ${hf === 'memory_oom' ? '31.0' : '9.8'} java -Xmx8g -Dapp.process=${x} -jar /opt/app/lib/${x.replace(/_\d+$/, '')}.jar`); });
         else if (c.type === 'kafka_topic') rows.push('kafka     2211 14.2 18.5 java -Xmx8g kafka.Kafka /etc/kafka/server.properties');
         else if (!oomDown) rows.push(`app       ${3120 + (c.oomRestarts || 0)} ${hf === 'cpu_runaway' ? (1 + sim.rand() * 2).toFixed(1) : (30 + sim.rand() * 20).toFixed(1)} ${hf === 'memory_oom' ? '96.1' : '22.4'} java -Xmx6g -jar /opt/app/${id}.jar`);
         rows.push('root       811  0.3  0.1 /usr/sbin/sshd -D', 'node_exp   902  0.4  0.2 /usr/local/bin/node_exporter');
@@ -356,7 +356,7 @@
       case 'cat': {
         if (a[1] && a[1].includes('partitions.conf')) {
           if (!consumers.length) return `cat: ${a[1]}: No such file or directory`;
-          return consumers.map(x => { const k = sim.kafkaIn(x), ps = sim.partitionsOf(k, x.def.id); return `# ${x.def.name}\n${x.def.id}.topic=${k.def.name}\n${x.def.id}.partitions=${ps.join(',')}` + (k.def.keys ? `\n${x.def.id}.underlyings=${ps.map(i => k.def.keys[i]).join(',')}` : ''); }).join('\n\n') + '\n# last changed: 2025-11-14 by surv-admin';
+          return consumers.map(x => { const k = sim.kafkaIn(x), ps = sim.partitionsOf(k, x.def.id); return `# ${x.def.name}\n${x.def.id}.topic=${k.def.name}\n${x.def.id}.partitions=${ps.join(',')}` + (k.def.keys ? `\n${x.def.id}.underlyings=${ps.map(i => k.def.keys[i]).join(',')}` : ''); }).join('\n\n') + '\n# last changed: 2025-11-14 by platform-admin';
         }
         if (!a[1] || !a[1].includes('application')) return `cat: ${a[1] || ''}: No such file or directory`;
         const cfg = [`# ${d.name}`, `component: ${id}`, `type: ${d.type}`];
@@ -384,7 +384,7 @@
           : c.type === 'external_party' ? { upstream: ({ vendor: '503 Service Unavailable', auth: '401 Unauthorized', cert: 'TLS handshake failed', disk: 'spool write failed', restart: 'starting' })[sim.extDown(c)] || (f === 'api_rate_limited' ? '429 Too Many Requests' : '200 OK'), queue: Math.round(c.inbox) } : {};
         return JSON.stringify({ status: h === 'ok' ? 'UP' : h === 'warn' ? 'DEGRADED' : 'DOWN', component: id, checks }, null, 2);
       }
-      case 'systemctl': if (vm) { const x = H.comps.includes(a[2]) ? a[2] : H.comps[0]; return `● ${x}.service - ${sim.c[x].def.name}\n   Loaded: loaded (/etc/systemd/system/${x}.service; enabled)\n   Active: ` + (hf === 'memory_oom' ? `activating (auto-restart) (Result: signal) — Main process exited, code=killed, status=9/KILL` : `active (running) since Fri 2026-10-09 05:30:02 IST`) + `\n   Note: Surveillance starts fresh each day; data under ${sim.c[x].def.mount || '/survdata/datanode/data'}/10/09/`; }
+      case 'systemctl': if (vm) { const x = H.comps.includes(a[2]) ? a[2] : H.comps[0]; return `● ${x}.service - ${sim.c[x].def.name}\n   Loaded: loaded (/etc/systemd/system/${x}.service; enabled)\n   Active: ` + (hf === 'memory_oom' ? `activating (auto-restart) (Result: signal) — Main process exited, code=killed, status=9/KILL` : `active (running) since Fri 2026-10-09 05:30:02 IST`) + `${sim.c[x].def.mount ? `\n   Data: ${sim.c[x].def.mount}/10/09/` : ''}`; }
         return `● ${id}.service - ${d.name}\n   Loaded: loaded (/etc/systemd/system/${id}.service; enabled)\n   Active: active (running) since Tue 2026-08-28 06:00:12 IST; 41 days ago` + (a[2] && /chrony|ntp/.test(a[2]) ? (hf === 'clock_skew' ? '\n   (chronyd) Status: "no reachable sources"' : '') : '');
       case 'kubectl': {
         if (vm) return `kubectl: ${H.host} is not a Kubernetes node; its processes run under systemd (try systemctl status ${H.comps[0]})`;

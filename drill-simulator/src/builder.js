@@ -31,7 +31,7 @@
       { k: 'rejects', label: 'Rejected work', kind: 'select', opts: [['', 'Held for reprocessing (default)'], ['return', 'Returned to the sender']], help: 'Exchange risk checks return rejects; middle office queues them.' },
       { k: 'role', label: 'Role on the diagram', kind: 'text', help: 'e.g. Exchange, Middle office' },
       { k: 'host', label: 'Server name', kind: 'text', help: 'Optional. Components with the same server name share one host: a full disk or reboot hits all of them.' },
-      { k: 'mount', label: 'Data path', kind: 'text', help: 'Optional. Where the host keeps its data, e.g. /survdata/datanode/data; shown by df -h.' },
+      { k: 'mount', label: 'Data path', kind: 'text', help: 'Optional. Where the host keeps its data, e.g. /data/app; shown by df -h.' },
     ],
     kafka_topic: [
       { k: 'partitions', label: 'Partitions', kind: 'number', req: true, help: 'Work is spread evenly across partitions.' },

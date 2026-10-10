@@ -53,7 +53,7 @@ function careless(s) {
 }
 
 test('all blueprints are valid', () => {
-  assert.deepStrictEqual(Object.keys(BLUEPRINTS).sort(), ['exchange', 'fraud-aml', 'online-shop', 'venue-mtf', 'trade-allocation-direct', 'trade-allocation-kafka']);
+  assert.deepStrictEqual(Object.keys(BLUEPRINTS).sort(), ['exchange', 'fraud-aml', 'online-shop', 'trade-allocation-direct', 'trade-allocation-kafka']);
   assert.strictEqual(BLUEPRINTS.exchange.ups.fix_gateway.length, 5, 'five members feed the gateway (fan-in)');
   assert.deepStrictEqual(BLUEPRINTS.exchange.downs.matching.sort(), ['drop_copy', 'md_publisher', 'trade_bus'], 'matching feeds three systems (fan-out)');
 });
@@ -228,4 +228,35 @@ test('the root-cause list is the same for every component and includes decoys', 
   const keys = S.CAUSES.map(c => c.key);
   for (const t of Object.keys(S.TYPES)) for (const f of Object.keys(S.faultsFor(t))) assert.ok(keys.includes(f), f + ' missing from CAUSES');
   assert.ok(keys.includes('market_volume') && keys.includes('api_schema_change'));
+});
+
+// ---------------------------------------------------------------- partition assignment and shared servers (generic)
+test('consumers with their own partitions: a hot key overloads one server, rebalancing spreads it', () => {
+  const text = `
+id: partitioned
+system: Partitioned consumers
+clock: {start: "10:00", cutoff: "11:00"}
+business: {kpis: [{label: Not processed, at: proc_1, cutoff: true}]}
+components:
+  - {id: feed, type: source, name: Feed, rate_per_min: 2000}
+  - {id: topic, type: kafka_topic, name: events, partitions: 4, keys: [A, B, C, D], weights: [0.4, 0.2, 0.2, 0.2],
+     assign: {cons_1: [0, 1], cons_2: [2, 3]}}
+  - {id: cons_1, type: service, name: Consumer 1, host: srv-01, mount: /data/app, capacity_per_min: 1300, instances: 1}
+  - {id: proc_1, type: service, name: Processor 1, host: srv-01, mount: /data/app, capacity_per_min: 3000, instances: 1}
+  - {id: cons_2, type: service, name: Consumer 2, host: srv-02, capacity_per_min: 1500, instances: 1}
+flow:
+  - feed -> topic
+  - topic -> cons_1 -> proc_1
+  - topic -> cons_2`;
+  const r = S.parseBlueprint(text, yaml);
+  assert.deepStrictEqual(r.errors, []);
+  const sim = new S.Simulator(r.blueprint, { seed: 2 });
+  sim.injectFault('topic', 'partition_skew', { partition: 0, multiplier: 3 });
+  for (let i = 0; i < 120; i++) sim.step(5);
+  assert.ok(sim.metric('cons_1', 'consumer_lag') > 1000 && sim.metric('cons_2', 'consumer_lag') < 50, 'only the server owning the hot partition lags');
+  assert.match(T.shell(sim, 'srv-01', 'cat /opt/app/conf/partitions.conf'), /cons_1.partitions=0,1/);
+  assert.strictEqual(sim.applyAction('topic', 'rebalance_partitions').effect, 'fixed');
+  sim.injectFault('proc_1', 'disk_full');
+  assert.strictEqual(sim.hostFault(sim.c.cons_1), 'disk_full', 'processes on one server share its disk');
+  assert.match(T.shell(sim, 'srv-01', 'df -h'), /100% \/data\/app/);
 });

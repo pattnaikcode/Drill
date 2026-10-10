@@ -222,7 +222,7 @@
       if (c.type === 'service' && c.instances !== undefined && !(Number.isInteger(c.instances) && c.instances > 0)) errors.push(`${where}: "instances" must be a positive whole number.`);
       if (c.type === 'service' && c.rejects !== undefined && !['queue', 'return'].includes(c.rejects)) errors.push(`${where}: "rejects" must be "queue" (held for reprocessing) or "return" (sent back to the sender).`);
       if (c.host !== undefined && (!hasHost(c.type) || !/^[a-z0-9][a-z0-9-]*$/.test(String(c.host)))) errors.push(`${where}: "host" names the server it runs on (lowercase letters, digits, dashes) and only applies to services, databases, adapters and loaders.`);
-      if (c.mount !== undefined && (!hasHost(c.type) || !String(c.mount).startsWith('/'))) errors.push(`${where}: "mount" must be an absolute path such as /survdata.`);
+      if (c.mount !== undefined && (!hasHost(c.type) || !String(c.mount).startsWith('/'))) errors.push(`${where}: "mount" must be an absolute path such as /data/app.`);
       if (c.type === 'kafka_topic' && c.weights !== undefined && (!Array.isArray(c.weights) || c.weights.length !== c.partitions || c.weights.some(w => !(w > 0)))) errors.push(`${where}: "weights" needs one positive number per partition (${c.partitions}).`);
       if (c.type === 'kafka_topic' && c.keys !== undefined && (!Array.isArray(c.keys) || c.keys.length !== c.partitions)) errors.push(`${where}: "keys" needs one label per partition (${c.partitions}).`);
       if (c.engine !== undefined && (c.type !== 'database' || !['oracle', 'postgres'].includes(c.engine))) errors.push(`${where}: "engine" is only for databases and must be oracle or postgres.`);
