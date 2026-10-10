@@ -61,6 +61,7 @@
     const s = this.c[st.at], hf = this.hostFault(s), v = tr.vars;
     const out = { wait: null, reject: null, delay: 0.002, note: null };
     if (s.type === 'source') {
+      if (st.reject) { out.reject = fill(st.reject, v); return out; } // e.g. the broker's own risk system blocks the order
       const why = this.sourceDown(s);
       if (why === 'seq') out.wait = `Session ${this.sessionId(s)} is not logged on (logon rejected: MsgSeqNum too low). The order is queued at the member.`;
       if (why === 'clock') out.wait = `Session ${this.sessionId(s)} is not logged on (logon rejected: SendingTime accuracy problem). The order is queued at the member.`;

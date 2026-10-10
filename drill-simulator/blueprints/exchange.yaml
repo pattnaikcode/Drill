@@ -1,5 +1,5 @@
 # An equity exchange: members (brokers and market makers) trade through the exchange's
-# gateway, risk checks and matching engine. Listed companies (issuers) keep the instrument
+# order entry gateway, order validation and matching engine. Listed companies (issuers) keep the instrument
 # master current through corporate actions. Trades go to the clearing corporation over
 # an internal Kafka bus; market data and drop copies go out to subscribers and members.
 
@@ -7,7 +7,7 @@ id: exchange
 system: Equity exchange trading platform
 description: >
   Three brokers and two market makers connect over FIX. Orders pass session and throttle
-  checks at the gateway, pre-trade risk checks against the instrument master, and price-time
+  checks at the order entry gateway (OEGW), validation against the instrument master, and price-time
   matching. Trades reach the clearing corporation before the clearing cut-off.
 
 clock:
@@ -34,7 +34,7 @@ components:
 
   # exchange trading system
   - {id: fix_gateway, type: service, role: Exchange, name: Order Entry Gateway (OEGW), capacity_per_min: 2700, instances: 3}
-  - {id: risk, type: service, role: Exchange, name: Pre-trade Risk Checks, capacity_per_min: 2800, instances: 4, uses: [instrument_master], rejects: return}
+  - {id: risk, type: service, role: Exchange, name: Order Validation, capacity_per_min: 2800, instances: 4, uses: [instrument_master], rejects: return}
   - {id: matching, type: service, role: Exchange, name: Matching Engine, capacity_per_min: 3000, instances: 2, uses: [orderbook_db]}
   - {id: instrument_master, type: ref_data, name: Instrument Master, refresh_every_min: 10, stale_after_min: 30}
   - {id: orderbook_db, type: database, name: Order Book Store, pool_size: 80, big_table: ORDER_HIST}
@@ -83,18 +83,18 @@ journeys:
     order: {member: KEST01, symbol: KONSTL, side: BUY, qty: 100, price: 1203.40}
     steps:
       - at: broker_a
-        does: "Kestrel Securities' FIX engine, connected to our OEGW over a TCP session (KEST01), sends a NewOrderSingle (35=D): buy (54=1) 100 (38) KONSTL (55) limit (40=2) at 1203.40 (44), good for the day (59=0)."
+        does: "Kestrel's own pre-trade risk system (RMS) has already checked the client's margin, credit limit and order size. Kestrel's FIX engine, connected to our OEGW over a TCP session (KEST01), then sends a NewOrderSingle (35=D): buy (54=1) 100 (38) KONSTL (55) limit (40=2) at 1203.40 (44), good for the day (59=0)."
         message: "8=FIX.4.4|35=D|49=KEST01|56=OEGW|34={seq}|52={sending_time}|11={clordid}|55=KONSTL|54=1|38=100|40=2|44=1203.40|59=0|10=128|"
       - at: fix_gateway
         does: "OEGW checks the TCP session is logged on (35=A done at start of day), MsgSeqNum 34={seq} is the next expected number, and Kestrel is within its message throttle. Assigns exchange order id {order_id} and acknowledges with an ExecutionReport (35=8) pending new."
         message: "8=FIX.4.4|35=8|49=OEGW|56=KEST01|11={clordid}|37={order_id}|17={exec_id}|150=A|39=A|55=KONSTL|54=1|38=100|44=1203.40|"
         writes: ["orders: insert status=PENDING_NEW filled_qty=0"]
       - at: risk
-        does: "Checks the price against today's KONSTL band from the instrument master (1083.06 to 1323.74) and Kestrel's order value limit. Both pass."
+        does: "Order validation checks KONSTL is tradable, the price is inside today's band from the instrument master (1083.06 to 1323.74), and tick and lot size are valid. Client risk was the broker's job, before sending."
         message: "8=FIX.4.4|35=8|49=OEGW|56=KEST01|11={clordid}|37={order_id}|150=0|39=0|  (new: order accepted onto the book)"
         writes: ["orders: update status=NEW"]
       - at: matching
-        does: "OEGW passed the order on and risk checks cleared it, so it reaches the matching engine. Arcline Markets (market maker) is quoting KONSTL 1203.10 bid / 1203.40 offer for 250. The matching rules (price, then time priority) match Kestrel's buy at 1203.40 against that quote: 100 trade at 1203.40 with trade id {trade_id}. The fill, with the trade id in tag 880 (TrdMatchID), goes back to Kestrel as an ExecutionReport."
+        does: "The validated order reaches the matching engine. Arcline Markets (market maker) is quoting KONSTL 1203.10 bid / 1203.40 offer for 250. The matching rules (price, then time priority) match Kestrel's buy at 1203.40 against that quote: 100 trade at 1203.40 with trade id {trade_id}. The fill, with the trade id in tag 880 (TrdMatchID), goes back to Kestrel as an ExecutionReport."
         message: "8=FIX.4.4|35=8|49=OEGW|56=KEST01|11={clordid}|37={order_id}|150=F|39=2|32=100|31=1203.40|14=100|151=0|880={trade_id}|  (sent back to Kestrel over its TCP session via OEGW; Arcline gets its own 35=8 for its side)"
         writes: ["orders: update status=FILLED filled_qty=100", "trades: insert counterparty=ARCL11 clearing_status=PENDING"]
       - at: trade_bus
@@ -122,20 +122,31 @@ journeys:
 
 
   - id: rejected
-    name: Order rejected by risk checks
+    name: Order rejected by the venue's price band
     order: {member: NRMD02, symbol: MAHPWR, side: BUY, qty: 500, price: 470.00}
     steps:
       - at: broker_b
-        does: "Narmada Capital sends a NewOrderSingle (35=D) over its TCP session NRMD02: buy 500 MAHPWR at 470.00, well above the market (a fat finger?)."
+        does: "Narmada Capital's RMS passes the order (the client has enough limit), and it is sent as a NewOrderSingle (35=D) over TCP session NRMD02: buy 500 MAHPWR at 470.00, well above the market."
         message: "8=FIX.4.4|35=D|49=NRMD02|56=OEGW|34={seq}|52={sending_time}|11={clordid}|55=MAHPWR|54=1|38=500|40=2|44=470.00|59=0|10=211|"
       - at: fix_gateway
         does: "OEGW session, sequence and throttle checks pass. Assigns exchange order id {order_id}."
         message: "8=FIX.4.4|35=8|49=OEGW|56=NRMD02|11={clordid}|37={order_id}|150=A|39=A|"
         writes: ["orders: insert status=PENDING_NEW filled_qty=0"]
       - at: risk
-        does: "Checks the price against today's MAHPWR band."
+        does: "Order validation checks the price against today's MAHPWR band from the instrument master."
         reject: "Price 470.00 is outside today's band for MAHPWR (371.25 to 453.75)"
         reject_message: "8=FIX.4.4|35=8|49=OEGW|56=NRMD02|11={clordid}|37={order_id}|150=8|39=8|58=Price outside band|  (rejected; 58 carries the reason)"
+
+  - id: broker_blocked
+    name: Order stopped by the broker's risk checks
+    order: {member: KEST01, symbol: KONSTL, side: BUY, qty: 50000, price: 1203.40}
+    steps:
+      - at: broker_a
+        does: "A Kestrel client keys 50,000 KONSTL instead of 500 (a fat finger): about ₹6 crore."
+        reject: "Kestrel's RMS blocks it: order value ₹6.02 Cr is above the client's ₹50 lakh limit. The order is never sent, so the venue has no record of it."
+        on_reject: {writes: []}
+      - at: fix_gateway
+        does: "Never reached: nothing arrives at the OEGW."
 
   - id: partial
     name: Sell order partly filled, rest stays on the book
@@ -230,7 +241,7 @@ diagram:
     - {from: broker_a, to: fix_gateway, text: "Brokers send client orders over FIX sessions, one session per member."}
     - {from: mm_1, to: fix_gateway, text: "Market makers stream two-sided quotes to meet their quoting obligations."}
     - {from: fix_gateway, to: risk, text: "The gateway checks the session (logon, sequence numbers) and each member's message throttle."}
-    - {from: risk, to: instrument_master, text: "Risk checks price bands, lot sizes and circuit limits from the instrument master. Failed orders are rejected back to the member."}
+    - {from: risk, to: instrument_master, text: "Order validation checks the instrument is tradable, the price band, tick size and lot size from the instrument master. Failed orders are rejected back to the member."}
     - {from: issuer_2, to: instrument_master, text: "Issuers announce corporate actions (splits, dividends, symbol changes) that change prices and bands."}
     - {from: risk, to: matching, text: "Accepted orders enter the order book; matching runs price-time priority."}
     - {from: matching, to: orderbook_db, text: "Order book state is persisted for recovery and audit."}

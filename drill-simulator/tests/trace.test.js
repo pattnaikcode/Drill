@@ -20,9 +20,9 @@ function run(fault, journey, warmSteps = 24) {
 }
 
 test('journeys validate, and mistakes are explained', () => {
-  assert.strictEqual(bp.journeys.length, 3);
+  assert.strictEqual(bp.journeys.length, 4);
   const text = fs.readFileSync(path.join(__dirname, '../blueprints/exchange.yaml'), 'utf8');
-  assert.match(S.parseBlueprint(text.replace('- at: risk\n        does: "Checks the price against today\'s KONSTL', '- at: md_publisher\n        does: "Checks the price against today\'s KONSTL'), yaml).errors.join(), /does not send to/);
+  assert.match(S.parseBlueprint(text.replace('- at: risk\n        does: "Order validation checks KONSTL', '- at: md_publisher\n        does: "Order validation checks KONSTL'), yaml).errors.join(), /does not send to/);
   assert.match(S.parseBlueprint(text.replace('"orders: update status=NEW"]', '"ordrs: update status=NEW"]'), yaml).errors.join(), /unknown table "ordrs"/);
 });
 
@@ -56,6 +56,13 @@ test('faults stop the order where the problem is', () => {
   assert.strictEqual(r.at, 'broker_a'); assert.match(r.tr.reason, /SendingTime/);
   const rows = T.sql(r.sim, 'orderbook_db', 'SELECT * FROM orders').rows;
   assert.strictEqual(rows.length, 0, 'an order that never reached the gateway has no row');
+});
+
+test("the broker's own risk checks stop an order before the venue sees it", () => {
+  const sim = new S.Simulator(bp, { seed: 5 });
+  const tr = sim.sendOrder('broker_blocked'); sim.step(5);
+  assert.strictEqual(tr.status, 'rejected'); assert.strictEqual(tr.where, 'broker_a');
+  assert.strictEqual(T.sql(sim, 'orderbook_db', 'SELECT * FROM orders').rows.length, 0);
 });
 
 test('a stuck order resumes once the fault is fixed', () => {

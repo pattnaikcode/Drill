@@ -15,7 +15,7 @@ Both are static files, so the split keeps answers off the participant's screen b
 
 | System | Architecture | Use cases |
 |---|---|---|
-| **Equity exchange trading platform** | 3 brokers and 2 market makers over FIX → gateway → pre-trade risk (instrument master kept current by 3 listed issuers) → matching (order book store) → Kafka trade bus → clearing corporation; matching also feeds market data vendors and drop copy | Broker cannot log in · Market maker floods the gateway · Orders rejected in one stock (missed corporate action) · Matching slows to a crawl · Trades not reaching clearing · Some trades never reach clearing (stuck partition) · **Matching stops committing trades** (archive disk full on the database) · **Every member is disconnected** (gateway clock drift) · **Clearing stops accepting trades again** (expired TLS certificate) · **Orders slow down in pre-trade risk** (bad configuration change to an API timeout) · Mystery (10 possible faults) |
+| **Equity exchange trading platform** | 3 brokers and 2 market makers over FIX → order entry gateway → order validation (instrument master kept current by 3 listed issuers) → matching (order book store) → Kafka trade bus → clearing corporation; matching also feeds market data vendors and drop copy | Broker cannot log in · Market maker floods the gateway · Orders rejected in one stock (missed corporate action) · Matching slows to a crawl · Trades not reaching clearing · Some trades never reach clearing (stuck partition) · **Matching stops committing trades** (archive disk full on the database) · **Every member is disconnected** (gateway clock drift) · **Clearing stops accepting trades again** (expired TLS certificate) · **Orders slow down in pre-trade risk** (bad configuration change to an API timeout) · Mystery (10 possible faults) |
 | **Middle-office trade allocation** (with Kafka) | OMS and execution desk → Kafka → allocation engine (SSI reference data, allocation DB) → confirmation platform → settlement | Allocations falling behind · One partition stuck · Missing settlement instructions · Confirmations not matching · Allocation engine choking · **Allocation engine keeps restarting** (out of memory) · **Confirmations crawl through** (API rate limit, HTTP 429) · **Confirmation platform rejects everything** (expired API credentials, HTTP 401) · Mystery (9 possible faults) |
 | **Middle-office trade allocation** (direct) | Same system without Kafka, to compare designs | All of the above except the stuck partition |
 
@@ -56,7 +56,7 @@ Rebooting a host or failing over to DR fixes some host faults but takes the comp
 
 ## Follow an order
 
-The **Follow an order** tool sends one order through the live system and shows it hop by hop: the raw FIX message at each step (with `|` for the SOH separator), what each component does with it, and the database rows it writes. The exchange has three journeys: fully filled, rejected by risk checks, and partly filled with the rest left on the book. Rows land in `orders` and `trades` on the Order Book Store, so you can query them in the Database tab.
+The **Follow an order** tool sends one order through the live system and shows it hop by hop: the raw FIX message at each step (with `|` for the SOH separator), what each component does with it, and the database rows it writes. The exchange has four journeys: fully filled against a market maker's quote, stopped by the broker's own risk checks (it never reaches the venue), rejected by the venue's price band, and partly filled with the rest left on the book. Client risk (margin, limits, fat-finger checks) sits with the broker; the venue only validates the order (tradable instrument, price band, tick and lot size). Rows land in `orders` and `trades` on the Order Book Store, so you can query them in the Database tab.
 
 A journey can branch with `from:`. After matching, the same trade is followed to clearing and, through its own Kafka consumer group, to market surveillance. If clearing is stuck, surveillance still receives the trade, and the other way round, just as with two independent consumer groups.
 
@@ -149,7 +149,7 @@ business:
 components:
   - {id: broker_a, type: source, role: Broker, name: Kestrel Securities, session: KEST01, rate_per_min: 420}
   - {id: fix_gateway, type: service, name: Order Entry Gateway (OEGW), capacity_per_min: 2700, instances: 3}
-  - {id: risk, type: service, name: Pre-trade Risk Checks, capacity_per_min: 2800, uses: [instrument_master], rejects: return}
+  - {id: risk, type: service, name: Order Validation, capacity_per_min: 2800, uses: [instrument_master], rejects: return}
   - {id: issuer_2, type: issuer, name: Konark Steel Ltd, symbol: KONSTL, feeds: instrument_master}
   # ...
 flow:
@@ -218,7 +218,7 @@ debrief:
 | `src/builder.js`, `src/builder.template.html` | System Builder: forms that write and validate blueprint YAML. |
 | `src/style.css`, `src/index.template.html` | Page design and layout. |
 | `build.py` | Bundles everything, including the YAML files, into `dist/index.html` (participant page), `dist/admin.html` (instructor page) and `dist/builder.html` (System Builder). |
-| `tests/*.test.js` | 216 automated tests (Node's built-in runner). |
+| `tests/*.test.js` | 217 automated tests (Node's built-in runner). |
 | `vendor/js-yaml.min.js` | YAML parser (MIT licence, see `vendor/js-yaml.LICENSE`). |
 
 ## Develop

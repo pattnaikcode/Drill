@@ -17,10 +17,10 @@ hints:
 debrief:
   what_happened: >
     Konark Steel's corporate action file used a new ISIN format and was skipped during the
-    instrument master load. Its price band still reflected the pre-split price, so risk checks
+    instrument master load. Its price band still reflected the pre-split price, so order validation
     rejected valid orders in KONSTL.
   key_signal: Risk reject rate above 2% with normal throughput, all rejects for one symbol, and a skipped file in the instrument master log.
-  why_not_restart: The risk service is working correctly on wrong data. Restarting it changes nothing.
+  why_not_restart: Order validation is working correctly on wrong data. Restarting it changes nothing.
   runbook:
     - Group rejected orders by symbol and reject reason.
     - Check the instrument master load log for skipped corporate action files.
