@@ -797,7 +797,8 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
       if (a.severity && !/^P[1-4]$/.test(a.severity)) errors.push(`${where}: severity must be P1–P4.`);
     });
 
-    const dg = bp.diagram || {};
+    const dg0 = bp.diagram || {};
+    const dg = { ...dg0, groups: (Array.isArray(dg0.groups) ? dg0.groups : []).map(g => (g && typeof g === 'object' ? { ...g } : g)) }; // never change the caller's object
     const linked = (a, b) => edgeSet.has(a + '>' + b) || (ids.get(a) && (ids.get(a).uses || []).includes(b)) || (ids.get(a) && ids.get(a).feeds === b);
     (Array.isArray(dg.groups) ? dg.groups : []).forEach((g, i) => {
       if (g && Array.isArray(g.roles)) { // a group by role picks up every component with that role, including new ones

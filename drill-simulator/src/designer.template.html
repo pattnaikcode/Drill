@@ -1,0 +1,101 @@
+<title>OpsPilot Designer</title>
+<meta name="description" content="Design a system by dragging components onto a canvas and connecting them. The YAML is written and checked as you go.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Semi+Condensed:wght@600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/*INLINE:src/style.css*/
+/* designer: palette | canvas | properties */
+[hidden] { display: none !important; }
+body { overflow-x: hidden; }
+.dz { display: grid; grid-template-columns: 210px minmax(0, 1fr) 320px; gap: 12px; max-width: 1600px; margin: 0 auto; padding: 12px 16px 24px; align-items: start; }
+.pal { position: sticky; top: 76px; max-height: calc(100vh - 92px); overflow: auto; display: grid; gap: 10px; align-content: start; }
+.pal h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); margin: 4px 0 0; }
+.tile { display: grid; gap: 1px; text-align: left; border: 1px solid var(--line); border-left: 5px solid var(--tc, var(--line)); background: var(--panel); border-radius: 7px; padding: 6px 9px; cursor: grab; font-size: 13.5px; width: 100%; }
+.tile:hover { border-color: var(--accent); border-left-color: var(--tc, var(--accent)); }
+.tile small { color: var(--muted); font-size: 11.5px; line-height: 1.25; }
+.canvas-wrap { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: auto; height: calc(100vh - 220px); min-height: 420px; position: relative; touch-action: none; }
+.canvas-wrap.drop { outline: 2px dashed var(--accent); outline-offset: -6px; }
+#cv { display: block; user-select: none; }
+#cv .grid { stroke: var(--line); stroke-width: .6; opacity: .55; }
+#cv .grp { fill: var(--sunk); stroke: var(--line); stroke-dasharray: 5 4; }
+#cv .grp-l { font: 600 11px var(--display); letter-spacing: .6px; text-transform: uppercase; fill: var(--muted); }
+#cv .edge { fill: none; stroke: var(--muted); stroke-width: 1.6; }
+#cv .edge.dep { stroke-dasharray: 5 4; }
+#cv .edge.feed { stroke-dasharray: 2 4; }
+#cv .edge.kind { opacity: .55; }
+#cv .edge-hit { fill: none; stroke: transparent; stroke-width: 12; cursor: pointer; }
+#cv .edge.sel { stroke: var(--accent); stroke-width: 2.6; opacity: 1; }
+#cv .arrow { fill: var(--muted); }
+#cv .node rect.box { fill: var(--panel); stroke: var(--line); stroke-width: 1.2; }
+#cv .node rect.bar { fill: var(--tc, var(--muted)); }
+#cv .node text { fill: var(--ink); font: 600 13px var(--body); pointer-events: none; }
+#cv .node text.k { font: 400 11.5px var(--body); fill: var(--muted); }
+#cv .node { cursor: move; }
+#cv .node.sel rect.box { stroke: var(--accent); stroke-width: 2.4; }
+#cv .node.err rect.box { stroke: var(--bad); stroke-width: 2.2; }
+#cv .handle { fill: var(--panel); stroke: var(--accent); stroke-width: 2; cursor: crosshair; }
+#cv .handle:hover { fill: var(--accent); }
+#cv .tmp { stroke: var(--accent); stroke-width: 2; stroke-dasharray: 4 3; fill: none; pointer-events: none; }
+#cv .errdot { fill: var(--bad); }
+.props { position: sticky; top: 76px; max-height: calc(100vh - 92px); overflow: auto; }
+.props label.field { display: grid; gap: 3px; font-size: 13px; }
+.props label.field > span { color: var(--muted); }
+.props input, .props select, .props textarea { width: 100%; }
+input[type=number], input[type=time] { background: var(--sunk); border: 1px solid var(--line); border-radius: 6px; padding: 6px 9px; min-width: 0; color: var(--ink); }
+.fgrid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 10px; }
+.fgrid2 .wide { grid-column: 1 / -1; }
+.problems { display: grid; gap: 4px; font-size: 13px; }
+.problems li { color: var(--bad); }
+.okmsg { color: var(--ok); font-size: 13.5px; }
+.chiplist { display: flex; flex-wrap: wrap; gap: 6px; }
+.chipx { border: 1px solid var(--line); border-radius: 12px; padding: 1px 4px 1px 9px; font-size: 12.5px; display: inline-flex; gap: 4px; align-items: center; background: var(--sunk); }
+.chipx button { border: 0; background: none; color: var(--muted); padding: 0 4px; }
+.yaml { margin: 0; max-height: 46vh; overflow: auto; white-space: pre; background: var(--term); color: var(--term-ink); font-family: var(--mono); font-size: 12px; line-height: 1.5; padding: 10px; border-radius: 6px; }
+.hintbar { font-size: 12.5px; color: var(--muted); padding: 6px 2px 0; }
+.tl { display: grid; gap: 6px; }
+.tl .li { display: grid; grid-template-columns: 1fr auto; gap: 6px; align-items: center; border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; font-size: 13px; }
+@media (max-width: 1100px) { .dz { grid-template-columns: 170px minmax(0, 1fr); } .props { grid-column: 1 / -1; position: static; max-height: none; } }
+@media (max-width: 720px) { .dz { grid-template-columns: minmax(0, 1fr); } .pal { position: static; max-height: none; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); } .pal h3 { grid-column: 1 / -1; } .canvas-wrap { height: 60vh; } }
+</style>
+<header class="top">
+  <div class="top-in">
+    <div class="brand"><b>OpsPilot Designer</b><span>Drag components in, connect them, press save. The YAML is written and checked for you.</span></div>
+    <div class="grow"></div>
+    <label class="small muted row" style="gap:6px">Start from <select id="startFrom" aria-label="Start from"></select></label>
+    <button class="btn sm" id="undoBtn" title="Undo (Ctrl+Z)">Undo</button>
+    <button class="btn sm" id="tidyBtn" title="Arrange the boxes in flow order">Tidy layout</button>
+    <button class="btn sm" id="yamlBtn">YAML</button>
+    <button class="btn sm primary" id="saveBtn">Save to simulator</button>
+  </div>
+</header>
+<section class="panel stack" id="pasteBox" hidden style="max-width:900px;margin:12px auto 0">
+  <h2>Paste a system</h2>
+  <textarea id="pasteText" class="code sql" spellcheck="false" aria-label="YAML to load" placeholder="Paste system YAML here" style="min-height:220px;font-family:var(--mono);font-size:12.5px"></textarea>
+  <div class="row"><button class="btn primary" id="pasteLoad">Load onto the canvas</button><button class="btn" id="pasteCancel">Cancel</button><span id="pasteMsg" class="small"></span></div>
+</section>
+<div class="dz">
+  <aside class="pal" id="palette" aria-label="Components you can add"></aside>
+  <div>
+    <div class="canvas-wrap" id="wrap" tabindex="0" aria-label="Design canvas. Drag boxes to move them; drag from a box's blue dot to another box to connect them; Delete removes the selection."><svg id="cv"></svg></div>
+    <div class="hintbar">Drag a component from the left onto the canvas (or click it). Drag a box to move it. Drag from its <b>blue dot</b> onto another box to connect them. Click a box or line to edit it; <kbd>Delete</kbd> removes it; <kbd>Ctrl</kbd>+<kbd>Z</kbd> undoes.</div>
+  </div>
+  <aside class="props panel stack" id="props" aria-label="Properties"></aside>
+</div>
+<section class="panel stack" id="yamlBox" hidden style="max-width:1100px;margin:0 auto 24px">
+  <div class="row between"><h2>Your system as YAML</h2><div class="row"><button class="btn sm" id="copyBtn">Copy YAML</button><button class="btn sm" id="yamlClose">Close</button></div></div>
+  <pre class="yaml" id="yamlOut" tabindex="0"></pre>
+</section>
+<div id="toast" role="status" hidden style="position:fixed;left:50%;transform:translateX(-50%);bottom:calc(18px + env(safe-area-inset-bottom, 0px));background:var(--ink);color:var(--panel);padding:9px 16px;border-radius:8px;font-size:14px;z-index:30;max-width:90vw"></div>
+<script>
+/*INLINE:vendor/js-yaml.min.js*/
+</script>
+<script>
+/*CONTENT*/
+</script>
+<script>
+/*INLINE:src/engine.js*/
+</script>
+<script>
+/*INLINE:src/designer.js*/
+</script>

@@ -722,7 +722,8 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
       if (a.severity && !/^P[1-4]$/.test(a.severity)) errors.push(`${where}: severity must be P1–P4.`);
     });
 
-    const dg = bp.diagram || {};
+    const dg0 = bp.diagram || {};
+    const dg = { ...dg0, groups: (Array.isArray(dg0.groups) ? dg0.groups : []).map(g => (g && typeof g === 'object' ? { ...g } : g)) }; // never change the caller's object
     const linked = (a, b) => edgeSet.has(a + '>' + b) || (ids.get(a) && (ids.get(a).uses || []).includes(b)) || (ids.get(a) && ids.get(a).feeds === b);
     (Array.isArray(dg.groups) ? dg.groups : []).forEach((g, i) => {
       if (g && Array.isArray(g.roles)) { // a group by role picks up every component with that role, including new ones
@@ -3061,7 +3062,7 @@ debrief:
     const comps = A.bp.components;
     return `<div class="stack">
       <div class="bp">
-        <section class="panel stack"><div><h2>1. Design a system</h2><p class="small muted" style="margin:2px 0 0">Components, the flow between them, alert rules and the flow diagram. ${A.session ? '<b>Loading ends the current drill.</b>' : ''}</p><p class="small" style="margin:4px 0 0">Prefer forms to YAML? Use the <a href="builder.html">System Builder</a> (the <code>builder.html</code> file next to this one) to add components and copy the YAML here.</p></div>
+        <section class="panel stack"><div><h2>1. Design a system</h2><p class="small muted" style="margin:2px 0 0">Components, the flow between them, alert rules and the flow diagram. ${A.session ? '<b>Loading ends the current drill.</b>' : ''}</p><p class="small" style="margin:4px 0 0">Prefer not to write YAML? Use the <a href="designer.html"><b>Designer</b></a> (drag and drop) or the <a href="builder.html">System Builder</a> (forms). Both write and check the YAML for you; the Designer saves straight into this page.</p></div>
           <div class="row"><label class="row small" style="gap:6px">Start from<select id="preset">${Object.entries(SYSTEMS).map(([id, s]) => `<option value="${id}"${id === A.sysId ? ' selected' : ''}>${esc(s.bp.system)}</option>`).join('')}</select></label></div>
           <textarea class="code" id="bpText" spellcheck="false" aria-label="System blueprint YAML">${esc(sysText)}</textarea>
           <div class="row"><button class="btn" id="bpCheck">Check</button><button class="btn primary" id="bpLoad">Save and load system</button><button class="btn" id="bpCopy">Copy YAML</button></div>
