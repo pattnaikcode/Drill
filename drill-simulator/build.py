@@ -29,6 +29,7 @@ def build(template: str = "src/index.template.html", role: str = "participant") 
         "blueprints": {p.stem: p.read_text(encoding="utf-8") for p in sorted((ROOT / "blueprints").glob("*.yaml"))},
         "default_blueprint": DEFAULT_BLUEPRINT,
         "drills": [p.read_text(encoding="utf-8") for p in sorted((ROOT / "drills").glob("*.yaml"))],
+        "packs": [p.read_text(encoding="utf-8") for p in sorted((ROOT / "packs").glob("*.yaml"))],
     }
     js = "window.DRILL_CONTENT = " + json.dumps(content, ensure_ascii=False).replace("</", "<\\/") + ";"
     page = page.replace("/*ROLE*/", f'window.OPS_ROLE = "{role}";')

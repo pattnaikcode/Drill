@@ -62,6 +62,15 @@
   };
   const DEFAULTS = { source: { rate_per_min: 300 }, service: { capacity_per_min: 420, instances: 2 }, kafka_topic: { partitions: 6 }, external_party: { capacity_per_min: 500 }, database: { pool_size: 50 }, ref_data: { refresh_every_min: 15, stale_after_min: 30 }, issuer: {} };
   const FLOW_TYPES = ['source', 'service', 'kafka_topic', 'external_party'];
+  // packs add new component types; each borrows the form fields of the behaviour it is based on
+  const bt = t => S.baseType(t);
+  (C.packs || []).forEach(text => { try { S.registerPack(yaml.load(text)); } catch (e) { /* a broken pack is reported in the simulator */ } });
+  Object.entries(S.PACK_TYPES).forEach(([t, P]) => {
+    TYPE_HELP[t] = { label: `${P.label || t} (${P.packLabel} pack)`, ex: '', text: P.help || `Behaves like ${TYPE_HELP[P.behaves_like].label.split(' (')[0].toLowerCase()}.` };
+    FIELDS[t] = [...FIELDS[P.behaves_like], ...((P.required || []).filter(k => !FIELDS[P.behaves_like].some(f => f.k === k)).map(k => ({ k, label: k, kind: 'text', req: true, help: 'Required by this pack.' })))];
+    DEFAULTS[t] = { ...DEFAULTS[P.behaves_like] };
+    if (FLOW_TYPES.includes(P.behaves_like)) FLOW_TYPES.push(t);
+  });
 
   // ------------------------------------------------------------ state
   let B = blank();
@@ -192,7 +201,7 @@
     B.groups.forEach(g => { g.ids = g.ids.filter(i => i !== id); });
     B.steps = B.steps.filter(s => s.from !== id && s.to !== id); delete B.place[id];
   }
-  const linkPairs = () => [...B.flows.map(e => [e[0], e[1]]), ...B.comps.flatMap(c => [...(c.uses || []).map(u => [c.id, u]), ...(c.type === 'issuer' && c.feeds ? [[c.id, c.feeds]] : [])])];
+  const linkPairs = () => [...B.flows.map(e => [e[0], e[1]]), ...B.comps.flatMap(c => [...(c.uses || []).map(u => [c.id, u]), ...(bt(c.type) === 'issuer' && c.feeds ? [[c.id, c.feeds]] : [])])];
 
   // ------------------------------------------------------------ forms
   function field(i, c, f) {
@@ -201,9 +210,9 @@
     if (f.kind === 'number') input = `<input id="${id}" type="number" min="0" step="any" ${key} value="${esc(v)}">`;
     else if (f.kind === 'text') input = `<input id="${id}" type="text" ${key} value="${esc(v)}" autocomplete="off">`;
     else if (f.kind === 'select') input = `<select id="${id}" ${key}>${f.opts.map(([val, l]) => opt(val, l, String(v) === val)).join('')}</select>`;
-    else if (f.kind === 'feeds') input = `<select id="${id}" ${key}>${compOpts(ids(x => x.type === 'ref_data'), v, 'Choose reference data')}</select>`;
+    else if (f.kind === 'feeds') input = `<select id="${id}" ${key}>${compOpts(ids(x => bt(x.type) === 'ref_data'), v, 'Choose reference data')}</select>`;
     else if (f.kind === 'uses') {
-      const cands = ids(x => x.type === 'database' || x.type === 'ref_data');
+      const cands = ids(x => bt(x.type) === 'database' || bt(x.type) === 'ref_data');
       input = cands.length ? `<div class="checks">${cands.map(u => `<label class="small"><input type="checkbox" data-c="${i}" data-uses="${u}" ${(c.uses || []).includes(u) ? 'checked' : ''}> ${esc(comp(u).name)}</label>`).join('')}</div>` : '<span class="small muted">Add a database or reference data component first.</span>';
     }
     return `<label class="field" for="${id}"><span>${esc(f.label)}${f.req ? ' <b class="req">required</b>' : ''}</span>${input}<span class="fhint">${esc(f.help)}</span></label>`;
@@ -222,7 +231,7 @@
   function renderForms() {
     const m = B.meta;
     const flowIds = ids(c => FLOW_TYPES.includes(c.type));
-    const metricsOf = id => comp(id) ? Object.entries(S.TYPES[comp(id).type].metrics) : [];
+    const metricsOf = id => comp(id) ? Object.entries(S.TYPES[bt(comp(id).type)].metrics) : [];
     $('#forms').innerHTML = `
       <section class="panel stack" id="sec-system"><h2>1. System</h2>
         <div class="fgrid">
@@ -239,7 +248,7 @@
         </div></section>
 
       <section class="panel stack" id="sec-comps"><div class="row between"><h2>2. Components</h2><span class="small muted">${B.comps.length} added</span></div>
-        <div class="row"><label class="field grow" for="newType"><span>Add a component</span><select id="newType">${Object.entries(TYPE_HELP).map(([k, t]) => opt(k, `${t.label} — e.g. ${t.ex}`, k === newType)).join('')}</select></label><button class="btn primary" id="addComp">Add component</button></div>
+        <div class="row"><label class="field grow" for="newType"><span>Add a component</span><select id="newType">${Object.entries(TYPE_HELP).map(([k, t]) => opt(k, t.ex ? `${t.label} — e.g. ${t.ex}` : t.label, k === newType)).join('')}</select></label><button class="btn primary" id="addComp">Add component</button></div>
         <p class="small muted" id="typeHelp" style="margin:0">${esc(TYPE_HELP[newType].text)}</p>
         <div class="stack" style="gap:10px">${B.comps.map(compCard).join('') || '<p class="muted small" style="margin:0">No components yet. Start with a participant, then the services it sends to.</p>'}</div></section>
 
@@ -328,7 +337,7 @@
     $('#addComp').onclick = () => {
       const type = newType, name = `New ${TYPE_HELP[type].label.split(' (')[0].toLowerCase()}`;
       const c = { id: slug(name), type, name, ...DEFAULTS[type] };
-      if (type === 'issuer') { const r = ids(x => x.type === 'ref_data')[0]; if (r) c.feeds = r; }
+      if (type === 'issuer') { const r = ids(x => bt(x.type) === 'ref_data')[0]; if (r) c.feeds = r; }
       B.comps.push(c); renderForms();
       const card = $(`#card-${B.comps.length - 1}`); if (card) { card.scrollIntoView({ block: 'center' }); card.querySelector('input').select(); }
     };
@@ -345,7 +354,7 @@
       if (cut) B.kpis.forEach(k => { k.cutoff = false; });
       B.kpis.push({ label, at, cutoff: cut }); renderForms();
     };
-    $('#aOn').onchange = e => { const c = comp(e.target.value); $('#aMetric').innerHTML = c ? Object.entries(S.TYPES[c.type].metrics).map(([k, l]) => opt(k, `${k} — ${l}`)).join('') : opt('', 'Choose a component first'); };
+    $('#aOn').onchange = e => { const c = comp(e.target.value); $('#aMetric').innerHTML = c ? Object.entries(S.TYPES[bt(c.type)].metrics).map(([k, l]) => opt(k, `${k} — ${l}`)).join('') : opt('', 'Choose a component first'); };
     $('#addAlert').onclick = () => {
       const a = { name: $('#aName').value.trim(), on: $('#aOn').value, metric: $('#aMetric').value, dir: $('#aDir').value, value: $('#aVal').value, severity: $('#aSev').value };
       if (!a.name || !a.on || !a.metric || a.value === '') return flash('Fill in the alert name, component, metric and threshold.');

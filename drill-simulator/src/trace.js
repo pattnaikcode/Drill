@@ -85,6 +85,7 @@
       const why = this.sourceDown(s);
       if (why === 'seq') out.wait = `Session ${this.sessionId(s)} is not logged on (logon rejected: MsgSeqNum too low). The order is queued at the member.`;
       if (why === 'clock') out.wait = `Session ${this.sessionId(s)} is not logged on (logon rejected: SendingTime accuracy problem). The order is queued at the member.`;
+      if (why === 'pack') out.wait = this.packText(s, s.fault.pack.reason || s.fault.pack.effect.reason || s.fault.pack.label);
       return out;
     }
     if (s.type === 'service') {
@@ -93,6 +94,7 @@
       if (f < 0.02) {
         const db = (s.def.uses || []).map(u => this.c[u]).find(d => d.type === 'database' && this.dbFactor(d) < 0.05);
         if (this.inOutage(s)) out.wait = `${s.def.name} is unavailable: its host is restarting or failing over.`;
+        else if (s.fault && s.fault.pack) out.wait = this.packText(s, s.fault.pack.effect.reason || s.fault.pack.label);
         else if (hf === 'disk_full') out.wait = `${s.def.name} cannot write: No space left on device (${S.mountOf(s)}).`;
         else if (hf === 'memory_oom') out.wait = `${s.def.name} is down between crash-loop restarts (OOMKilled).`;
         else if (db) out.wait = `${s.def.name} is waiting on ${db.def.name}: ${this.hostFault(db) === 'disk_full' ? 'commits hang (archive destination full)' : 'no free connection in the pool'}.`;
@@ -102,6 +104,7 @@
       // rejects caused by data problems: a missed corporate action on this symbol, or stale reference data
       for (const c of this.rejectCauses(s)) {
         if (c.kind === 'issuer' && (c.issuer.def.symbol || c.issuer.def.id.toUpperCase()) === v.symbol) { out.reject = `Price ${typeof v.price === 'number' ? v.price.toFixed(2) : v.price} outside band for ${v.symbol}: band not updated for ${c.issuer.fault.ca}`; return out; }
+        if (c.kind === 'pack' && this.rand() < c.share * 2) { out.reject = this.packText(c.ref, c.msg).replace('{key}', v.order_id); return out; }
         if (c.kind === 'stale' && this.rand() < c.share * 3) { out.reject = c.ref.def.missing_msg ? fill(c.ref.def.missing_msg, { key: v.order_id }) : `Reference data in ${c.ref.def.name} is stale; rejected`; return out; }
       }
       if (!this.kafkaIn(s)) {
@@ -129,7 +132,7 @@
     }
     if (s.type === 'external_party') {
       const why = this.extDown(s);
-      const R = { vendor: `${s.def.name} returns 503 Service Unavailable (their outage).`, auth: `${s.def.name} returns 401 Unauthorized: our API client secret has expired.`, cert: `TLS handshake with ${s.def.name} fails: our client certificate has expired.`, disk: `Our adapter cannot spool the message: No space left on device.`, restart: `Our adapter for ${s.def.name} is restarting.` };
+      const R = { pack: s.fault && s.fault.pack ? this.packText(s, s.fault.pack.effect.reason || s.fault.pack.label) : '', vendor: `${s.def.name} returns 503 Service Unavailable (their outage).`, auth: `${s.def.name} returns 401 Unauthorized: our API client secret has expired.`, cert: `TLS handshake with ${s.def.name} fails: our client certificate has expired.`, disk: `Our adapter cannot spool the message: No space left on device.`, restart: `Our adapter for ${s.def.name} is restarting.` };
       if (why) { out.wait = R[why]; return out; }
       const perSec = Math.max(0.01, s.def.capacity_per_min * (s.fault && s.fault.type === 'api_rate_limited' ? 0.35 : 1) / 60);
       out.delay = s.inbox / perSec + 0.02;

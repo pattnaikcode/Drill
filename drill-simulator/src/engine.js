@@ -123,6 +123,62 @@
     return out;
   }
 
+  // ---------------------------------------------------------------- packs: new technologies as configuration
+  // A pack (packs/*.yaml) adds component types. Each new type "behaves like" one of the built-in behaviours
+  // (source, service, kafka_topic, external_party, ref_data, database) and brings its own labels, faults,
+  // actions, log lines and shell output. A pack fault changes the behaviour only through generic effects:
+  //   capacity (0..1)  share of normal throughput      errors (0..1)  share of calls that fail
+  //   reject (0..1)    share of work rejected           down: true     nothing gets through (with a reason)
+  //   stale: true      a loader stops refreshing        pool_full: true a database's connections are all taken
+  const PACKS = {}, PACK_TYPES = {};
+  const BEHAVIOURS = ['source', 'service', 'kafka_topic', 'external_party', 'ref_data', 'database'];
+  const EFFECTS = ['capacity', 'errors', 'reject', 'down', 'stale', 'pool_full', 'reason'];
+  function registerPack(pk) {
+    const errors = [];
+    if (!pk || !pk.pack || !/^[a-z0-9][a-z0-9-]*$/.test(pk.pack)) return [`A pack needs "pack": a short lowercase name, e.g. ibm-mq.`];
+    const where = `pack ${pk.pack}`;
+    Object.entries(pk.types || {}).forEach(([t, d]) => {
+      const w = `${where}, type ${t}`;
+      if (TYPES[t]) { errors.push(`${w}: "${t}" is a built-in type name.`); return; }
+      if (!d || !BEHAVIOURS.includes(d.behaves_like)) { errors.push(`${w}: "behaves_like" must be one of ${BEHAVIOURS.join(', ')}.`); return; }
+      Object.entries(d.faults || {}).forEach(([fk, f]) => {
+        if (!f || !f.label) errors.push(`${w}, fault ${fk}: needs a "label".`);
+        Object.keys((f && f.effect) || {}).forEach(e => { if (!EFFECTS.includes(e)) errors.push(`${w}, fault ${fk}: unknown effect "${e}" (allowed: ${EFFECTS.join(', ')}).`); });
+        ['capacity', 'errors', 'reject'].forEach(e => { const v = f && f.effect && f.effect[e]; if (v !== undefined && !(typeof v === 'number' && v >= 0 && v <= 1)) errors.push(`${w}, fault ${fk}: effect ${e} must be between 0 and 1.`); });
+      });
+      Object.entries(d.actions || {}).forEach(([ak, a]) => {
+        if (!a || !a.label) errors.push(`${w}, action ${ak}: needs a "label".`);
+        (a && a.fixes || []).forEach(fx => { if (!(d.faults || {})[fx]) errors.push(`${w}, action ${ak}: fixes unknown fault "${fx}".`); });
+      });
+    });
+    if (errors.length) return errors;
+    PACKS[pk.pack] = pk;
+    Object.entries(pk.types || {}).forEach(([t, d]) => { PACK_TYPES[t] = { ...d, pack: pk.pack, packLabel: pk.label || pk.pack }; });
+    return [];
+  }
+  const packTypeOf = def => (def && def.pack_type && PACK_TYPES[def.pack_type]) || null;
+  const baseType = t => (PACK_TYPES[t] ? PACK_TYPES[t].behaves_like : t);
+  const typeLabel = def => { const P = packTypeOf(def); return P ? P.label || def.pack_type : (TYPES[def.type] || {}).label || def.type; };
+  // faults and actions for one component, including those its pack adds
+  function faultsForDef(def) {
+    const P = packTypeOf(def);
+    const out = P && P.base_faults === false ? Object.fromEntries(Object.entries(faultsFor(def.type)).filter(([, f]) => f.host)) : faultsFor(def.type);
+    if (P) Object.entries(P.faults || {}).forEach(([k, f]) => { out[k] = { params: {}, ...f, pack: true }; });
+    return out;
+  }
+  function actionsForDef(def) {
+    const P = packTypeOf(def), out = { ...actionsFor(def.type) };
+    if (P && P.base_actions === false) Object.keys(out).forEach(k => { if (!HOST_TYPES.includes(def.type) || !['clear_disk_space', 'kill_runaway_process', 'resync_ntp', 'restart_host', 'failover_to_dr', 'increase_memory_limit', 'raise_fd_limit', 'renew_certificate'].includes(k)) delete out[k]; });
+    if (P) Object.entries(P.actions || {}).forEach(([k, a]) => { out[k] = { ...a, pack: true, fixes: a.fixes || [] }; });
+    return out;
+  }
+  // root causes offered for a system: the standard list plus the faults of any pack types it uses
+  function causesFor(bp) {
+    const extra = [];
+    (bp && bp.components || []).forEach(c => { const P = packTypeOf(c); if (P) Object.entries(P.faults || {}).forEach(([k, f]) => { if (!extra.some(x => x.key === k)) extra.push({ group: P.packLabel, key: k, label: f.label }); }); });
+    return [...CAUSES, ...extra];
+  }
+
   // ---------------------------------------------------------------- 3. runbook action catalogue
   // Shown for every component of a type. Fixes, heavy-handed options and harmful ones sit side by side.
   const SVC = ['service'], EXT = ['external_party'], DB = ['database'], REF = ['ref_data'], SRC = ['source'], KAF = ['kafka_topic'], ISS = ['issuer'];
@@ -190,7 +246,11 @@
     { group: 'Participants and vendors', key: 'unavailable', label: 'External platform down (their side)' },
     { group: 'Participants and vendors', key: 'market_volume', label: 'Unusually high market volume' },
   ];
-  const causeLabel = k => (CAUSES.find(c => c.key === k) || {}).label || k;
+  const causeLabel = k => {
+    const c = CAUSES.find(x => x.key === k); if (c) return c.label;
+    for (const P of Object.values(PACK_TYPES)) if (P.faults && P.faults[k]) return P.faults[k].label;
+    return k;
+  };
 
   // ---------------------------------------------------------------- 5. blueprint parsing + validation
   function parseBlueprint(text, yaml) {
@@ -250,7 +310,7 @@
 
   function validateBlueprint(input) {
     const ex = expandKinds(input || {});
-    const bp = ex.bp;
+    const bp = { ...ex.bp, components: (ex.bp.components || []).map(c => (c && PACK_TYPES[c.type] ? { ...c, type: PACK_TYPES[c.type].behaves_like, pack_type: c.type } : c)) };
     const errors = [...ex.errors];
     const comps = Array.isArray(bp.components) ? bp.components : [];
     if (!bp.system) errors.push('Missing "system" (the system name).');
@@ -264,7 +324,9 @@
       else ids.set(c.id, c);
       if (!c.name) errors.push(`${where}: needs a "name".`);
       const T = TYPES[c.type];
-      if (!T) { errors.push(`${where}: unknown type "${c.type}". Known types: ${Object.keys(TYPES).join(', ')}.`); return; }
+      if (!T) { errors.push(`${where}: unknown type "${c.type}". Known types: ${[...Object.keys(TYPES), ...Object.keys(PACK_TYPES)].join(', ')}.`); return; }
+      const PT = packTypeOf(c);
+      if (PT) (PT.required || []).forEach(k => { if (c[k] === undefined) errors.push(`${where}: "${k}" is required for ${c.pack_type}.`); });
       T.required.forEach(k => {
         if (typeof c[k] !== 'number' || !(c[k] > 0)) errors.push(`${where}: "${k}" is required and must be a positive number for type ${c.type}.`);
       });
@@ -509,18 +571,25 @@
       default: return 1;
     }
   };
+  // the effect of an active pack fault on this component ({} if none)
+  Simulator.prototype.packEffect = function (s) { return s && s.fault && s.fault.pack ? (s.fault.pack.effect || {}) : {}; };
   Simulator.prototype.dbFactor = function (d) { // how a database's state slows the services that use it
     if (this.inOutage(d)) return 0;
+    const pe = this.packEffect(d);
+    if (pe.down) return 0;
     const hf = this.hostFault(d);
     if (hf === 'disk_full') return 0; // archiver stuck: no commits
     let f = 1;
     if (hf === 'cpu_runaway') f *= 0.5;
     if (d.fault && d.fault.type === 'pool_exhausted') f *= 0.2;
+    if (pe.pool_full) f *= 0.2;
+    if (typeof pe.capacity === 'number') f *= pe.capacity;
     return f;
   };
   Simulator.prototype.extDown = function (s) { // external connection unusable, and why
     if (s.fault && s.fault.type === 'unavailable') return 'vendor';
     if (s.fault && s.fault.type === 'api_auth_expired') return 'auth';
+    if (this.packEffect(s).down || this.packEffect(s).capacity === 0) return 'pack';
     if (this.t < s.adapterDownUntil || this.inOutage(s)) return 'restart';
     const hf = this.hostFault(s);
     if (hf === 'cert_expired') return 'cert';
@@ -530,6 +599,7 @@
   // why a participant's session is down: its own sequence mismatch, or the gateway host's clock
   Simulator.prototype.sourceDown = function (s) {
     if (s.fault && s.fault.type === 'session_down') return 'seq';
+    if (this.packEffect(s).down) return 'pack';
     if (s.downs.some(d => this.hostFault(this.c[d]) === 'clock_skew')) return 'clock';
     return null;
   };
@@ -539,8 +609,10 @@
     if (this.t < s.restartUntil) f *= 0.5;
     f *= this.hostFactor(s);
     if (s.fault && s.fault.type === 'config_change') f *= 0.4;
+    const pe = this.packEffect(s);
+    if (pe.down) f = 0; else if (typeof pe.capacity === 'number') f *= pe.capacity;
     (s.def.uses || []).forEach(u => { const d = this.c[u]; if (d.type === 'database') f *= this.dbFactor(d); });
-    s.ups.forEach(u => { const up = this.c[u]; if (up.type === 'kafka_topic' && up.fault && up.fault.type === 'rebalance_storm') f *= 0.35; });
+    s.ups.forEach(u => { const up = this.c[u]; if (up.type === 'kafka_topic' && up.fault && up.fault.type === 'rebalance_storm') f *= 0.35; if (up.type === 'kafka_topic' && typeof this.packEffect(up).capacity === 'number') f *= this.packEffect(up).capacity; });
     return f;
   };
   Simulator.prototype.staleness = function (d) { return (this.t - d.lastRefresh) / 60; };
@@ -554,6 +626,10 @@
     (s.def.uses || []).forEach(u => this.issuersOf(u).forEach(is => {
       if (is.fault && is.fault.type === 'announcement_missed') out.push({ share: is.fault.params.reject_share, ref: this.c[u], issuer: is, kind: 'issuer' });
     }));
+    // pack faults that reject work: on this service, or on reference data it uses (e.g. a truncated file)
+    const own = this.packEffect(s);
+    if (own.reject) out.push({ share: own.reject, ref: s, kind: 'pack', msg: own.reason || s.fault.pack.label });
+    (s.def.uses || []).forEach(u => { const d = this.c[u], pe = this.packEffect(d); if (pe.reject) out.push({ share: pe.reject, ref: d, kind: 'pack', msg: d.def.missing_msg || pe.reason || d.fault.pack.label }); });
     return out;
   };
 
@@ -583,10 +659,11 @@
     Object.values(this.c).filter(s => s.type === 'ref_data').forEach(s => {
       if (this.t - s.lastRefresh < s.def.refresh_every_min * 60) return;
       const hostBad = this.hostFault(s) === 'disk_full' || this.inOutage(s);
-      if ((s.fault && s.fault.type === 'feed_failed') || hostBad) {
+      if ((s.fault && s.fault.type === 'feed_failed') || this.packEffect(s).stale || hostBad) {
         if (!s.lastFailLog || this.t - s.lastFailLog >= 300) {
           s.lastFailLog = this.t;
-          if (hostBad) this.log(s.def.id, 'ERROR', `${s.def.name} load FAILED: No space left on device writing ${MOUNT.ref_data}/ssi_${clockStr(this.t).replace(':', '')}.csv`);
+          if (!hostBad && s.fault && s.fault.pack) this._packLog(s, 'ERROR');
+          else if (hostBad) this.log(s.def.id, 'ERROR', `${s.def.name} load FAILED: No space left on device writing ${MOUNT.ref_data}/ssi_${clockStr(this.t).replace(':', '')}.csv`);
           else this.log(s.def.id, 'ERROR', `${s.def.name} feed job FAILED: sftp://feeds.vendor.example:22 connection refused`);
         }
       } else {
@@ -598,11 +675,12 @@
     });
     Object.values(this.c).filter(s => s.type === 'database').forEach(s => {
       const P = s.def.pool_size;
-      if ((s.fault && s.fault.type === 'pool_exhausted') || this.hostFault(s) === 'disk_full') s.used = P;
+      if ((s.fault && s.fault.type === 'pool_exhausted') || this.hostFault(s) === 'disk_full' || this.packEffect(s).pool_full) s.used = P;
       else s.used = Math.max(2, Math.min(P, Math.round(P * (0.24 + this.rand() * 0.1))));
     });
     this.bp.order.forEach(id => this._process(id, dt));
     Object.values(this.c).forEach(s => {
+      if (s.packRecoverAt > 0 && this.t >= s.packRecoverAt) { s.packRecoverAt = -1; this.clearFault(s.def.id, s.packRecoverWhy || 'resolved'); if (s.type === 'ref_data') s.lastRefresh = this.t; }
       if (s.type === 'external_party' && s.recoverAt > 0 && this.t >= s.recoverAt) {
         s.recoverAt = -1; this.clearFault(s.def.id, 'External party reports platform restored');
         this.log(s.def.id, 'INFO', `${s.def.name} responding normally again (incident closed by the external party)`);
@@ -661,7 +739,7 @@
       const rej = got * rejFrac;
       if (rej > 0) {
         const c = causes[Math.floor(this.rand() * causes.length)];
-        s.rejectLog.push({ t: this.t, n: rej, kind: c.kind, ref: c.ref.def.name, symbol: c.issuer ? (c.issuer.def.symbol || c.issuer.def.id.toUpperCase()) : null, ca: c.issuer ? c.issuer.fault.ca : null });
+        s.rejectLog.push({ t: this.t, n: rej, kind: c.kind, ref: c.ref.def.name, msg: c.msg, symbol: c.issuer ? (c.issuer.def.symbol || c.issuer.def.id.toUpperCase()) : null, ca: c.issuer ? c.issuer.fault.ca : null });
         if (s.rejectLog.length > 300) s.rejectLog.shift();
       }
       if (def.rejects !== 'return') s.rejected += rej;
@@ -673,6 +751,8 @@
       const hf = this.hostFault(s);
       if (hf === 'fd_exhausted') s.win.err += got * 0.3 + 1;
       if (s.fault && s.fault.type === 'config_change') s.win.err += got * 0.8 + 1;
+      if (this.packEffect(s).errors) s.win.err += got * this.packEffect(s).errors + 1;
+      if (this.packEffect(s).down || this.packEffect(s).capacity === 0) s.win.err += 2;
       if (hf === 'disk_full' || (hf === 'memory_oom' && !this.oomUp(s)) || this.inOutage(s)) s.win.err += 2;
       this.emit(s, ok);
       return;
@@ -682,6 +762,7 @@
       let cap = down ? 0 : def.capacity_per_min * min;
       if (!down && this.hostFault(s) === 'fd_exhausted') cap *= 0.4;
       if (!down && s.fault && s.fault.type === 'api_rate_limited') { cap *= 0.35; s.win.err += x429(s, min); }
+      if (!down && typeof this.packEffect(s).capacity === 'number') cap *= this.packEffect(s).capacity;
       const x = Math.min(s.inbox, cap); s.inbox -= x;
       s.tot.out += x; s.win.out += x;
       if (down) s.win.err += 3;
@@ -695,6 +776,9 @@
     const blk = () => `BLK-${71000 + Math.floor(this.rand() * 900)}`;
     Object.values(this.c).forEach(s => {
       const id = s.def.id, name = s.def.name, f = s.fault && s.fault.type, hf = this.hostFault(s);
+      const PT = packTypeOf(s.def);
+      if (s.fault && s.fault.pack && !(s.type === 'ref_data' && this.packEffect(s).stale) && this.chance(p * 1.5)) this._packLog(s, s.fault.pack.level || 'ERROR');
+      else if (PT && !s.fault && (PT.logs_ok || []).length && this.chance(p * 0.5)) this.log(id, 'INFO', this.packText(s, PT.logs_ok[Math.floor(this.rand() * PT.logs_ok.length)]));
       if (s.type === 'source') {
         const why = this.sourceDown(s);
         if (!why && this.chance(p * 0.6)) {
@@ -745,7 +829,8 @@
         if (f === 'config_change' && this.chance(p * 1.6)) this.log(id, 'ERROR', `java.net.SocketTimeoutException: Read timed out after ${s.fault.params.timeout_ms}ms calling ${s.fault.params.api} POST /v2/check (attempt 3/3); request failed`);
         this.rejectCauses(s).forEach(c => {
           if (!this.chance(p * 1.4)) return;
-          if (c.kind === 'stale' && c.ref.def.missing_msg) this.log(id, 'ERROR', c.ref.def.missing_msg.replace('{key}', `INS-${1000 + Math.floor(this.rand() * 900)}`) + ` (${blk()})`);
+          if (c.kind === 'pack') { this.log(id, 'ERROR', this.packText(s, c.msg).replace('{key}', `REF-${10000 + Math.floor(this.rand() * 9000)}`)); return; }
+          if (c.kind === 'stale' && c.ref.def.missing_msg) this.log(id, 'ERROR', c.ref.def.missing_msg.replace('{key}', `${c.ref.def.key_prefix || 'REF'}-${1000 + Math.floor(this.rand() * 900)}`) + ` (${blk()})`);
           else if (c.kind === 'stale') this.log(id, 'ERROR', `Rejected ${blk()}: no SSI for account ACC-${48000 + Math.floor(this.rand() * 900)} in ${c.ref.def.name}`);
           else this.log(id, 'ERROR', `Order rejected: price ${(1100 + this.rand() * 200).toFixed(2)} outside band for ${c.issuer.def.symbol || c.issuer.def.id.toUpperCase()} (band not updated for ${c.issuer.fault.ca})`);
         });
@@ -772,6 +857,24 @@
         else if (this.chance(p * 0.25)) this.log(id, 'INFO', `Pool active ${s.used}/${s.def.pool_size}, idle ${s.def.pool_size - s.used}`);
       }
     });
+  };
+  // placeholders a pack can use in log lines, messages and shell output
+  Simulator.prototype.packVars = function (s) {
+    const d = s.def, P = packTypeOf(d) || {}, down = s.downs && s.downs[0] ? this.c[s.downs[0]] : null;
+    const v = { id: d.id, ID: d.id.toUpperCase(), name: d.name, host: d.host || `${d.id.replace(/_/g, '-')}-${d.type === 'database' ? 'db1' : d.type === 'ref_data' ? 'loader' : d.type === 'external_party' ? 'adapter' : 'node1'}`,
+      peer: down ? down.def.name : 'downstream', PEER: down ? down.def.id.toUpperCase() : 'DOWNSTREAM', peerhost: down ? `${down.def.id.replace(/_/g, '-')}.prod.internal` : 'downstream.prod.internal',
+      time: clockStr(this.t, true), date: '20261009',
+      depth: String(Math.round(s.type === 'kafka_topic' ? (s.parts || []).reduce((a, b) => a + b, 0) : (s.inbox || 0) + (s.retry || 0))),
+      backlog: fmtInt(s.type === 'kafka_topic' ? (s.parts || []).reduce((a, b) => a + b, 0) : (s.inbox || 0)), rate: fmtInt(this.rates(d.id).out_rate || 0) };
+    const own = { ...(P.vars || {}), ...(d.vars || {}) };
+    for (let pass = 0; pass < 3; pass++) Object.entries(own).forEach(([k, t]) => { v[k] = String(t).replace(/\{(\w+)\}/g, (m, x) => (v[x] !== undefined ? v[x] : m)); });
+    if (s.fault && s.fault.params) Object.entries(s.fault.params).forEach(([k, x]) => { v[k] = x; });
+    return v;
+  };
+  Simulator.prototype.packText = function (s, t) { const v = this.packVars(s); return String(t).replace(/\{(\w+)\}/g, (m, x) => (v[x] !== undefined ? v[x] : m)); };
+  Simulator.prototype._packLog = function (s, level) {
+    const lines = (s.fault && s.fault.pack && s.fault.pack.logs) || [];
+    if (lines.length) this.log(s.def.id, level || 'ERROR', this.packText(s, lines[Math.floor(this.rand() * lines.length)]));
   };
   Simulator.prototype._consumerCount = function (k) {
     if (k.assign) return Object.keys(k.assign).length;
@@ -835,7 +938,7 @@
         if (m === 'backlog') return s.inbox;
         if (m === 'in_rate') return r.in_rate;
         if (m === 'out_rate') return r.out_rate;
-        if (m === 'error_rate') return this.extDown(s) ? 100 : this.hostFault(s) === 'fd_exhausted' ? 60 : s.fault && s.fault.type === 'api_rate_limited' ? 64 : 0;
+        if (m === 'error_rate') return this.extDown(s) ? 100 : this.hostFault(s) === 'fd_exhausted' ? 60 : s.fault && s.fault.type === 'api_rate_limited' ? 64 : this.packEffect(s).errors ? 100 * this.packEffect(s).errors : 0;
         return 0;
       case 'ref_data': return m === 'staleness_min' ? this.staleness(s) : 0;
       case 'database':
@@ -957,10 +1060,17 @@
   Simulator.prototype.injectFault = function (id, type, params) {
     const s = this.c[id];
     if (!s) throw new Error(`No component "${id}"`);
-    const F = faultsFor(s.type)[type];
-    if (!F) throw new Error(`${s.type} "${id}" has no fault "${type}"`);
+    const F = faultsForDef(s.def)[type];
+    if (!F) throw new Error(`${s.def.pack_type || s.type} "${id}" has no fault "${type}"`);
     const p = { ...F.params, ...(params || {}) };
     const fault = { type, params: p, since: this.t };
+    if (F.pack) {
+      fault.pack = F; s.fault = fault;
+      if (F.effect && F.effect.stale && s.type === 'ref_data') s.lastRefresh = Math.min(s.lastRefresh, this.t - (p.last_refresh_minutes_ago || s.def.stale_after_min + 5) * 60);
+      if (F.on_start) this.log(id, 'WARN', this.packText(s, F.on_start));
+      this.events.push({ t: this.t, kind: 'fault', hidden: true, text: `Fault injected: ${F.label} on ${s.def.name}` });
+      return fault;
+    }
     if (F.host) {
       s.host.fault = fault;
       if (type === 'cpu_runaway') this.log(id, 'INFO', 'cron: started backup_agent --full --target=/mnt/nfs/backup (nightly job, rescheduled)');
@@ -985,13 +1095,32 @@
     else { if (!s.fault) return; if (s.type === 'kafka_topic') s.blocked = -1; s.fault = null; }
     this.events.push({ t: this.t, kind: 'fixed', text: `${s.def.name}: ${why}` });
   };
-  Simulator.prototype.actionsFor = function (id) { const s = this.c[id]; return s ? actionsFor(s.type) : {}; };
+  Simulator.prototype.actionsFor = function (id) { const s = this.c[id]; return s ? actionsForDef(s.def) : {}; };
+
+  // an action defined by a pack: fixes the faults it lists, may restart, drop the queue or fix later
+  Simulator.prototype._packAction = function (s, key, A) {
+    const id = s.def.id, f = s.fault, name = s.def.name;
+    let message, effect = 'none';
+    const fixes = f && (A.fixes || []).includes(f.type);
+    if (A.drops_queue) { const n = (s.inbox || 0) + (s.retry || 0); if (s.inbox !== undefined) s.inbox = 0; if (s.retry) s.retry = 0; this.biz.lost += n; message = this.packText(s, A.message || `Removed ${fmtInt(n)} waiting messages. They are gone and need reconciliation.`); }
+    if (A.outage_s && s.host) s.host.outageUntil = this.t + A.outage_s;   // e.g. a queue manager restart: down while it restarts
+    if (A.restart_s) { if (s.type === 'external_party') s.adapterDownUntil = this.t + A.restart_s; else if (s.type === 'service') s.restartUntil = this.t + A.restart_s; else if (s.host) s.host.outageUntil = this.t + A.restart_s; }
+    if (fixes && A.after_s) { s.packRecoverAt = this.t + A.after_s; s.packRecoverWhy = A.label; message = this.packText(s, A.pending_message || `${A.label}: done; expected to take effect in about ${Math.round(A.after_s / 60)} minutes.`); effect = 'pending'; }
+    else if (fixes) { message = this.packText(s, A.fixed_message || `${A.label}: done. ${f.pack.label} resolved.`); this.clearFault(id, A.label); effect = 'fixed'; if (s.type === 'ref_data') s.lastRefresh = this.t; }
+    if (fixes && A.replays_rejected && s.rejected) { s.retry += s.rejected; s.rejected = 0; }   // e.g. the dead-letter handler replays parked messages
+    else if (!message) message = this.packText(s, A.message || `${A.label}: done. No change; that was not the problem.`);
+    this.log(id, 'INFO', `Operator action: ${this.packText(s, A.label)}`);
+    this.events.push({ t: this.t, kind: 'action', text: `${A.label} on ${name}: ${message}` });
+    return { ok: true, message, effect, label: this.packText(s, A.label) };
+  };
 
   Simulator.prototype.applyAction = function (id, action) {
     const s = this.c[id];
     if (!s) return { ok: false, message: `No component "${id}"` };
+    const PA = (packTypeOf(s.def) || {}).actions;
+    if (PA && PA[action]) return this._packAction(s, action, PA[action]);
     const A = ACTIONS[action];
-    if (!A || !A.types.includes(s.type)) return { ok: false, message: `“${A ? A.label : action}” does not apply to ${s.def.name}.` };
+    if (!A || !A.types.includes(s.type) || !actionsForDef(s.def)[action]) return { ok: false, message: `“${A ? A.label : action}” does not apply to ${s.def.name}.` };
     const f = s.fault && s.fault.type, hf = this.hostFault(s), name = s.def.name, host = `${id.replace(/_/g, '-')} host`;
     let message, effect = 'none';
     const fixHost = why => { this.clearFault(id, why, true); effect = 'fixed'; };
@@ -1155,6 +1284,10 @@
         break;
     }
     if (effect === 'none' && A.fixes && (A.fixes.includes(f) || A.fixes.includes(hf))) effect = 'fixed';
+    if (s.fault && s.fault.pack) {
+      if ((s.fault.pack.fixed_by || []).includes(action)) { const lbl = s.fault.pack.label; this.clearFault(id, A.label); effect = 'fixed'; message += ` ${lbl}: cleared.`; }
+      else if (s.fault.pack.hint && ['restart', 'restart_adapter', 'scale_out', 'restart_host'].includes(action)) message += ' ' + this.packText(s, s.fault.pack.hint);
+    }
     this.events.push({ t: this.t, kind: 'action', text: `${A.label} on ${name}: ${message}` });
     return { ok: true, message, effect, label: A.label };
   };
@@ -1175,7 +1308,7 @@
     return { rejected, held, lost: this.biz.lost };
   };
 
-  const OpsSim = { TYPES, HOST_TYPES, HOST_FAULTS, MOUNT, mountOf, isPg, ACTIONS, CAUSES, faultsFor, actionsFor, causeLabel, hasHost, parseBlueprint, validateBlueprint, Simulator, clockStr, parseClock, fmtInt, rng };
+  const OpsSim = { PACKS, PACK_TYPES, registerPack, baseType, typeLabel, faultsForDef, actionsForDef, causesFor, TYPES, HOST_TYPES, HOST_FAULTS, MOUNT, mountOf, isPg, ACTIONS, CAUSES, faultsFor, actionsFor, causeLabel, hasHost, parseBlueprint, validateBlueprint, Simulator, clockStr, parseClock, fmtInt, rng };
   if (typeof module === 'object' && module.exports) module.exports = OpsSim;
   else root.OpsSim = OpsSim;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

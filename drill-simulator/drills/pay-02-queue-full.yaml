@@ -1,0 +1,21 @@
+id: pay-mq-queue-full
+title: The payment engine cannot hand off payments
+systems: [payments-mq]
+level: Medium
+summary: The payment engine reports put failures. Some payments still go through.
+brief: >
+  15:00. Month-end: payment volumes are high and SWIFT acknowledgements are slower than usual.
+faults:
+  - {at: "15:06", component: mq_out, fault: queue_full}
+root_cause: {component: mq_out, fault: queue_full}
+accepted_fixes: [mq_out.raise_maxdepth]
+risky_actions: [mq_out.clear_queue, mq_out.restart_qmgr]
+hints:
+  - {after_min: 2, text: "What does MQRC 2053 mean?"}
+debrief:
+  what_happened: The transmission queue reached its MAXDEPTH of 5000, so new puts failed with MQRC 2053 (queue full).
+  key_signal: MQRC_Q_FULL (2053) in the logs and CURDEPTH equal to MAXDEPTH in DISPLAY QLOCAL.
+  why_not_restart: Restarting keeps the same full queue. Clearing it deletes 5,000 payments.
+  runbook:
+    - Check CURDEPTH against MAXDEPTH.
+    - Raise MAXDEPTH with approval so puts succeed, then find out why the queue filled up.

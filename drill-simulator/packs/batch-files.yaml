@@ -1,0 +1,62 @@
+# Pack: batch and file loads
+#
+# Adds a start-of-day file load: a file that arrives each morning (reference data, instrument
+# static, customer data) and is loaded before the business day. It behaves like reference data:
+# services that use it reject work when it is missing or incomplete.
+
+pack: batch-files
+label: Batch and file loads
+description: Files that arrive on a schedule and are loaded before the business needs them.
+
+types:
+  sod_file_load:
+    label: Start-of-day file load
+    behaves_like: ref_data
+    help: "A file sent each morning and loaded before the day starts. If it is missing or incomplete, the systems that depend on it cannot map or validate work."
+    base_faults: false
+    base_actions: false
+    vars:
+      FILE: "{ID}_{date}.csv"
+      INBOX: "/data/inbound/{id}"
+
+    faults:
+      file_missing:
+        label: Start-of-day file not received
+        effect: {stale: true}
+        params: {last_refresh_minutes_ago: 1500}
+        logs:
+          - "SOD load: expected file {FILE} not found in {INBOX} (checked at 05:30, 06:00, 06:30). Load not run."
+        evidence:
+          "ls": "total 0\n(no {FILE} in {INBOX}; yesterday's file was archived at 00:05)"
+          "grep": "SOD load: expected file {FILE} not found in {INBOX}"
+      file_truncated:
+        label: Start-of-day file incomplete (partial load)
+        effect: {reject: 0.3, reason: "{FILE} was loaded with 31,204 of 48,210 records (trailer count mismatch)."}
+        on_start: "SOD load: {FILE} loaded 31,204 records; trailer says 48,210. Load marked COMPLETE_WITH_WARNINGS."
+        logs:
+          - "SOD load: {FILE} trailer count 48,210 does not match 31,204 records loaded."
+        evidence:
+          "ls": "-rw-r--r-- 1 sftp sftp 1,844,120 Oct  9 05:41 {FILE}   (expected about 2.8 MB)"
+          "wc": "31205 {INBOX}/{FILE}"
+
+    actions:
+      request_resend:
+        label: "Ask the sender to resend {FILE}"
+        fixes: [file_missing, file_truncated]
+        after_s: 300
+        pending_message: "Sender confirms a resend; the file should arrive and load in about 5 minutes."
+        fixed_message: "{FILE} received and loaded in full."
+      rerun_load:
+        label: "Re-run the load from the file already in {INBOX}"
+        fixes: [file_truncated]
+        message: "Re-ran the load. There is no file in {INBOX} to load."
+        fixed_message: "Re-ran the load from the full copy in {INBOX}/archive: 48,210 records loaded."
+      load_yesterday:
+        label: "Load yesterday's file instead"
+        message: "Loaded yesterday's file: today's new and changed records are missing, so new items still fail and changed ones are wrong."
+
+    shell:
+      "ls": "-rw-r--r-- 1 sftp sftp 2,861,442 Oct  9 05:38 {FILE}"
+      "wc": "48211 {INBOX}/{FILE}"
+    logs_ok:
+      - "SOD load: {FILE} loaded, 48,210 records, trailer OK."

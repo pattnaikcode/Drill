@@ -71,6 +71,27 @@ components:
 
 A kind can set `type`, `role`, `connects_to`, `connects_from`, `group`, `uses`, `defaults`, and templates for `name` and `session` (`{id}`, `{ID}`, `{n}`). Values on the component line win over the kind's. Diagram groups can also list `roles: [Broker, Market maker]` instead of ids. Journeys can use `at: "role:Broker"` and order fields like `counterparty: "role:Market maker"`, so a new member appears in traced orders too. The exchange is written this way.
 
+## Packs: new technologies without code
+
+A pack (`packs/*.yaml`) adds component types. Each new type **behaves like** one of the built-in behaviours (`source`, `service`, `kafka_topic`, `external_party`, `ref_data`, `database`) and brings its own faults, fixes, log lines and shell commands. The engine applies a pack fault only through generic **effects**:
+
+| Effect | Meaning |
+|---|---|
+| `capacity: 0.3` | works at 30% of normal throughput |
+| `errors: 0.6` | 60% of calls fail |
+| `reject: 0.12` | 12% of work is rejected (on this component, or on services that use this reference data) |
+| `down: true` | nothing gets through; `reason` explains why (shown to traced orders) |
+| `stale: true` | a loader stops refreshing (services that use it reject work) |
+| `pool_full: true` | a database's connections are all taken |
+
+Actions can `fixes: [fault]` (optionally `after_s` to take effect later), `restart_s` (rolling restart), `outage_s` (down while restarting), `drops_queue` (harmful: waiting work is lost) and `replays_rejected`. A pack fault can also list built-in actions that fix it (`fixed_by`), and a `hint` shown when someone tries a restart. `vars` define names used in messages (`QMGR: "QM_{ID}"`), and `shell` maps commands to their output; a fault's `evidence` replaces that output while it is active.
+
+Two packs are included:
+- **`ibm-mq`**: an IBM MQ queue manager. Faults: sender channel stopped (`AMQ9999E`, `STATUS(RETRYING)`), transmission queue full (`MQRC 2053`), messages to the dead-letter queue (`AMQ9544E`, reason 2085). Fixes: `START CHANNEL`, `ALTER QLOCAL … MAXDEPTH`, correct the remote queue definition and replay the dead-letter queue. Harmful: `CLEAR QLOCAL`, restarting the queue manager. Commands: `dspmq`, `runmqsc DISPLAY CHSTATUS`, `runmqsc DISPLAY QLOCAL`.
+- **`batch-files`**: a start-of-day file load. Faults: file not received, file incomplete (trailer count mismatch). Fixes: ask the sender to resend (takes effect after 5 minutes), re-run the load. Harmful: load yesterday's file.
+
+`examples/payments-mq.yaml` uses both: channels → payment engine (customer static from the start-of-day file) → IBM MQ → SWIFT gateway before the RTGS cut-off, with four use cases. Pack faults appear in the root-cause list and the instructor's fault menu, pack actions in the runbook, pack types in the System Builder.
+
 ## Follow an order
 
 The **Follow an order** tool sends one order through the live system and shows it hop by hop: the raw FIX message at each step (with `|` for the SOH separator), what each component does with it, and the database rows it writes. The exchange has four journeys: fully filled against a market maker's quote, stopped by the broker's own risk checks (it never reaches the venue), rejected by the venue's price band, and partly filled with the rest left on the book. Client risk (margin, limits, fat-finger checks) sits with the broker; the venue only validates the order (tradable instrument, price band, tick and lot size). Rows land in `orders` and `trades` on the Order Book Store, so you can query them in the Database tab.
@@ -228,6 +249,7 @@ debrief:
 | File | Job |
 |---|---|
 | `src/engine.js` | Component types, hosts and host faults, the runbook action catalogue, the root-cause list, blueprint validation, the simulator (flow graph, metrics, logs, alerts, health, faults, actions). No screen code. |
+| `packs/*.yaml` | Packs: new component types (IBM MQ, start-of-day file loads) defined as configuration. |
 | `src/trace.js` | Follow an order: traced orders that move hop by hop through the live simulation, and the tables they write. |
 | `src/session.js` | Drill runner: schedules faults, records acknowledgement, declarations, tool use and approved actions; scores; builds the debrief. |
 | `src/tools.js` | Splunk-style search, read-only SQL console, read-only Unix shell. |
@@ -235,7 +257,7 @@ debrief:
 | `src/builder.js`, `src/builder.template.html` | System Builder: forms that write and validate blueprint YAML. |
 | `src/style.css`, `src/index.template.html` | Page design and layout. |
 | `build.py` | Bundles everything, including the YAML files, into `dist/index.html` (participant page), `dist/admin.html` (instructor page) and `dist/builder.html` (System Builder). |
-| `tests/*.test.js` | 218 automated tests (Node's built-in runner). |
+| `tests/*.test.js` | 230 automated tests (Node's built-in runner). |
 | `vendor/js-yaml.min.js` | YAML parser (MIT licence, see `vendor/js-yaml.LICENSE`). |
 
 ## Develop

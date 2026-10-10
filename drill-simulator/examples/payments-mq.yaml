@@ -1,0 +1,53 @@
+# Payments over IBM MQ (illustrative model, built with packs)
+#
+# Uses two packs instead of engine code: ibm-mq (the queue manager between the payment engine and
+# the SWIFT gateway) and batch-files (the start-of-day customer static file).
+
+id: payments-mq
+system: Outgoing payments over IBM MQ
+description: >
+  Net banking and corporate host-to-host channels send payment instructions to the payment engine,
+  which checks them against the start-of-day customer static file and the payments database. Approved
+  payments go through an IBM MQ queue manager to the SWIFT gateway before the RTGS cut-off.
+
+clock: {start: "15:00", cutoff: "16:00", cutoff_label: RTGS cut-off}
+
+business:
+  currency: "₹"
+  unit: Cr
+  unit_name: payments
+  avg_notional: 0.2
+  kpis:
+    - {label: "Payments not yet sent to SWIFT", at: swift, cutoff: true}
+
+components:
+  - {id: net_banking, type: source, role: Channel, name: Net Banking, session: NETB01, rate_per_min: 500}
+  - {id: corporate_h2h, type: source, role: Channel, name: Corporate Host-to-Host, session: H2H01, rate_per_min: 300}
+  - {id: payment_engine, type: service, role: Payments, name: Payment Engine, capacity_per_min: 1200, instances: 3, uses: [customer_static, payments_db]}
+  - {id: customer_static, type: sod_file_load, name: Customer Static (SOD file), refresh_every_min: 1440, stale_after_min: 1440, stale_reject_share: 0.9,
+     missing_msg: "No customer static for account {key}: payment parked for repair", key_prefix: ACC}
+  - {id: payments_db, type: database, name: Payments DB, pool_size: 60, big_table: PAYMENT_HIST}
+  - {id: mq_out, type: mq_queue_manager, role: Messaging, name: MQ to SWIFT, capacity_per_min: 1200, instances: 1}
+  - {id: swift, type: external_party, role: SWIFT network, name: SWIFT Gateway, capacity_per_min: 1300}
+
+flow:
+  - net_banking -> payment_engine
+  - corporate_h2h -> payment_engine
+  - payment_engine -> mq_out -> swift
+
+alerts:
+  - {name: "Payments rejected or parked", on: payment_engine, metric: reject_rate, above: 2, severity: P2}
+  - {name: "MQ messages building up", on: mq_out, metric: backlog, above: 1500, severity: P2}
+  - {name: "MQ put failures", on: mq_out, metric: error_rate, above: 2, severity: P2}
+  - {name: "MQ messages to dead-letter queue", on: mq_out, metric: reject_rate, above: 2, severity: P2}
+  - {name: "Customer static not loaded today", on: customer_static, metric: staleness_min, above: 1440, severity: P2}
+  - {name: "SWIFT gateway backlog", on: swift, metric: backlog, above: 1500, severity: P3}
+
+diagram:
+  groups:
+    - {label: "Channels", ids: [net_banking, corporate_h2h]}
+  steps:
+    - {from: net_banking, to: payment_engine, text: "Channels send payment instructions to the payment engine."}
+    - {from: payment_engine, to: customer_static, text: "Each payment is checked against today's customer static file, loaded at start of day."}
+    - {from: payment_engine, to: mq_out, text: "Approved payments are put on an IBM MQ queue."}
+    - {from: mq_out, to: swift, text: "The queue manager's sender channel moves them to the SWIFT gateway before the RTGS cut-off."}

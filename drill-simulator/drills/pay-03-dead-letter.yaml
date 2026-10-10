@@ -1,0 +1,24 @@
+id: pay-mq-dead-letter
+title: Some payments vanish on the way to SWIFT
+systems: [payments-mq]
+level: Hard
+summary: Most payments arrive at SWIFT. About one in eight never does.
+brief: >
+  15:00. The SWIFT gateway team migrated one of their queues this morning.
+faults:
+  - {at: "15:06", component: mq_out, fault: messages_to_dlq}
+root_cause: {component: mq_out, fault: messages_to_dlq}
+accepted_fixes: [mq_out.fix_remote_queue_definition]
+risky_actions: [mq_out.restart_qmgr, mq_out.clear_queue]
+hints:
+  - {after_min: 3, text: "Where does MQ put a message it cannot deliver?"}
+debrief:
+  what_happened: >
+    After the gateway team's migration, our remote queue definition pointed to a queue that no longer
+    existed. Messages for it were put on the dead-letter queue with reason 2085.
+  key_signal: AMQ9544E with reason 2085 and a growing SYSTEM.DEAD.LETTER.QUEUE depth.
+  why_not_restart: The definition is still wrong after a restart. Clearing loses payments.
+  runbook:
+    - Check the dead-letter queue depth and the reason code on the messages.
+    - Correct the remote queue definition with approval and replay the dead-letter queue.
+    - Reconcile with the SWIFT gateway that every payment arrived exactly once.

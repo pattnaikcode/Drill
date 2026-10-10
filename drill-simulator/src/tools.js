@@ -281,6 +281,15 @@
       return `Permission denied: ${H.host} is accessed with a read-only support account.\nChanges go through approved actions with a named approver.`;
     if (c.host && sim.inOutage(c)) return `ssh: connect to host ${H.host} port 22: Connection refused`;
     const hf = sim.hostFault(c), f = c.fault && c.fault.type;
+    // commands a pack defines for its technology (e.g. dspmq for IBM MQ); a broken component shows its fault's evidence
+    for (const x of H.comps) {
+      const cx = sim.c[x], P = cx.def.pack_type && S.PACK_TYPES[cx.def.pack_type]; if (!P) continue;
+      const ev = (cx.fault && cx.fault.pack && cx.fault.pack.evidence) || {};
+      for (const k of [...Object.keys(ev), ...Object.keys(P.shell || {})]) {
+        const kk = sim.packText(cx, k);
+        if (cmd === kk || cmd.startsWith(kk + ' ')) return sim.packText(cx, ev[k] !== undefined ? ev[k] : P.shell[k]);
+      }
+    }
     const logFile = `/var/log/app/${id}.log`;
     const logLines = () => c.logs.map(l => l.line);
     const logOf = file => { const m = /^\/var\/log\/app\/(\w+)\.log$/.exec(file); return m && H.comps.includes(m[1]) ? sim.c[m[1]] : null; };
@@ -300,6 +309,7 @@
         ...(c.type === 'external_party' ? ['  openssl x509 -enddate -noout -in /etc/pki/tls/client.pem'] : []),
         ...(c.type === 'kafka_topic' ? [`  kafka-consumer-groups.sh --describe --group ${d.consumer_group || 'consumers'}`, '  kafka-topics.sh --describe --topic ' + d.name] : []),
         ...(c.type === 'database' ? ['  (use the Database tab for SQL)'] : []),
+        ...H.comps.flatMap(x => { const P = sim.c[x].def.pack_type && S.PACK_TYPES[sim.c[x].def.pack_type]; return P ? Object.keys(P.shell || {}).map(k => '  ' + sim.packText(sim.c[x], k) + `   (${P.label || sim.c[x].def.pack_type})`) : []; }),
         'Pipes: | grep text   | tail -n 20   | head   | wc -l   | sort'].join('\n');
       case 'hostname': return H.host;
       case 'whoami': return 'support_ro';

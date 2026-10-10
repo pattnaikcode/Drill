@@ -1,0 +1,88 @@
+# Pack: IBM MQ
+#
+# Adds an IBM MQ queue manager as a component type, with no engine code. It behaves like a service
+# (takes messages in, moves them on at a capacity), and this file gives it MQ's own faults, fixes,
+# log lines (AMQ message codes) and commands (dspmq, runmqsc).
+#
+# Placeholders in {braces}: {ID} {id} {name} {host} {peer} {PEER} {backlog} {rate} {time},
+# the "vars" below, and a fault's params.
+
+pack: ibm-mq
+label: IBM MQ
+description: Message queuing between applications. A queue manager receives messages and moves them on over a sender channel.
+
+types:
+  mq_queue_manager:
+    label: IBM MQ queue manager
+    behaves_like: service
+    help: "Receives messages on a local queue and moves them to the next system over a sender channel. When the channel stops, messages pile up on the transmission queue."
+    base_faults: false          # MQ's own faults below, plus the host faults (disk, memory, CPU, clock...)
+    base_actions: false
+    vars:
+      QMGR: "QM_{ID}"
+      CHANNEL: "{ID}.TO.{PEER}"
+      XMITQ: "{PEER}.XMITQ"
+      MAXDEPTH: "100000"
+
+    faults:
+      channel_stopped:
+        label: Sender channel stopped (retrying)
+        effect: {down: true, reason: "Sender channel {CHANNEL} to {peer} is RETRYING: messages wait on transmission queue {XMITQ}."}
+        on_start: "AMQ9999E: Channel '{CHANNEL}' to host '{peerhost}' ended abnormally."
+        logs:
+          - "AMQ9202E: Remote host '{peerhost}' not available, retry later. Channel '{CHANNEL}'."
+          - "AMQ9999E: Channel '{CHANNEL}' to host '{peerhost}' ended abnormally."
+        evidence:
+          "runmqsc DISPLAY CHSTATUS": "AMQ8417I: Display Channel Status details.\n   CHANNEL({CHANNEL})   CHLTYPE(SDR)\n   CONNAME({peerhost}(1414))   CURRENT\n   STATUS(RETRYING)   SUBSTATE( )   LONGRTS(999999998)"
+          "runmqsc DISPLAY QLOCAL": "AMQ8409I: Display Queue details.\n   QUEUE({XMITQ})   TYPE(QLOCAL)\n   CURDEPTH({depth})   MAXDEPTH({MAXDEPTH})"
+        hint: "The channel is still RETRYING after the restart; restarting does not start a stopped channel."
+
+      queue_full:
+        label: Transmission queue full (MAXDEPTH reached)
+        effect: {capacity: 0.3, errors: 0.6, reason: "Queue {XMITQ} is full: puts fail with MQRC 2053."}
+        on_start: "AMQ2053E: The queue '{XMITQ}' is full (MAXDEPTH {MAXDEPTH})."
+        logs:
+          - "MQRC_Q_FULL (2053) returned to the putting application for queue '{XMITQ}'."
+          - "AMQ2053E: The queue '{XMITQ}' is full (MAXDEPTH {MAXDEPTH})."
+        evidence:
+          "runmqsc DISPLAY QLOCAL": "AMQ8409I: Display Queue details.\n   QUEUE({XMITQ})   TYPE(QLOCAL)\n   CURDEPTH({MAXDEPTH})   MAXDEPTH({MAXDEPTH})"
+        hint: "Puts still fail with 2053 after the restart: the queue is still full."
+
+      messages_to_dlq:
+        label: Messages going to the dead-letter queue
+        effect: {reject: 0.12, reason: "Messages are put on the dead-letter queue: MQRC 2085 (unknown object name) at {peer}."}
+        on_start: "AMQ9544E: Messages not put to destination queue. Reason 2085 (MQRC_UNKNOWN_OBJECT_NAME); placed on dead-letter queue."
+        logs:
+          - "AMQ9544E: Messages not put to destination queue on '{peer}'. Reason 2085; placed on SYSTEM.DEAD.LETTER.QUEUE."
+        evidence:
+          "runmqsc DISPLAY QLOCAL": "AMQ8409I: Display Queue details.\n   QUEUE({XMITQ})   CURDEPTH(0)\n   QUEUE(SYSTEM.DEAD.LETTER.QUEUE)   CURDEPTH(1874)"
+
+    actions:
+      start_channel:
+        label: "START CHANNEL({CHANNEL})"
+        fixes: [channel_stopped]
+        fixed_message: "Channel {CHANNEL} is RUNNING; the {backlog} messages waiting on {XMITQ} are flowing to {peer}."
+      raise_maxdepth:
+        label: "ALTER QLOCAL({XMITQ}) MAXDEPTH(500000)"
+        fixes: [queue_full]
+        fixed_message: "MAXDEPTH raised to 500000; puts succeed again. Find out why the queue filled up."
+      fix_remote_queue_definition:
+        label: "Correct the remote queue definition and replay the DLQ (dead-letter handler)"
+        fixes: [messages_to_dlq]
+        replays_rejected: true
+        fixed_message: "Remote queue definition corrected; the dead-letter handler replays the messages to their destination."
+      clear_queue:
+        label: "CLEAR QLOCAL({XMITQ}) (delete every waiting message)"
+        drops_queue: true
+        message: "All waiting messages on {XMITQ} were deleted. They are lost and every one needs reconciliation."
+      restart_qmgr:
+        label: "endmqm / strmqm {QMGR} (restart the queue manager)"
+        outage_s: 240
+        message: "Queue manager {QMGR} is restarting: every channel on it is down for about 4 minutes."
+
+    shell:
+      "dspmq": "QMNAME({QMGR})   STATUS(Running)"
+      "runmqsc DISPLAY CHSTATUS": "AMQ8417I: Display Channel Status details.\n   CHANNEL({CHANNEL})   CHLTYPE(SDR)\n   CONNAME({peerhost}(1414))   CURRENT\n   STATUS(RUNNING)   SUBSTATE(MQGET)"
+      "runmqsc DISPLAY QLOCAL": "AMQ8409I: Display Queue details.\n   QUEUE({XMITQ})   TYPE(QLOCAL)\n   CURDEPTH({depth})   MAXDEPTH({MAXDEPTH})"
+    logs_ok:
+      - "AMQ8004I: Channel '{CHANNEL}' running: {rate} messages per minute to {peer}."

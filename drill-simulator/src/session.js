@@ -15,7 +15,7 @@
     (sc.faults || []).forEach(f => {
       const c = bp.byId[f.component];
       if (!c) { errors.push(`${where}: needs component "${f.component}", which this system does not have.`); return; }
-      if (!S.faultsFor(c.type)[f.fault]) errors.push(`${where}: ${c.type} "${f.component}" has no fault "${f.fault}".`);
+      if (!S.faultsForDef(c)[f.fault]) errors.push(`${where}: ${c.type} "${f.component}" has no fault "${f.fault}".`);
       if (S.parseClock(f.at) === null) errors.push(`${where}: fault time "${f.at}" must look like "13:36".`);
     });
     if (!(sc.faults || []).length) errors.push(`${where}: needs at least one fault.`);
@@ -23,9 +23,9 @@
       const [cid, act] = String(a).split('.');
       const c = bp.byId[cid];
       if (!c) errors.push(`${where}: action "${a}" refers to missing component "${cid}".`);
-      else if (!S.actionsFor(c.type)[act]) errors.push(`${where}: ${c.type} "${cid}" has no action "${act}".`);
+      else if (!S.actionsForDef(c)[act]) errors.push(`${where}: ${c.pack_type || c.type} "${cid}" has no action "${act}".`);
     });
-    if (sc.root_cause && (!bp.byId[sc.root_cause.component] || !S.faultsFor(bp.byId[sc.root_cause.component].type)[sc.root_cause.fault]))
+    if (sc.root_cause && (!bp.byId[sc.root_cause.component] || !S.faultsForDef(bp.byId[sc.root_cause.component])[sc.root_cause.fault]))
       errors.push(`${where}: root_cause must name a component of this system and one of its faults.`);
     if ((sc.faults || []).some(f => bp.start !== undefined && S.parseClock(f.at) !== null && (S.parseClock(f.at) < bp.start || S.parseClock(f.at) >= bp.cutoff)))
       errors.push(`${where}: fault times must fall between this system's start (${S.clockStr(bp.start)}) and cut-off (${S.clockStr(bp.cutoff)}).`);
@@ -209,8 +209,8 @@
     const c = sim.c[rc.component];
     return {
       score: this.score(), timeline: all,
-      answer: { component: c.def.name, fault: S.faultsFor(c.type)[rc.fault].label, host: !!S.faultsFor(c.type)[rc.fault].host },
-      accepted: (this.sc.accepted_fixes || []).map(k => { const [cid, a] = k.split('.'); return `${S.ACTIONS[a].label} on ${sim.c[cid].def.name}`; }),
+      answer: { component: c.def.name, fault: S.faultsForDef(c.def)[rc.fault].label, host: !!S.faultsForDef(c.def)[rc.fault].host },
+      accepted: (this.sc.accepted_fixes || []).map(k => { const [cid, a] = k.split('.'); return `${(S.actionsForDef(sim.c[cid].def)[a] || {}).label || a} on ${sim.c[cid].def.name}`; }),
       notes: this.sc.debrief || {}, actions: this.actions, declarations: this.declarations,
       inspected: [...this.inspected].map(id => sim.c[id].def.name), tools: this.toolUse || [],
     };

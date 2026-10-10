@@ -1,0 +1,27 @@
+id: pay-mq-channel-stopped
+title: Payments stop leaving the bank
+systems: [payments-mq]
+level: Medium
+summary: Payments are approved but none reach SWIFT. The SWIFT gateway says it is fine.
+brief: >
+  15:00, one hour before the RTGS cut-off. The network team did firewall maintenance at lunchtime.
+faults:
+  - {at: "15:06", component: mq_out, fault: channel_stopped}
+root_cause: {component: mq_out, fault: channel_stopped}
+accepted_fixes: [mq_out.start_channel]
+risky_actions: [mq_out.restart_qmgr, mq_out.clear_queue]
+hints:
+  - {after_min: 2, text: "The payment engine is fine and SWIFT is fine. What is between them?"}
+  - {after_min: 4, text: "Check the channel status on the queue manager: runmqsc DISPLAY CHSTATUS."}
+debrief:
+  what_happened: >
+    The MQ sender channel to the SWIFT gateway ended during the firewall change and went into RETRYING.
+    Payments kept arriving on the transmission queue but nothing left it.
+  key_signal: Rising queue depth, AMQ9999E / AMQ9202E in the queue manager log, and STATUS(RETRYING) in DISPLAY CHSTATUS.
+  why_not_restart: >
+    Restarting the queue manager stops every channel for four minutes and does not fix a channel that
+    cannot connect. Clearing the queue deletes payments.
+  runbook:
+    - Check the queue depth and the sender channel status.
+    - Start the channel with approval and watch the depth fall.
+    - Confirm all payments reach SWIFT before the RTGS cut-off.

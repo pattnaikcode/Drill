@@ -20,6 +20,7 @@
   const ADMIN = window.OPS_ROLE === 'admin';
 
   // ------------------------------------------------------------ systems and use cases
+  (C.packs || []).forEach(text => { try { const e = S.registerPack(yaml.load(text)); if (e.length) console.warn(e.join('\n')); } catch (err) { console.warn('Pack not loaded: ' + err.message); } });
   const SYSTEMS = {}; // id -> { text, bp, builtIn }
   Object.values(C.blueprints).forEach(text => { const r = S.parseBlueprint(text, yaml); if (!r.errors.length) SYSTEMS[r.blueprint.id] = { text, bp: r.blueprint, builtIn: true }; });
   try { JSON.parse(store.get('systems', '[]')).forEach(text => { const r = S.parseBlueprint(text, yaml); if (!r.errors.length) SYSTEMS[r.blueprint.id] = { text, bp: r.blueprint, builtIn: false }; }); } catch (e) { /* ignore */ }
@@ -167,7 +168,7 @@
     const at = t => [0, 1].map(k => (1 - t) ** 3 * p0[k] + 3 * (1 - t) ** 2 * t * c1[k] + 3 * (1 - t) * t * t * c2[k] + t ** 3 * p3[k]);
     return { d: `M${p0[0]} ${p0[1]} C${c1[0]} ${c1[1]} ${c2[0]} ${c2[1]} ${p3[0]} ${p3[1]}`, at };
   }
-  const roleOf = c => c.role || S.TYPES[c.type].label;
+  const roleOf = c => c.role || S.typeLabel(c);
 
   function drawSystem(bp, sim, mode) { // mode: 'live' (metrics, health) or 'diagram' (roles, numbered steps)
     const L = mode === 'live' ? A.layout : layout(bp);
@@ -209,7 +210,7 @@
           });
         }
       } else {
-        const extra = [roleOf(c) !== S.TYPES[c.type].label ? S.TYPES[c.type].label : '', c.session ? 'session ' + c.session : '', c.symbol ? 'symbol ' + c.symbol : '', c.type === 'service' && c.instances ? c.instances + ' instances' : ''].filter(Boolean).join(' · ');
+        const extra = [roleOf(c) !== S.typeLabel(c) ? S.typeLabel(c) : '', c.session ? 'session ' + c.session : '', c.symbol ? 'symbol ' + c.symbol : '', c.type === 'service' && c.instances ? c.instances + ' instances' : ''].filter(Boolean).join(' · ');
         if (extra) g += `<text class="k" x="${p.x + 14}" y="${p.y + 58}">${esc(extra)}</text>`;
       }
       g += `</g>`;
@@ -375,7 +376,7 @@
     const id = A.selected, s = A.sim.c[id]; if (!s || !$('#tiles')) return;
     const h = A.sim.health(id);
     $('#insTitle').innerHTML = `${esc(s.def.name)} <span class="pill ${h === 'ok' ? 'ok' : h}">${h === 'ok' ? 'healthy' : h === 'warn' ? 'degraded' : 'critical'}</span>`;
-    $('#insType').textContent = `${roleOf(s.def)} · ${S.TYPES[s.type].label} · id ${id}${s.def.uses ? ' · uses ' + s.def.uses.join(', ') : ''}${s.def.feeds ? ' · publishes to ' + s.def.feeds : ''}`;
+    $('#insType').textContent = `${roleOf(s.def)} · ${S.typeLabel(s.def)} · id ${id}${s.def.uses ? ' · uses ' + s.def.uses.join(', ') : ''}${s.def.feeds ? ' · publishes to ' + s.def.feeds : ''}`;
     const M = S.TYPES[s.type].metrics;
     $('#tiles').innerHTML = Object.keys(M).map(m => `<div class="tile"><div class="label">${esc(M[m])}</div><div class="v">${fmtMetric(m, A.sim.metric(id, m))}</div>${spark(s.hist[m] || [])}</div>`).join('')
       + (s.type === 'kafka_topic' ? `<div class="tile"><div class="label">Lag by partition</div><div class="mono small">${s.parts.map((v, i) => `p${i}: ${S.fmtInt(v)}`).join('<br>')}</div></div>` : '');
@@ -415,7 +416,7 @@
       $('#ackStatus').textContent = ss.ackAt === null ? 'Not acknowledged' : `Acknowledged at ${S.clockStr(ss.ackAt)} by ${ss.ackBy}`;
       $('#ackBtn').disabled = ss.ackAt !== null;
       $('#hints').innerHTML = ss.visibleHints().map(h => `<div class="hint">${esc(h)}</div>`).join('');
-      if (ADMIN && $('#instrFaults')) { const af = sim.activeFaults(); $('#instrFaults').innerHTML = '<b>Active now:</b> ' + (af.length ? af.map(f => `${esc(f.type === 'outage' ? 'host restarting / failing over' : S.faultsFor(sim.c[f.id].type)[f.type].label)} on ${esc(sim.c[f.id].def.name)}`).join('; ') : 'nothing — all faults cleared'); }
+      if (ADMIN && $('#instrFaults')) { const af = sim.activeFaults(); $('#instrFaults').innerHTML = '<b>Active now:</b> ' + (af.length ? af.map(f => `${esc(f.type === 'outage' ? 'host restarting / failing over' : S.faultsForDef(sim.c[f.id].def)[f.type].label)} on ${esc(sim.c[f.id].def.name)}`).join('; ') : 'nothing — all faults cleared'); }
     }
   }
 
@@ -460,12 +461,12 @@
   function compOptions(filter) { return A.bp.components.filter(filter).map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join(''); }
   function actionPicker() {
     return `<div class="stack" style="gap:6px"><span class="label">Request an action</span>
-      <div class="pick"><select id="acComp" aria-label="Component">${compOptions(c => Object.keys(S.actionsFor(c.type)).length)}</select><select id="acAction" aria-label="Action"></select><button class="btn" id="acBtn">Request approval</button></div>
+      <div class="pick"><select id="acComp" aria-label="Component">${compOptions(c => Object.keys(S.actionsForDef(c)).length)}</select><select id="acAction" aria-label="Action"></select><button class="btn" id="acBtn">Request approval</button></div>
       <div id="approval">${approvalHtml()}</div></div>`;
   }
   function approvalHtml() {
     const ap = A.approval; if (!ap) return '';
-    const c = A.bp.byId[ap.comp], act = S.ACTIONS[ap.action];
+    const c = A.bp.byId[ap.comp], act = S.actionsForDef(c)[ap.action];
     return `<div class="approve" role="group" aria-label="Approval">
       <b>${esc(act.label)}</b><span class="small">on ${esc(c.name)}. This changes the system. It runs only with a named approver and confirmation, and is recorded.</span>
       <label class="field">Approver<input type="text" id="apprName" placeholder="e.g. Rahul Mehta, Support Manager" autocomplete="off" value="${esc(ap.name || '')}"></label>
@@ -516,8 +517,8 @@
   }
 
   function ucTemplate(bp) {
-    const fc = bp.components.find(c => c.type === 'service') || bp.components.find(c => Object.keys(S.faultsFor(c.type)).length);
-    const fault = Object.keys(S.faultsFor(fc.type))[0], action = Object.entries(S.actionsFor(fc.type)).find(([, a]) => (a.fixes || []).includes(fault));
+    const fc = bp.components.find(c => c.type === 'service') || bp.components.find(c => Object.keys(S.faultsForDef(c)).length);
+    const fault = Object.keys(S.faultsForDef(fc))[0], action = Object.entries(S.actionsForDef(fc)).find(([, a]) => (a.fixes || []).includes(fault));
     return `id: my-use-case
 title: My use case
 systems: [${bp.id}]
@@ -528,7 +529,7 @@ brief: >
 faults:
   - {at: "${S.clockStr(bp.start + 360)}", component: ${fc.id}, fault: ${fault}}
 root_cause: {component: ${fc.id}, fault: ${fault}}
-accepted_fixes: [${fc.id}.${action ? action[0] : Object.keys(S.actionsFor(fc.type))[0]}]
+accepted_fixes: [${fc.id}.${action ? action[0] : Object.keys(S.actionsForDef(fc))[0]}]
 risky_actions: []
 hints:
   - {after_min: 3, text: "A nudge shown in practice mode after 3 minutes."}
@@ -572,7 +573,7 @@ debrief:
       ${savedDesigns()}
       <section class="panel stack"><h2>What can fail in “${esc(A.bp.system)}”, and how it is fixed</h2>
         <div class="tablewrap"><table><thead><tr><th>Component id</th><th>Name</th><th>Faults (<code>fault:</code>)</th><th>Actions (<code>component.action</code>)</th></tr></thead><tbody>
-        ${comps.map(c => `<tr><td><code>${c.id}</code></td><td>${esc(c.name)}</td><td class="small">${Object.entries(S.faultsFor(c.type)).map(([k, f]) => `<code>${k}</code> ${esc(f.label)}${f.host ? ' <span class="muted">(host)</span>' : ''}`).join('<br>') || '—'}</td><td class="small">${Object.entries(S.actionsFor(c.type)).map(([k, a]) => `<code>${c.id}.${k}</code>${(a.fixes || []).length ? ' fixes ' + a.fixes.filter(f => S.faultsFor(c.type)[f]).map(f => `<code>${f}</code>`).join(', ') : ''}`).join('<br>') || '—'}</td></tr>`).join('')}
+        ${comps.map(c => `<tr><td><code>${c.id}</code></td><td>${esc(c.name)}</td><td class="small">${Object.entries(S.faultsForDef(c)).map(([k, f]) => `<code>${k}</code> ${esc(f.label)}${f.host ? ' <span class="muted">(host)</span>' : f.pack ? ' <span class="muted">(pack)</span>' : ''}`).join('<br>') || '—'}</td><td class="small">${Object.entries(S.actionsForDef(c)).map(([k, a]) => `<code>${c.id}.${k}</code>${(a.fixes || []).length ? ' fixes ' + a.fixes.filter(f => S.faultsForDef(c)[f]).map(f => `<code>${f}</code>`).join(', ') : ''}`).join('<br>') || '—'}</td></tr>`).join('')}
         </tbody></table></div></section>
       <section class="panel stack"><h2>Component types</h2>
         <div class="tablewrap"><table><thead><tr><th>Type</th><th>Settings</th><th>Metrics for alert rules</th></tr></thead><tbody>${Object.entries(S.TYPES).map(([k, T]) => `<tr><td><code>${k}</code></td><td class="small">${T.required.map(r => `<code>${r}</code>`).join(' ')}${k === 'service' ? ' <span class="muted">optional <code>instances</code> <code>uses</code> <code>rejects: queue|return</code></span>' : ''}${k === 'source' ? ' <span class="muted">optional <code>role</code> <code>session</code></span>' : ''}${k === 'kafka_topic' ? ' <span class="muted">optional <code>consumer_group</code></span>' : ''}${k === 'issuer' ? '<code>feeds</code> <span class="muted">optional <code>symbol</code></span>' : ''}</td><td class="small">${Object.keys(T.metrics).map(m => `<code>${m}</code>`).join(' ')}</td></tr>`).join('')}</tbody></table></div>
@@ -615,15 +616,15 @@ debrief:
   // ------------------------------------------------------------ events
   function fillFaults(compSel, faultSel) { // instructor only: what can be injected here
     const c = A.bp.byId[$(compSel).value]; if (!c) return;
-    $(faultSel).innerHTML = Object.entries(S.faultsFor(c.type)).map(([k, f]) => `<option value="${k}">${esc(f.label)}${f.host ? ' (host)' : ''}</option>`).join('');
+    $(faultSel).innerHTML = Object.entries(S.faultsForDef(c)).map(([k, f]) => `<option value="${k}">${esc(f.label)}${f.host ? ' (host)' : ''}</option>`).join('');
   }
   function causeOptions() { // one list for every component, real causes among decoys
-    const groups = [...new Set(S.CAUSES.map(c => c.group))];
-    return '<option value="">Choose a cause…</option>' + groups.map(g => `<optgroup label="${esc(g)}">${S.CAUSES.filter(c => c.group === g).map(c => `<option value="${c.key}">${esc(c.label)}</option>`).join('')}</optgroup>`).join('');
+    const all = S.causesFor(A.bp), groups = [...new Set(all.map(c => c.group))];
+    return '<option value="">Choose a cause…</option>' + groups.map(g => `<optgroup label="${esc(g)}">${all.filter(c => c.group === g).map(c => `<option value="${c.key}">${esc(c.label)}</option>`).join('')}</optgroup>`).join('');
   }
   function fillActions() { // the runbook catalogue for this kind of component: fixes, heavy options and harmful ones alike
     const c = A.bp.byId[$('#acComp').value]; if (!c) return;
-    $('#acAction').innerHTML = Object.entries(S.actionsFor(c.type)).map(([k, a]) => `<option value="${k}">${esc(a.label)}</option>`).join('');
+    $('#acAction').innerHTML = Object.entries(S.actionsForDef(c)).map(([k, a]) => `<option value="${k}">${esc(A.sim.packText ? A.sim.packText(A.sim.c[c.id], a.label) : a.label)}</option>`).join('');
   }
   const errList = errs => `<ul class="errors">${errs.map(x => `<li>${esc(x)}</li>`).join('')}</ul>`;
   function copyText(text, btn) {
@@ -701,7 +702,7 @@ debrief:
       if (ss.mode === 'practice') pushFeed(ok ? `Root cause confirmed: ${label}. Now fix it.` : `Declared ${label}. The evidence does not support this; keep looking.`, ok ? 'ok' : 'bad');
       else pushFeed(`Root cause recorded: ${label}`);
     });
-    on('#fxBtn', 'click', () => { if (!ADMIN) return; const comp = $('#fxComp').value, fault = $('#fxFault').value; A.sim.injectFault(comp, fault); pushFeed(`Injected: ${S.faultsFor(A.bp.byId[comp].type)[fault].label} on ${A.bp.byId[comp].name}`, 'bad'); updateLive(); });
+    on('#fxBtn', 'click', () => { if (!ADMIN) return; const comp = $('#fxComp').value, fault = $('#fxFault').value; A.sim.injectFault(comp, fault); pushFeed(`Injected: ${S.faultsForDef(A.bp.byId[comp])[fault].label} on ${A.bp.byId[comp].name}`, 'bad'); updateLive(); });
     on('#acBtn', 'click', () => { A.approval = { comp: $('#acComp').value, action: $('#acAction').value, name: '' }; $('#approval').innerHTML = approvalHtml(); wireApproval(); $('#apprName').focus(); });
     wireApproval();
     on('#endBtn', 'click', () => endDrill('abandoned'));

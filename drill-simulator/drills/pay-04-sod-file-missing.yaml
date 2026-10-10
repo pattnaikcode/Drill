@@ -1,0 +1,24 @@
+id: pay-sod-file-missing
+title: New customers' payments are all parked
+systems: [payments-mq]
+level: Medium
+summary: Nine in ten payments are parked for repair. Everything is up.
+brief: >
+  15:00. The customer data team changed their file export job last night.
+faults:
+  - {at: "15:05", component: customer_static, fault: file_missing}
+root_cause: {component: customer_static, fault: file_missing}
+accepted_fixes: [customer_static.request_resend, payment_engine.reprocess_rejected]
+risky_actions: [payment_engine.restart, customer_static.load_yesterday]
+hints:
+  - {after_min: 2, text: "The payment engine says it cannot find customer static. When was it last loaded?"}
+debrief:
+  what_happened: Today's customer static file never arrived, so the payment engine could not validate accounts and parked payments.
+  key_signal: >
+    "No customer static for account ... payment parked" in the payment engine log, and "expected file
+    not found" in the start-of-day load log.
+  why_not_restart: Restarting the payment engine does not bring the file. Loading yesterday's file leaves today's changes wrong.
+  runbook:
+    - Check whether today's start-of-day file arrived and loaded.
+    - Ask the sender to resend it, with approval, and confirm a full load.
+    - Reprocess the parked payments before the RTGS cut-off.
