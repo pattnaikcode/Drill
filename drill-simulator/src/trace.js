@@ -50,7 +50,27 @@
       seq: 10400 + (n * 37) % 600,                                                  // FIX MsgSeqNum (34)
       sending_time: `20261009-${S.clockStr(Math.floor(this.t), true)}.000`, // stamped by the broker as it sends // FIX SendingTime (52)
     };
-    const tr = { id: 'TRACE-' + n, journey: j, vars, step: 0, clock: this.t, sentAt: this.t, status: 'moving', reason: null, waitSince: null, where: j.steps[0].at, done: [], blocked: {}, transit: {} };
+    // resolve "role:Broker" steps and order fields to real components, so new members appear in journeys
+    const byRole = role => this.bp.components.filter(c => c.role === role);
+    const steps = j.steps.map(st => ({ ...st }));
+    const resolved = {}; // original "at" text -> chosen id
+    steps.forEach((st, i) => {
+      if (!/^role:/.test(String(st.at))) return;
+      if (resolved[st.at]) { st.at = resolved[st.at]; return; }
+      const next = steps[i + 1] && !/^role:/.test(String(steps[i + 1].at)) ? steps[i + 1].at : null;
+      const pool = byRole(String(st.at).slice(5).trim()).filter(c => !next || this.bp.edges.some(([a, b]) => a === c.id && b === next));
+      const c = pool[Math.floor(this.rand() * pool.length)];
+      resolved[st.at] = c.id; st.at = c.id;
+      if (i === 0) Object.assign(vars, { participant: c.name, session: c.session || c.id.toUpperCase(), member: vars.member && !/^role:/.test(vars.member) ? vars.member : (c.session || c.id.toUpperCase()) });
+    });
+    steps.forEach(st => { if (st.from && resolved[st.from]) st.from = resolved[st.from]; });
+    Object.entries(j.order || {}).forEach(([k, val]) => {
+      if (!/^role:/.test(String(val)) || k === 'member') return;
+      const pool = byRole(String(val).slice(5).trim()); if (!pool.length) return;
+      const c = pool[Math.floor(this.rand() * pool.length)];
+      vars[k] = c.session || c.id.toUpperCase(); vars[k + '_name'] = c.name;
+    });
+    const tr = { id: 'TRACE-' + n, journey: j, steps, vars, step: 0, clock: this.t, sentAt: this.t, status: 'moving', reason: null, waitSince: null, where: steps[0].at, done: [], blocked: {}, transit: {} };
     this.traces.unshift(tr);
     if (this.traces.length > 20) this.traces.pop();
     return tr;
@@ -143,10 +163,10 @@
   };
 
   // a step follows the previous step, or the step named in "from" (a branch, e.g. the same trade to clearing and to surveillance)
-  function parentOf(j, i) {
-    const st = j.steps[i];
+  function parentOf(steps, i) {
+    const st = steps[i];
     if (st.from === undefined) return i - 1;
-    for (let k = i - 1; k >= 0; k--) if (j.steps[k].at === st.from) return k;
+    for (let k = i - 1; k >= 0; k--) if (steps[k].at === st.from) return k;
     return i - 1;
   }
 
@@ -154,14 +174,14 @@
     if (!this.traces) return;
     this.traces.forEach(tr => {
       if (tr.status === 'done' || tr.status === 'rejected') return;
-      const steps = tr.journey.steps;
+      const steps = tr.steps;
       tr.eta = tr.eta || {}; tr.waits = tr.waits || {};
       const blocked = {}, transit = {};
       for (let pass = 0, moved = true; moved && pass < 40; pass++) {
         moved = false;
         for (let i = 0; i < steps.length; i++) {
           if (tr.done[i] || tr.status === 'rejected') continue;
-          const pi = parentOf(tr.journey, i);
+          const pi = parentOf(steps, i);
           if (pi >= 0 && !tr.done[pi]) continue;
           const st = steps[i], h = this._hop(tr, st);
           if (h.wait) { blocked[i] = h.wait; if (tr.waits[i] === undefined) tr.waits[i] = this.t; delete tr.eta[i]; continue; }

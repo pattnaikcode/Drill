@@ -24,13 +24,19 @@ business:
     - {label: "Orders waiting to match", at: matching}
     - {label: "Trades not with clearing", at: clearing, cutoff: true}
 
+# Kinds: define each kind of member once. A new broker or market maker is then one line under
+# components; it is connected to the gateway and drawn in the Members box automatically.
+kinds:
+  broker:       {type: source, role: Broker, connects_to: fix_gateway, group: Members, defaults: {rate_per_min: 300}}
+  market_maker: {type: source, role: Market maker, connects_to: fix_gateway, group: Members, defaults: {rate_per_min: 450}}
+
 components:
-  # members
-  - {id: broker_a, type: source, role: Broker, name: Kestrel Securities, session: KEST01, rate_per_min: 420}
-  - {id: broker_b, type: source, role: Broker, name: Narmada Capital, session: NRMD02, rate_per_min: 300}
-  - {id: broker_c, type: source, role: Broker, name: Bluewater Broking, session: BLUW03, rate_per_min: 230}
-  - {id: mm_1, type: source, role: Market maker, name: Arcline Markets, session: ARCL11, rate_per_min: 600}
-  - {id: mm_2, type: source, role: Market maker, name: Delta Quotes, session: DLTQ12, rate_per_min: 450}
+  # members (FIX over TCP to our order entry gateway)
+  - {id: broker_a, kind: broker, name: Kestrel Securities, session: KEST01, rate_per_min: 420}
+  - {id: broker_b, kind: broker, name: Narmada Capital, session: NRMD02}
+  - {id: broker_c, kind: broker, name: Bluewater Broking, session: BLUW03, rate_per_min: 230}
+  - {id: mm_1, kind: market_maker, name: Arcline Markets, session: ARCL11, rate_per_min: 600}
+  - {id: mm_2, kind: market_maker, name: Delta Quotes, session: DLTQ12}
 
   # exchange trading system
   - {id: fix_gateway, type: service, role: Exchange, name: Order Entry Gateway (OEGW), capacity_per_min: 2700, instances: 3}
@@ -50,7 +56,7 @@ components:
   - {id: clearing, type: external_party, role: Clearing corporation, name: Clearing Corporation, capacity_per_min: 3600}
 
   # market surveillance: every order event and trade from matching, on its own Kafka topic
-  - {id: surv_bus, type: kafka_topic, role: "Kafka: orders and trades", name: matching.events, partitions: 8, consumer_group: surveillance}
+  - {id: surv_bus, type: kafka_topic, name: matching.events, partitions: 8, consumer_group: surveillance}
   - {id: surveillance, type: service, role: Surveillance, name: Market Surveillance, capacity_per_min: 3000, instances: 2}
 
   # market data and drop copy
@@ -59,11 +65,7 @@ components:
   - {id: drop_copy, type: service, role: Exchange, name: Drop Copy Service, capacity_per_min: 3000, instances: 2}
 
 flow:
-  - broker_a -> fix_gateway
-  - broker_b -> fix_gateway
-  - broker_c -> fix_gateway
-  - mm_1 -> fix_gateway
-  - mm_2 -> fix_gateway
+  # members connect through their kind (connects_to: fix_gateway)
   - fix_gateway -> risk -> matching -> trade_bus -> clearing_feed -> clearing
   - matching -> md_publisher -> md_vendors
   - matching -> drop_copy
@@ -79,30 +81,31 @@ tables:
 
 journeys:
   - id: filled
-    name: Buy order fully filled
-    order: {member: KEST01, symbol: KONSTL, side: BUY, qty: 100, price: 1203.40}
+    name: Buy order fully filled against a market maker's quote
+    # role: picks a real member each time, so brokers and market makers added later appear here too
+    order: {symbol: KONSTL, side: BUY, qty: 100, price: 1203.40, counterparty: "role:Market maker"}
     steps:
-      - at: broker_a
-        does: "Kestrel's own pre-trade risk system (RMS) has already checked the client's margin, credit limit and order size. Kestrel's FIX engine, connected to our OEGW over a TCP session (KEST01), then sends a NewOrderSingle (35=D): buy (54=1) 100 (38) KONSTL (55) limit (40=2) at 1203.40 (44), good for the day (59=0)."
-        message: "8=FIX.4.4|35=D|49=KEST01|56=OEGW|34={seq}|52={sending_time}|11={clordid}|55=KONSTL|54=1|38=100|40=2|44=1203.40|59=0|10=128|"
+      - at: "role:Broker"
+        does: "{participant}'s own pre-trade risk system (RMS) has already checked the client's margin, credit limit and order size. Its FIX engine, connected to our OEGW over TCP session {session}, then sends a NewOrderSingle (35=D): buy (54=1) 100 (38) KONSTL (55) limit (40=2) at 1203.40 (44), good for the day (59=0)."
+        message: "8=FIX.4.4|35=D|49={session}|56=OEGW|34={seq}|52={sending_time}|11={clordid}|55=KONSTL|54=1|38=100|40=2|44=1203.40|59=0|10=128|"
       - at: fix_gateway
-        does: "OEGW checks the TCP session is logged on (35=A done at start of day), MsgSeqNum 34={seq} is the next expected number, and Kestrel is within its message throttle. Assigns exchange order id {order_id} and acknowledges with an ExecutionReport (35=8) pending new."
-        message: "8=FIX.4.4|35=8|49=OEGW|56=KEST01|11={clordid}|37={order_id}|17={exec_id}|150=A|39=A|55=KONSTL|54=1|38=100|44=1203.40|"
+        does: "OEGW checks the TCP session is logged on (35=A at start of day), MsgSeqNum 34={seq} is the next expected number, and {participant} is within its message throttle. Assigns exchange order id {order_id} and acknowledges with an ExecutionReport (35=8) pending new."
+        message: "8=FIX.4.4|35=8|49=OEGW|56={session}|11={clordid}|37={order_id}|17={exec_id}|150=A|39=A|55=KONSTL|54=1|38=100|44=1203.40|"
         writes: ["orders: insert status=PENDING_NEW filled_qty=0"]
       - at: risk
         does: "Order validation checks KONSTL is tradable, the price is inside today's band from the instrument master (1083.06 to 1323.74), and tick and lot size are valid. Client risk was the broker's job, before sending."
-        message: "8=FIX.4.4|35=8|49=OEGW|56=KEST01|11={clordid}|37={order_id}|150=0|39=0|  (new: order accepted onto the book)"
+        message: "8=FIX.4.4|35=8|49=OEGW|56={session}|11={clordid}|37={order_id}|150=0|39=0|  (new: order accepted onto the book)"
         writes: ["orders: update status=NEW"]
       - at: matching
-        does: "The validated order reaches the matching engine. Arcline Markets (market maker) is quoting KONSTL 1203.10 bid / 1203.40 offer for 250. The matching rules (price, then time priority) match Kestrel's buy at 1203.40 against that quote: 100 trade at 1203.40 with trade id {trade_id}. The fill, with the trade id in tag 880 (TrdMatchID), goes back to Kestrel as an ExecutionReport."
-        message: "8=FIX.4.4|35=8|49=OEGW|56=KEST01|11={clordid}|37={order_id}|150=F|39=2|32=100|31=1203.40|14=100|151=0|880={trade_id}|  (sent back to Kestrel over its TCP session via OEGW; Arcline gets its own 35=8 for its side)"
-        writes: ["orders: update status=FILLED filled_qty=100", "trades: insert counterparty=ARCL11 clearing_status=PENDING"]
+        does: "The validated order reaches the matching engine. {counterparty_name} (market maker) is quoting KONSTL 1203.10 bid / 1203.40 offer for 250. The matching rules (price, then time priority) match {participant}'s buy at 1203.40 against that quote: 100 trade at 1203.40 with trade id {trade_id}. The fill, with the trade id in tag 880 (TrdMatchID), goes back to {participant} as an ExecutionReport."
+        message: "8=FIX.4.4|35=8|49=OEGW|56={session}|11={clordid}|37={order_id}|150=F|39=2|32=100|31=1203.40|14=100|151=0|880={trade_id}|  (sent back over its TCP session via OEGW; {counterparty_name} gets its own 35=8 for its side)"
+        writes: ["orders: update status=FILLED filled_qty=100", "trades: insert counterparty={counterparty} clearing_status=PENDING"]
       - at: trade_bus
         does: "Matching publishes the trade to Kafka, keyed by symbol so every KONSTL trade stays in order on one partition."
         message: "Kafka trades.matched | partition {partition} offset {offset} key=KONSTL value={trade_id}"
       - at: clearing_feed
         does: "Consumes the trade and converts it to the clearing corporation's trade report format."
-        message: "Trade report {trade_id}: BUY 100 KONSTL @ 1203.40, KEST01 vs ARCL11"
+        message: "Trade report {trade_id}: BUY 100 KONSTL @ 1203.40, {session} vs {counterparty}"
       - at: clearing
         does: "The clearing corporation accepts the trade and becomes the counterparty to both sides for settlement."
         writes: ["trades: update clearing_status=ACCEPTED"]
@@ -112,14 +115,13 @@ journeys:
         message: "Kafka matching.events | partition {partition} offset {offset} key=KONSTL | ORDER_NEW {order_id} BUY 100 @ 1203.40 · TRADE {trade_id} 100 @ 1203.40 · ORDER_FILLED {order_id}"
       - at: surveillance
         does: "Market surveillance consumes the order events and the trade, and runs its alert rules (for example wash trades, spoofing, layering, unusual price moves)."
-        message: "Surveillance: order {order_id} KEST01 and trade {trade_id} KEST01 vs ARCL11, KONSTL 100 @ 1203.40, checked"
+        message: "Surveillance: order {order_id} {session} and trade {trade_id} {session} vs {counterparty}, KONSTL 100 @ 1203.40, checked"
       - at: md_publisher
         from: matching
         does: "The market data adaptor receives the book change and the trade from matching."
         message: "Book update KONSTL: offer 1203.40 x 150 (was 250) · last trade 100 @ 1203.40"
       - at: md_vendors
         does: "Vendors and brokers' screens show the new best offer and the last traded price."
-
 
   - id: rejected
     name: Order rejected by the venue's price band
@@ -209,7 +211,6 @@ diagram:
     The matching engine sends its output to every downstream: trades to clearing, book updates to the market
     data adaptor, fills to drop copy, and every order event and trade to surveillance.
   groups:
-    - {label: "Members", ids: [broker_a, broker_b, broker_c, mm_1, mm_2]}
     - {label: "Exchange trading system", ids: [fix_gateway, risk, matching, instrument_master, orderbook_db]}
     - {label: "Listed companies (issuers)", ids: [issuer_1, issuer_2, issuer_3]}
     - {label: "Post-trade", ids: [trade_bus, clearing_feed, clearing]}

@@ -54,6 +54,23 @@ Components with the same `host:` run on one server and share it: a full disk or 
 
 Rebooting a host or failing over to DR fixes some host faults but takes the component away for four to five minutes; restarting the application fixes none of them.
 
+## Kinds: add a component in one line
+
+Define each kind of component once, and each new one is a single line. It is connected and placed in its diagram group automatically:
+
+```yaml
+kinds:
+  broker:       {type: source, role: Broker, connects_to: fix_gateway, group: Members, defaults: {rate_per_min: 300}}
+  market_maker: {type: source, role: Market maker, connects_to: fix_gateway, group: Members, defaults: {rate_per_min: 450}}
+
+components:
+  - {id: mm_1, kind: market_maker, name: Arcline Markets, session: ARCL11, rate_per_min: 600}
+  - {id: mm_3, kind: market_maker, name: Ganga Liquidity, session: GNGA13}     # new: nothing else to edit
+  - {id: "mm_x{n}", kind: market_maker, count: 3}                             # or several at once
+```
+
+A kind can set `type`, `role`, `connects_to`, `connects_from`, `group`, `uses`, `defaults`, and templates for `name` and `session` (`{id}`, `{ID}`, `{n}`). Values on the component line win over the kind's. Diagram groups can also list `roles: [Broker, Market maker]` instead of ids. Journeys can use `at: "role:Broker"` and order fields like `counterparty: "role:Market maker"`, so a new member appears in traced orders too. The exchange is written this way.
+
 ## Follow an order
 
 The **Follow an order** tool sends one order through the live system and shows it hop by hop: the raw FIX message at each step (with `|` for the SOH separator), what each component does with it, and the database rows it writes. The exchange has four journeys: fully filled against a market maker's quote, stopped by the broker's own risk checks (it never reaches the venue), rejected by the venue's price band, and partly filled with the rest left on the book. Client risk (margin, limits, fat-finger checks) sits with the broker; the venue only validates the order (tradable instrument, price band, tick and lot size). Rows land in `orders` and `trades` on the Order Book Store, so you can query them in the Database tab.
@@ -218,7 +235,7 @@ debrief:
 | `src/builder.js`, `src/builder.template.html` | System Builder: forms that write and validate blueprint YAML. |
 | `src/style.css`, `src/index.template.html` | Page design and layout. |
 | `build.py` | Bundles everything, including the YAML files, into `dist/index.html` (participant page), `dist/admin.html` (instructor page) and `dist/builder.html` (System Builder). |
-| `tests/*.test.js` | 217 automated tests (Node's built-in runner). |
+| `tests/*.test.js` | 218 automated tests (Node's built-in runner). |
 | `vendor/js-yaml.min.js` | YAML parser (MIT licence, see `vendor/js-yaml.LICENSE`). |
 
 ## Develop

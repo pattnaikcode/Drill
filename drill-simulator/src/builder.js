@@ -76,7 +76,8 @@
     const b = blank();
     const cl = raw.clock || {}, bz = raw.business || {};
     Object.assign(b.meta, { id: raw.id || 'my-system', system: raw.system || '', description: (raw.description || '').trim(), start: cl.start || '09:15', cutoff: cl.cutoff || '10:45', cutoff_label: cl.cutoff_label || 'Cut-off', currency: bz.currency || '₹', unit: bz.unit || 'Cr', unit_name: bz.unit_name || 'orders', avg_notional: bz.avg_notional ?? 0.05 });
-    b.comps = (raw.components || []).map(c => ({ ...c }));
+    const kinds = raw.kinds || {};
+    b.comps = (raw.components || []).map(c => (c && c.kind && !c.type && kinds[c.kind] ? { ...c, type: kinds[c.kind].type, ...(c.role || !kinds[c.kind].role ? {} : { role: kinds[c.kind].role }) } : { ...c }));
     (raw.flow || []).forEach(line => { const p = String(line).split('->').map(s => s.trim()).filter(Boolean); for (let i = 0; i < p.length - 1; i++) b.flows.push([p[i], p[i + 1]]); });
     b.kpis = (bz.kpis || []).map(k => ({ label: k.label, at: k.at, cutoff: !!k.cutoff }));
     b.alerts = (raw.alerts || []).map(a => ({ name: a.name, on: a.on, metric: a.metric, dir: typeof a.below === 'number' ? 'below' : 'above', value: typeof a.below === 'number' ? a.below : a.above, severity: a.severity || 'P3' }));
@@ -84,7 +85,7 @@
     b.groups = (dg.groups || []).map(g => ({ label: g.label, ids: [...(g.ids || [])] }));
     b.steps = (dg.steps || []).map(s => ({ ...s }));
     b.place = { ...(dg.place || {}) }; b.notes = (dg.notes || '').trim();
-    ['tables', 'journeys'].forEach(k => { if (raw[k]) b.extra[k] = raw[k]; }); // no forms for these yet: kept exactly as written
+    ['kinds', 'tables', 'journeys'].forEach(k => { if (raw[k]) b.extra[k] = raw[k]; }); // no forms for these yet: kept exactly as written
     return b;
   }
 
@@ -100,7 +101,7 @@
     return '{' + Object.entries(obj).filter(([, v]) => v !== '' && v !== undefined && v !== null && !(Array.isArray(v) && !v.length))
       .map(([k, v]) => `${k}: ${Array.isArray(v) ? '[' + v.map(q).join(', ') + ']' : v && typeof v === 'object' ? inline(v) : q(v)}`).join(', ') + '}';
   }
-  const BASE_KEYS = ['id', 'type', 'name', 'role'];
+  const BASE_KEYS = ['id', 'type', 'name', 'role'];  // "kind" and "count" are kept like other settings
   function extraKeys(c) { return Object.keys(c).filter(k => !BASE_KEYS.includes(k) && !FIELDS[c.type].some(f => f.k === k) && c[k] !== undefined && c[k] !== ''); }
   function chains(edges) { // join a->b, b->c into a -> b -> c where nothing else branches
     const out = {}, inn = {};
@@ -149,7 +150,7 @@
     }
     const extra = Object.entries(B.extra || {}).filter(([, v]) => v && (Array.isArray(v) ? v.length : Object.keys(v).length));
     if (extra.length) {
-      L.push('', '# Follow an order: tables written by traced orders and the journeys they follow (kept from your YAML).');
+      L.push('', '# Kinds, and follow-an-order tables and journeys (kept from your YAML).');
       extra.forEach(([k, v]) => L.push(yaml.dump({ [k]: v }, { lineWidth: 110, flowLevel: k === 'tables' ? 2 : 4 }).trimEnd()));
     }
     return L.join('\n') + '\n';

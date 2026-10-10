@@ -200,8 +200,58 @@
     return validateBlueprint(bp);
   }
 
-  function validateBlueprint(bp) {
-    const errors = [];
+  // ---------------------------------------------------------------- kinds: define a kind of component once, add each one in a line
+  //   kinds:
+  //     market_maker: {type: source, role: Market maker, connects_to: fix_gateway, group: Members,
+  //                    session: "{ID}", defaults: {rate_per_min: 400}}
+  //   components:
+  //     - {id: mm_3, kind: market_maker, name: Ganga Liquidity}          # wired and grouped automatically
+  //     - {id: "mm_{n}", kind: market_maker, count: 3}                    # or several at once
+  // Expansion happens before validation, so everything else sees ordinary components and flow lines.
+  const KIND_KEYS = ['type', 'role', 'connects_to', 'connects_from', 'group', 'session', 'name', 'defaults', 'uses', 'description'];
+  function expandKinds(bp) {
+    const errors = [], kinds = bp.kinds && typeof bp.kinds === 'object' && !Array.isArray(bp.kinds) ? bp.kinds : null;
+    if (bp.kinds !== undefined && !kinds) return { bp, errors: ['"kinds" must map kind names to their settings.'] };
+    const usesKinds = (bp.components || []).some(c => c && c.kind !== undefined);
+    if (!kinds && !usesKinds) return { bp, errors };
+    const out = { ...bp, components: [], flow: [...(Array.isArray(bp.flow) ? bp.flow : [])], diagram: { ...(bp.diagram || {}) } };
+    const groups = (out.diagram.groups || []).map(g => ({ ...g, ids: [...(g.ids || [])] }));
+    const tpl = (t, id, n) => String(t).replace(/\{id\}/g, id).replace(/\{ID\}/g, id.toUpperCase()).replace(/\{n\}/g, n);
+    Object.entries(kinds || {}).forEach(([k, d]) => {
+      if (!d || typeof d !== 'object') { errors.push(`kinds.${k}: must be a map of settings.`); return; }
+      if (!TYPES[d.type]) errors.push(`kinds.${k}: "type" must be one of ${Object.keys(TYPES).join(', ')}.`);
+      Object.keys(d).forEach(x => { if (!KIND_KEYS.includes(x)) errors.push(`kinds.${k}: unknown setting "${x}" (allowed: ${KIND_KEYS.join(', ')}).`); });
+    });
+    const perKind = {};
+    (bp.components || []).forEach((c, i) => {
+      if (!c || c.kind === undefined) { out.components.push(c); return; }
+      const d = kinds && kinds[c.kind];
+      if (!d) { errors.push(`components[${i}]: unknown kind "${c.kind}"${kinds ? '. Known kinds: ' + Object.keys(kinds).join(', ') : ' (add a "kinds" section)'}.`); return; }
+      const count = c.count === undefined ? 1 : c.count;
+      if (!(Number.isInteger(count) && count > 0 && count <= 50)) { errors.push(`components[${i}]: "count" must be a whole number from 1 to 50.`); return; }
+      if (count > 1 && !/\{n\}/.test(String(c.id || ''))) { errors.push(`components[${i}]: with "count", the id needs {n}, for example "mm_{n}".`); return; }
+      for (let j = 1; j <= count; j++) {
+        const n = (perKind[c.kind] = (perKind[c.kind] || 0) + 1);
+        const id = c.id !== undefined ? tpl(c.id, '', count > 1 ? j : n) : `${c.kind}_${n}`;
+        const { kind, count: _c, ...own } = c;
+        const comp = { ...(d.defaults || {}), id, type: d.type, ...(d.role ? { role: d.role } : {}), ...(d.uses ? { uses: [...d.uses] } : {}), ...own, id };
+        if (comp.name === undefined) comp.name = tpl(d.name || `${d.role || kind} {n}`, id, n);
+        if (comp.session === undefined && d.session) comp.session = tpl(d.session, id, n);
+        comp.kind = kind;
+        out.components.push(comp);
+        [].concat(d.connects_to || []).forEach(t => out.flow.push(`${id} -> ${t}`));
+        [].concat(d.connects_from || []).forEach(f => out.flow.push(`${f} -> ${id}`));
+        if (d.group) { let g = groups.find(x => x.label === d.group); if (!g) groups.push(g = { label: d.group, ids: [] }); if (!g.ids.includes(id)) g.ids.push(id); }
+      }
+    });
+    if (groups.length) out.diagram.groups = groups;
+    return { bp: out, errors };
+  }
+
+  function validateBlueprint(input) {
+    const ex = expandKinds(input || {});
+    const bp = ex.bp;
+    const errors = [...ex.errors];
     const comps = Array.isArray(bp.components) ? bp.components : [];
     if (!bp.system) errors.push('Missing "system" (the system name).');
     if (!comps.length) errors.push('Missing "components" list.');
@@ -323,7 +373,12 @@
     const dg = bp.diagram || {};
     const linked = (a, b) => edgeSet.has(a + '>' + b) || (ids.get(a) && (ids.get(a).uses || []).includes(b)) || (ids.get(a) && ids.get(a).feeds === b);
     (Array.isArray(dg.groups) ? dg.groups : []).forEach((g, i) => {
-      if (!g || !g.label || !Array.isArray(g.ids)) { errors.push(`diagram.groups[${i}]: needs "label" and a list of "ids".`); return; }
+      if (g && Array.isArray(g.roles)) { // a group by role picks up every component with that role, including new ones
+        const add = comps.filter(c => c && g.roles.includes(c.role)).map(c => c.id);
+        if (!add.length) errors.push(`diagram.groups[${i}] (${g.label}): no component has role ${g.roles.join(' or ')}.`);
+        g.ids = [...new Set([...(g.ids || []), ...add])];
+      }
+      if (!g || !g.label || !Array.isArray(g.ids)) { errors.push(`diagram.groups[${i}]: needs "label" and a list of "ids" (or "roles").`); return; }
       g.ids.forEach(id => { if (!ids.has(id)) errors.push(`diagram.groups[${i}] (${g.label}): unknown component "${id}".`); });
     });
     (Array.isArray(dg.steps) ? dg.steps : []).forEach((s, i) => {
@@ -351,15 +406,18 @@
       if (!j.order || typeof j.order !== 'object') errors.push(`${where}: needs an "order" (the fields of the order, e.g. symbol, side, qty, price).`);
       const steps = Array.isArray(j.steps) ? j.steps : [];
       if (!steps.length) errors.push(`${where}: needs "steps".`);
+      // "at" is a component id, or "role:Broker" for any component with that role (picked when the order is sent)
+      const cands = at => /^role:/.test(String(at)) ? comps.filter(c => c && c.role === String(at).slice(5).trim()).map(c => c.id) : (ids.has(at) ? [at] : []);
       let prev = null;
       steps.forEach((st, k) => {
         const w = `${where} step ${k + 1}`;
-        const c = st && ids.get(st.at);
-        if (!c) { errors.push(`${w}: "at" must be a component id.`); return; }
+        const here = st ? cands(st.at) : [];
+        if (!here.length) { errors.push(`${w}: "at" must be a component id or role:<a role used by some component>.`); return; }
+        const c = ids.get(here[0]);
         if (!TYPES[c.type] || !TYPES[c.type].flow) { errors.push(`${w}: ${st.at} is not in the flow; record its work as "writes" on the step that uses it.`); return; }
-        if (st.from !== undefined && !steps.slice(0, k).some(x => x && x.at === st.from)) errors.push(`${w}: "from: ${st.from}" must name an earlier step's component (it starts a branch from there).`);
+        if (st.from !== undefined && !steps.slice(0, k).some(x => x && x.at === st.from)) errors.push(`${w}: "from: ${st.from}" must name an earlier step's "at" (it starts a branch from there).`);
         const parent = st.from !== undefined ? st.from : prev;
-        if (parent && !edgeSet.has(parent + '>' + st.at)) errors.push(`${w}: ${parent} does not send to ${st.at} in the flow.`);
+        if (parent && !cands(parent).some(a => here.some(b => edgeSet.has(a + '>' + b)))) errors.push(`${w}: ${parent} does not send to ${st.at} in the flow.`);
         prev = st.at;
         (st.writes || []).forEach(x => {
           const m = WRITE.exec(String(x));

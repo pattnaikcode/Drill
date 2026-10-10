@@ -127,7 +127,13 @@
     bp.order.forEach(id => { layer[id] = Math.max(-1, ...bp.ups[id].map(u => layer[u])) + 1; });
     let maxFlowRow = 0;
     bp.order.forEach(id => {
-      if (place[id]) { cr[id] = place[id]; } else { const col = layer[id]; const row = rowsUsed[col] || 0; rowsUsed[col] = row + 1; cr[id] = [col, row]; }
+      if (place[id]) { cr[id] = place[id]; } else {
+        const col = layer[id];
+        const taken = Object.values(place).filter(([c]) => Math.abs(c - col) < 0.5).map(([, r]) => r); // rows used by placed components in this column
+        let row = rowsUsed[col] !== undefined ? rowsUsed[col] : 0;
+        while (taken.some(r => Math.abs(r - row) < 0.9)) row++;
+        rowsUsed[col] = row + 1; cr[id] = [col, row];
+      }
       maxFlowRow = Math.max(maxFlowRow, cr[id][1]);
     });
     bp.components.filter(c => c.type === 'service').forEach(svc => {
@@ -316,7 +322,7 @@
     const name = id => A.bp.byId[id] ? A.bp.byId[id].name : id;
     const list = trs.length > 1 ? `<div class="chips">${trs.slice(0, 8).map(t => `<button type="button" class="chip" data-trace="${t.id}" aria-pressed="${t === tr}">${esc(t.vars.order_id)} · ${esc(t.journey.name.split(' ').slice(0, 3).join(' '))} · ${t.status === 'done' ? 'done' : t.status === 'rejected' ? 'rejected' : t.status === 'waiting' ? 'stuck' : '…'}</button>`).join('')}</div>` : '';
     const o = tr.vars;
-    const steps = tr.journey.steps.map((st, i) => {
+    const steps = (tr.steps || tr.journey.steps).map((st, i) => {
       const d = tr.done[i];
       if (d) return `<li class="tstep ${d.rejected ? 'rej' : 'ok'}"><div class="row between"><b>${esc(name(st.at))}${st.from ? `<span class="small muted"> (branch from ${esc(name(st.from))})</span>` : ''}</b><span class="mono small muted">${esc(sim.traceStamp(d.t))}</span></div>
         <div class="small">${esc(d.does)}</div>${d.message ? `<div class="mono small tmsg">${esc(d.message)}</div>` : ''}

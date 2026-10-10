@@ -53,9 +53,23 @@ test('faults stop the order where the problem is', () => {
   r = run(['surv_bus', 'poison_message', { partition: p }]);
   assert.strictEqual(r.at, 'surv_bus'); assert.ok(r.tr.done.some(d => d && d.at === 'clearing'), 'clearing is unaffected by a stuck surveillance consumer');
   r = run(['fix_gateway', 'clock_skew']);
-  assert.strictEqual(r.at, 'broker_a'); assert.match(r.tr.reason, /SendingTime/);
+  assert.strictEqual(r.sim.bp.byId[r.at].role, 'Broker', 'stuck at whichever broker sent it'); assert.match(r.tr.reason, /SendingTime/);
   const rows = T.sql(r.sim, 'orderbook_db', 'SELECT * FROM orders').rows;
   assert.strictEqual(rows.length, 0, 'an order that never reached the gateway has no row');
+});
+
+test('kinds: a new market maker is one line, and appears in role-based journeys', () => {
+  const text = fs.readFileSync(path.join(__dirname, '../blueprints/exchange.yaml'), 'utf8').replace(
+    '  - {id: mm_2, kind: market_maker, name: Delta Quotes, session: DLTQ12}',
+    '  - {id: mm_2, kind: market_maker, name: Delta Quotes, session: DLTQ12}\n  - {id: mm_3, kind: market_maker, name: Ganga Liquidity, session: GNGA13}');
+  const r = S.parseBlueprint(text, yaml);
+  assert.deepStrictEqual(r.errors, []);
+  assert.ok(r.blueprint.ups.fix_gateway.includes('mm_3'), 'connected to the gateway by its kind');
+  assert.ok(r.blueprint.diagram.groups.find(g => g.label === 'Members').ids.includes('mm_3'), 'drawn in the Members box');
+  const sim = new S.Simulator(r.blueprint, { seed: 9 });
+  const names = new Set(); for (let k = 0; k < 20; k++) { names.add(sim.sendOrder('filled').vars.counterparty_name); sim.step(5); }
+  assert.ok(names.has('Ganga Liquidity'), 'the new market maker is picked as a counterparty');
+  assert.match(S.parseBlueprint(text.replace('kind: market_maker, name: Ganga', 'kind: market_makr, name: Ganga'), yaml).errors.join(), /unknown kind "market_makr"/);
 });
 
 test("the broker's own risk checks stop an order before the venue sees it", () => {
