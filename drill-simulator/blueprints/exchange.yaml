@@ -49,12 +49,12 @@ components:
   - {id: clearing_feed, type: service, role: Exchange, name: Clearing Feed Adapter, capacity_per_min: 2600, instances: 2}
   - {id: clearing, type: external_party, role: Clearing corporation, name: Clearing Corporation, capacity_per_min: 3600}
 
-  # market surveillance: a second consumer group reading the same trades from Kafka
-  - {id: surv_bus, type: kafka_topic, role: "Kafka: surveillance group", name: trades.matched, partitions: 8, consumer_group: surveillance}
+  # market surveillance: every order event and trade from matching, on its own Kafka topic
+  - {id: surv_bus, type: kafka_topic, role: "Kafka: orders and trades", name: matching.events, partitions: 8, consumer_group: surveillance}
   - {id: surveillance, type: service, role: Surveillance, name: Market Surveillance, capacity_per_min: 3000, instances: 2}
 
   # market data and drop copy
-  - {id: md_publisher, type: service, role: Exchange, name: Market Data Publisher, capacity_per_min: 3000, instances: 2}
+  - {id: md_publisher, type: service, role: Exchange, name: Market Data Adaptor, capacity_per_min: 3000, instances: 2}
   - {id: md_vendors, type: external_party, role: Subscribers, name: Market Data Vendors, capacity_per_min: 3200}
   - {id: drop_copy, type: service, role: Exchange, name: Drop Copy Service, capacity_per_min: 3000, instances: 2}
 
@@ -108,11 +108,17 @@ journeys:
         writes: ["trades: update clearing_status=ACCEPTED"]
       - at: surv_bus
         from: matching
-        does: "The same trade on trades.matched is read by the surveillance consumer group, independently of clearing."
-        message: "Kafka trades.matched | group surveillance | partition {partition} offset {offset} key=KONSTL value={trade_id}"
+        does: "Matching publishes the order's events and the trade to matching.events for surveillance: the order arriving, then its fill."
+        message: "Kafka matching.events | partition {partition} offset {offset} key=KONSTL | ORDER_NEW {order_id} BUY 100 @ 1203.40 · TRADE {trade_id} 100 @ 1203.40 · ORDER_FILLED {order_id}"
       - at: surveillance
-        does: "Market surveillance consumes the trade and the order behind it and runs its alert rules (for example wash trades, spoofing, unusual price moves)."
-        message: "Surveillance event: trade {trade_id}, order {order_id}, KEST01 vs ARCL11, KONSTL 100 @ 1203.40"
+        does: "Market surveillance consumes the order events and the trade, and runs its alert rules (for example wash trades, spoofing, layering, unusual price moves)."
+        message: "Surveillance: order {order_id} KEST01 and trade {trade_id} KEST01 vs ARCL11, KONSTL 100 @ 1203.40, checked"
+      - at: md_publisher
+        from: matching
+        does: "The market data adaptor receives the book change and the trade from matching."
+        message: "Book update KONSTL: offer 1203.40 x 150 (was 250) · last trade 100 @ 1203.40"
+      - at: md_vendors
+        does: "Vendors and brokers' screens show the new best offer and the last traded price."
 
 
   - id: rejected
@@ -161,11 +167,17 @@ journeys:
         writes: ["trades: update clearing_status=ACCEPTED"]
       - at: surv_bus
         from: matching
-        does: "The trade is also read by the surveillance consumer group."
-        message: "Kafka trades.matched | group surveillance | partition {partition} offset {offset} key=CHLKFD value={trade_id}"
+        does: "Matching publishes the order's events and the trade to matching.events for surveillance."
+        message: "Kafka matching.events | partition {partition} offset {offset} key=CHLKFD | ORDER_NEW {order_id} SELL 1000 @ 286.10 · TRADE {trade_id} 600 @ 286.10 · ORDER_PARTIALLY_FILLED {order_id} leaves 400"
       - at: surveillance
-        does: "Surveillance runs its alert rules on the trade; the resting 400 is watched as an open order."
-        message: "Surveillance event: trade {trade_id}, order {order_id}, BLUW03 vs DLTQ12, CHLKFD 600 @ 286.10"
+        does: "Surveillance runs its alert rules on the order and the trade; the resting 400 stays under watch as an open order (orders that never trade matter for spoofing and layering)."
+        message: "Surveillance: order {order_id} BLUW03 (400 open) and trade {trade_id} BLUW03 vs DLTQ12, CHLKFD 600 @ 286.10"
+      - at: md_publisher
+        from: matching
+        does: "The market data adaptor receives the book change and the trade."
+        message: "Book update CHLKFD: bid 286.10 removed · offer 286.10 x 400 (Bluewater's rest) · last trade 600 @ 286.10"
+      - at: md_vendors
+        does: "Screens show the new best offer and the last traded price."
 
 
 alerts:
@@ -183,7 +195,8 @@ diagram:
   notes: >
     Members cannot see inside the exchange, and the exchange cannot see inside members or issuers.
     Support works from the exchange's own gateway, risk, matching and post-trade signals.
-    trades.matched is drawn twice because each consumer group (clearing feed, surveillance) has its own offsets and lag.
+    The matching engine sends its output to every downstream: trades to clearing, book updates to the market
+    data adaptor, fills to drop copy, and every order event and trade to surveillance.
   groups:
     - {label: "Members", ids: [broker_a, broker_b, broker_c, mm_1, mm_2]}
     - {label: "Exchange trading system", ids: [fix_gateway, risk, matching, instrument_master, orderbook_db]}
@@ -225,4 +238,4 @@ diagram:
     - {from: clearing_feed, to: clearing, text: "Trades are submitted to the clearing corporation before the 15:30 clearing cut-off."}
     - {from: matching, to: md_publisher, text: "Prices and depth are broadcast to market data vendors."}
     - {from: matching, to: drop_copy, text: "Drop copies of every fill go back to members' risk systems."}
-    - {from: matching, to: surv_bus, text: "The same trades are read from Kafka by the surveillance system's own consumer group, so surveillance lag never slows clearing."}
+    - {from: matching, to: surv_bus, text: "Every order event (new, filled, partly filled, resting) and every trade goes to surveillance on its own Kafka topic, so surveillance lag never slows clearing."}
