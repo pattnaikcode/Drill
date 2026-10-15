@@ -868,6 +868,8 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
     opts = opts || {};
     this.bp = bp;
     this.rand = rng(opts.seed || 42);
+    // the business day the run is on: today unless a test pins it (opts.simDay, UTC midnight ms)
+    this.simDay = opts.simDay !== undefined ? opts.simDay : istToday();
     this.t = bp.start - 30 * 60;       // warm up for 30 simulated minutes
     this.alerts = []; this.alertSeq = 1000; this.events = [];
     this.history = { t: [] }; this.lastSample = -Infinity;
@@ -1216,9 +1218,10 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
   // placeholders a pack can use in log lines, messages and shell output
   // the business day the simulator runs on. Dates in files, logs and the shell come from it, so a file
   // named for "yesterday" or an archive of earlier days always fits the day being investigated.
-  const SIM_DAY = Date.UTC(2026, 9, 9);
+  // today's date in India time (the banks' business day), as UTC midnight so date maths stays simple
+  const istToday = () => { const d = new Date(Date.now() + 5.5 * 3600000); return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()); };
   const ymd = d => d.toISOString().slice(0, 10).replace(/-/g, '');
-  Simulator.prototype.businessDay = function (back) { return new Date(SIM_DAY - (back || 0) * 86400000); };
+  Simulator.prototype.businessDay = function (back) { return new Date(this.simDay - (back || 0) * 86400000); };
   Simulator.prototype.businessDate = function (back) { return ymd(this.businessDay(back)); };
   Simulator.prototype.packVars = function (s) {
     const d = s.def, P = packTypeOf(d) || {}, down = s.downs && s.downs[0] ? this.c[s.downs[0]] : null;

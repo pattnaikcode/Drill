@@ -11,7 +11,7 @@ const dir = p => path.join(__dirname, '..', p);
 fs.readdirSync(dir('packs')).filter(f => f.endsWith('.yaml')).forEach(f => S.registerPack(yaml.load(fs.readFileSync(dir('packs/' + f), 'utf8'))));
 function load() {
   const bp = S.parseBlueprint(fs.readFileSync(dir('examples/payments-mq.yaml'), 'utf8'), yaml).blueprint;
-  const sim = new S.Simulator(bp, { seed: 1 });
+  const sim = new S.Simulator(bp, { seed: 1, simDay: Date.UTC(2026, 9, 9) }); // pinned so the dates in the assertions hold
   for (let i = 0; i < 20; i++) sim.step(5);
   const sod = Object.values(sim.c).find(x => x.def.pack_type === 'sod_file_load');
   return { sim, sod, host: T.hostOf(sim, sod.def.id) };
