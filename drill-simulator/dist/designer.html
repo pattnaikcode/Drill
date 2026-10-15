@@ -1221,11 +1221,17 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
     });
   };
   // placeholders a pack can use in log lines, messages and shell output
+  // the business day the simulator runs on. Dates in files, logs and the shell come from it, so a file
+  // named for "yesterday" or an archive of earlier days always fits the day being investigated.
+  const SIM_DAY = Date.UTC(2026, 9, 9);
+  const ymd = d => d.toISOString().slice(0, 10).replace(/-/g, '');
+  Simulator.prototype.businessDay = function (back) { return new Date(SIM_DAY - (back || 0) * 86400000); };
+  Simulator.prototype.businessDate = function (back) { return ymd(this.businessDay(back)); };
   Simulator.prototype.packVars = function (s) {
     const d = s.def, P = packTypeOf(d) || {}, down = s.downs && s.downs[0] ? this.c[s.downs[0]] : null;
     const v = { id: d.id, ID: d.id.toUpperCase(), name: d.name, host: d.host || `${d.id.replace(/_/g, '-')}-${d.type === 'database' ? 'db1' : d.type === 'ref_data' ? 'loader' : d.type === 'external_party' ? 'adapter' : 'node1'}`,
       peer: down ? down.def.name : 'downstream', PEER: down ? down.def.id.toUpperCase() : 'DOWNSTREAM', peerhost: down ? `${down.def.id.replace(/_/g, '-')}.prod.internal` : 'downstream.prod.internal',
-      time: clockStr(this.t, true), date: '20261009',
+      time: clockStr(this.t, true), date: this.businessDate(0),
       depth: String(Math.round(s.type === 'kafka_topic' ? (s.parts || []).reduce((a, b) => a + b, 0) : (s.inbox || 0) + (s.retry || 0))),
       backlog: fmtInt(s.type === 'kafka_topic' ? (s.parts || []).reduce((a, b) => a + b, 0) : (s.inbox || 0)), rate: fmtInt(this.rates(d.id).out_rate || 0) };
     const own = { ...(P.vars || {}), ...(d.vars || {}) };

@@ -45,3 +45,11 @@ test('ping answers for a healthy component and reports loss when its host is dow
   assert.match(T.shell(sim, host, 'ping customer_static'), /4 packets transmitted, 4 received, 0% packet loss/);
   assert.match(T.shell(sim, host, 'ping no_such_host'), /Name or service not known/);
 });
+
+test('the archive covers the last ten days, and date follows the business day', () => {
+  const { sim, host } = load();
+  const arch = T.shell(sim, host, 'ls /data/inbound/customer_static/archive');
+  assert.strictEqual(arch.match(/CUSTOMER_STATIC_\d{8}\.csv/g).length, 10);
+  assert.match(arch, /CUSTOMER_STATIC_20260929\.csv/, 'ten days back from Oct 9');
+  assert.match(T.shell(sim, host, 'date'), /^Fri Oct  9 \d\d:\d\d:\d\d IST 2026$/);
+});

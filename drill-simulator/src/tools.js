@@ -305,9 +305,10 @@
       const inbox = sim.packText(sod, '{INBOX}'), file = sim.packText(sod, '{FILE}');
       const target = (a.slice(1).find(x => !x.startsWith('-')) || '').replace(/\/+$/, '') || '.';
       const missing = !!(sod.fault && sod.fault.pack && sod.fault.pack.evidence && sod.fault.pack.evidence.ls);
-      const dayOf = f2 => f2.match(/(\d{8})\.csv$/), prev = n => { const d = new Date(Date.UTC(2026, 9, 9 - n)); return d.toISOString().slice(0, 10).replace(/-/g, ''); };
+      const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
       const base = file.replace(/\d{8}\.csv$/, ''), size = n => (2861442 - n * 13117).toLocaleString('en-US');
-      const archive = [1, 2, 3, 4, 5].map(n => `-rw-r--r-- 1 sftp sftp ${size(n)} Oct  ${9 - n} 05:3${n} ${base}${prev(n)}.csv`);
+      // the last ten business days, each file stamped with the time it arrived on its own day
+      const archive = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => { const d = sim.businessDay(n); return `-rw-r--r-- 1 sftp sftp ${size(n)} ${MON[d.getUTCMonth()]} ${String(d.getUTCDate()).padStart(2)} 05:3${n % 10} ${base}${sim.businessDate(n)}.csv`; });
       if (target === inbox + '/archive') return ['total ' + archive.length * 4, ...archive].join('\n');
       if (target === inbox && !missing) return `total 8\n-rw-r--r-- 1 sftp sftp 2,861,442 Oct  9 05:38 ${file}\ndrwxr-xr-x 2 sftp sftp 4,096 Oct  9 00:05 archive`;
       if (target === inbox.replace(/\/[^/]+$/, '') && target !== '/data') return `total 4\ndrwxr-xr-x 3 sftp sftp 4,096 Oct  9 00:05 ${inbox.split('/').pop()}`;
@@ -351,7 +352,7 @@
         'Pipes: | grep text   | tail -n 20   | head   | wc -l   | sort'].join('\n');
       case 'hostname': return H.host;
       case 'whoami': return 'support_ro';
-      case 'date': return `Fri Oct  9 ${clk(sim.t + skew, true)} IST 2026`;
+      case 'date': { const d = sim.businessDay(0), W = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'], M = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']; return `${W[d.getUTCDay()]} ${M[d.getUTCMonth()]} ${String(d.getUTCDate()).padStart(2)} ${clk(sim.t + skew, true)} IST ${d.getUTCFullYear()}`; }
       case 'uptime': { const f2 = c.type === 'service' ? sim.serviceFactor(c) : 1; const load = hf === 'cpu_runaway' ? 15.8 : +(c.type === 'service' ? 1.2 + (1 - Math.min(1, f2)) * 2.5 : 0.6).toFixed(2); return ` ${clk(sim.t + skew, true)} up 41 days,  3:12,  1 user,  load average: ${load.toFixed(2)}, ${(load * 0.9).toFixed(2)}, ${(load * 0.8).toFixed(2)}`; }
       case 'df': {
         const rows = ['Filesystem      Size  Used Avail Use% Mounted on', '/dev/nvme0n1p1   50G   21G   29G  42% /'];
