@@ -7,6 +7,7 @@ Writes:
   dist/admin.html             instructor page: design systems and use cases, inject faults, see answers live
   dist/builder.html           the System Builder (forms that write blueprint YAML)
   dist/designer.html          the drag-and-drop Designer (canvas that writes blueprint YAML)
+  dist/usecase.html           the Use Case Builder (forms that write a drill file)
   dist/artifact.html, dist/builder-artifact.html
                               the same pages without the <html>/<head>/<body> wrapper (for hosts that add their own)
 
@@ -50,7 +51,8 @@ if __name__ == "__main__":
     for template, name, role in [("src/index.template.html", "index", "participant"),
                                  ("src/index.template.html", "admin", "admin"),
                                  ("src/builder.template.html", "builder", "admin"),
-                                 ("src/designer.template.html", "designer", "admin")]:
+                                 ("src/designer.template.html", "designer", "admin"),
+                                 ("src/usecase.template.html", "usecase", "admin")]:
         body = build(template, role)
         if name == "admin":
             body = body.replace("<title>OpsPilot Drills</title>", "<title>OpsPilot Instructor</title>", 1)

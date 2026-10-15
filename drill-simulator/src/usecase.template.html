@@ -1,0 +1,50 @@
+<title>OpsPilot Use Case Builder</title>
+<meta name="description" content="Build an OpsPilot use case (drill) with forms: pick a system, add timed faults, choose the root cause and the accepted fixes. The YAML is checked as you work.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Semi+Condensed:wght@600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/*INLINE:src/style.css*/
+.ubody { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 14px; align-items: start; }
+.uout { position: sticky; top: 12px; }
+.uout pre { margin: 0; max-height: 58vh; overflow: auto; white-space: pre; background: var(--term); color: var(--term-ink); font-family: var(--mono); font-size: 12.3px; line-height: 1.5; padding: 10px; border-radius: 6px; }
+.frow { display: grid; grid-template-columns: 110px minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, 1.2fr) auto; gap: 8px; align-items: end; }
+.frow select, .frow input { width: 100%; min-width: 0; }
+.chk { display: flex; flex-direction: column; gap: 4px; max-height: 220px; overflow: auto; }
+.chk label { display: flex; gap: 6px; align-items: flex-start; font-size: 13.5px; }
+.wrap-sec { display: grid; gap: 8px; }
+.summary { font-size: 14px; color: var(--muted); margin: 4px 0 0; max-width: 80ch; }
+.pass { color: var(--ok); font-weight: 600; }
+.errs { margin: 0; padding-left: 18px; color: var(--bad); font-size: 14px; }
+@media (max-width: 860px) { .ubody { grid-template-columns: 1fr; } .uout { position: static; } .frow { grid-template-columns: 1fr 1fr; } }
+</style>
+<header class="top">
+  <div class="top-in">
+    <div class="brand"><b>OpsPilot Use Case Builder</b><span>Write a drill from forms</span></div>
+  </div>
+</header>
+<main class="wrap" style="max-width:1280px;margin:0 auto;padding:14px">
+  <p class="summary">What it does: a use case is one drill. You pick the system it runs on, schedule faults at times during
+  the shift, and say which fault is the root cause and which fixes are acceptable. The page offers only the faults and
+  actions the chosen system really has, checks the result with the same rules the drill player uses, and writes the YAML
+  to save as a file in <code>drills/</code>.</p>
+  <div id="app" class="ubody"></div>
+</main>
+<script>
+/*INLINE:vendor/js-yaml.min.js*/
+</script>
+<script>
+/*CONTENT*/
+</script>
+<script>
+/*INLINE:src/engine.js*/
+</script>
+<script>
+/*INLINE:src/session.js*/
+</script>
+<script>
+/*INLINE:src/usecase.js*/
+</script>
+<script>
+/*INLINE:src/usecase-ui.js*/
+</script>
