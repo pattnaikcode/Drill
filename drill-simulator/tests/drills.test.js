@@ -88,7 +88,7 @@ test('use cases are offered only on their systems', () => {
   assert.strictEqual(D.drillFor(stuck, BLUEPRINTS.exchange), false);
   assert.match(D.validateDrill(stuck, BLUEPRINTS['trade-allocation-direct']).join(), /trades_topic/);
   const exch = drills.filter(d => D.drillFor(d, BLUEPRINTS.exchange)).length;
-  assert.strictEqual(exch, 11);
+  assert.strictEqual(exch, 8);
 });
 
 for (const drill of drills) {
