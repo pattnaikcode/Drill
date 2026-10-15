@@ -404,11 +404,10 @@
       change(() => { B.diagram.place[sel.node] = [Math.max(0, +(c + (ev.key === 'ArrowRight' ? s : ev.key === 'ArrowLeft' ? -s : 0)).toFixed(2)), Math.max(0, +(r + (ev.key === 'ArrowDown' ? s : ev.key === 'ArrowUp' ? -s : 0)).toFixed(2))]; });
     }
   });
-  // palette: drag onto the canvas, or click to add
+  // palette: drag a box onto the canvas (a click only selects nothing)
   $('#palFilter').addEventListener('input', ev => { palFilter = ev.target.value; renderPalette(); });
   $('#palette').addEventListener('toggle', ev => { const g = ev.target.dataset && ev.target.dataset.grp; if (!g) return; if (ev.target.open) palOpen.add(g); else palOpen.delete(g); }, true);
   $('#palette').addEventListener('dragstart', ev => { const t = ev.target.closest('[data-add]'); if (t) ev.dataTransfer.setData('text/plain', t.dataset.add); });
-  $('#palette').addEventListener('click', ev => { const t = ev.target.closest('[data-add]'); if (t) addComponent(t.dataset.add); });
   wrap.addEventListener('dragover', ev => { ev.preventDefault(); wrap.classList.add('drop'); });
   wrap.addEventListener('dragleave', () => wrap.classList.remove('drop'));
   wrap.addEventListener('drop', ev => { ev.preventDefault(); wrap.classList.remove('drop'); const k = ev.dataTransfer.getData('text/plain'); if (!k) return; const p = svgPoint(ev); addComponent(k, toCell(p.x - BW / 2, p.y - BH / 2)); });
