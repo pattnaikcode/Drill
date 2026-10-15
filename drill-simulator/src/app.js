@@ -366,7 +366,7 @@
       <div id="sqlBody">${resultTable(A.sqlR)}</div>` : '<p class="muted">This system has no database.</p>';
     if (A.toolTab === 'unix') body = `<div class="row"><label class="small muted row" style="gap:6px">Host<select id="uxHost">${TL.hosts(A.sim).map(h => `<option value="${h.host}"${A.unixHost === h.host ? ' selected' : ''}>${esc(TL.hostLabel(A.sim, h))}</option>`).join('')}</select></label><span class="small muted">Read-only support account. Participants' and vendors' own servers are not reachable.</span></div>
       <div class="term" id="uxOut" style="height:300px">${A.unixOut.map(x => esc(x)).join('\n') || 'Type help to see available commands.'}</div>
-      <form class="row" id="uxForm"><span class="mono small">support_ro@${esc(A.unixHost)}:~$</span><input type="text" id="uxIn" class="mono grow" autocomplete="off" aria-label="Shell command"><button class="btn">Run</button></form>
+      <form class="row" id="uxForm"><span class="mono small" id="uxPrompt">${esc(promptOf())}</span><input type="text" id="uxIn" class="mono grow" autocomplete="off" aria-label="Shell command"><button class="btn">Run</button></form>
       <div class="chips">${unixExamples().map(q => `<button type="button" class="chip" data-ux="${esc(q)}">${esc(q)}</button>`).join('')}</div>`;
     return `<section class="panel stack"><div class="tabs2" role="tablist">${tabs.map(([k, l]) => `<button role="tab" data-tool="${k}" aria-selected="${A.toolTab === k}">${l}</button>`).join('')}</div>${body}</section>`;
   }
@@ -425,6 +425,11 @@
   }
 
   // ------------------------------------------------------------ views
+  // the shell prompt shows the folder the shell is in, as a real one does; ~ is the home folder
+  function promptOf() {
+    const dir = A.sim && A.sim.cwd && A.sim.cwd[A.unixHost];
+    return `support_ro@${A.unixHost}:${dir && dir !== '/home/support_ro' ? dir : '~'}$`;
+  }
   function renderAll() {
     document.querySelectorAll('.tabs button').forEach(b => b.setAttribute('aria-selected', String(b.dataset.tab === A.tab)));
     if (!ADMIN && A.tab === 'design') A.tab = 'drills';
@@ -698,15 +703,17 @@ debrief:
     each('[data-sql]', b => b.addEventListener('click', () => { $('#sqlQ').value = b.dataset.sql; runSql(b.dataset.sql); }));
     const runUnix = cmd => {
       if (!cmd.trim()) return;
+      if (cmd.trim() === 'clear') { A.unixOut = []; const el = $('#uxOut'); if (el) el.textContent = ''; return; }
       A.unixHist = A.unixHist || []; A.unixHistPos = null;
       if (A.unixHist[A.unixHist.length - 1] !== cmd) A.unixHist.push(cmd);
       if (A.unixHist.length > 200) A.unixHist.splice(0, A.unixHist.length - 200);
       // "history" is the shell's own: numbered commands from this session, like a real bash history
       const out = cmd.trim() === 'history' ? A.unixHist.map((h, i) => `${String(i + 1).padStart(5)}  ${h}`).join('\n') : TL.shell(A.sim, A.unixHost, cmd);
-      A.unixOut.push(`support_ro@${A.unixHost}:~$ ${cmd}`, ...(out ? [out] : []));
+      A.unixOut.push(`${promptOf().replace(/\$$/, '')}$ ${cmd}`, ...(out ? [out] : []));
       if (A.unixOut.length > 400) A.unixOut.splice(0, A.unixOut.length - 400);
       if (A.session) A.session.useTool('Shell', `${A.unixHost}$ ${cmd}`);
       const el = $('#uxOut'); el.textContent = A.unixOut.join('\n'); el.scrollTop = el.scrollHeight;
+      const pr = $('#uxPrompt'); if (pr) pr.textContent = promptOf();
     };
     on('#uxForm', 'submit', e => { e.preventDefault(); const v = $('#uxIn').value; $('#uxIn').value = ''; runUnix(v); });
     // up and down arrows walk back through this session's commands, as in a terminal; down past the newest clears the line

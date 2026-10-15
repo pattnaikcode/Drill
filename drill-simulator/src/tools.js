@@ -268,12 +268,57 @@
     return `${h.host} — ` + h.comps.map(id => `${sim.c[id].def.name} (${sim.c[id].type === 'kafka_topic' ? 'topic' : 'unit'} ${sim.c[id].type === 'kafka_topic' ? id : id + '.service'})`).join(', ');
   }
   const DENY = /^(rm|mv|cp|kill|pkill|killall|reboot|shutdown|halt|sudo|su|chmod|chown|dd|mkfs|truncate|vi|vim|nano|crontab|iptables|docker|scp|ssh)$/;
+  // the support account's home and the folders a shell can enter on a host
+  const HOME = '/home/support_ro';
+  const norm = p => '/' + p.split('/').reduce((out, x) => { if (!x || x === '.') return out; if (x === '..') out.pop(); else out.push(x); return out; }, []).join('/');
+  const resolvePath = (cwd, p) => (p === '~' || p === '' ? HOME : p.startsWith('~/') ? norm(HOME + p.slice(1)) : p.startsWith('/') ? norm(p) : norm(cwd + '/' + p));
+  function dirsOf(sim, H) {
+    const set = new Set(['/', '/home', HOME, '/var', '/var/log', '/var/log/app', '/var/log/app/archive', '/etc', '/etc/app', '/opt', '/opt/app', '/opt/app/conf', '/tmp']);
+    H.comps.forEach(x => { const d = sim.c[x].def; if (d.mount) { set.add(d.mount); set.add(d.mount.replace(/\/[^/]+$/, '') || '/'); } });
+    const sod = H.comps.map(x => sim.c[x]).find(cx => cx.def.pack_type === 'sod_file_load');
+    if (sod) { const inbox = sim.packText(sod, '{INBOX}'); ['/data', '/data/inbound', inbox, inbox + '/archive'].forEach(x => set.add(x)); }
+    return set;
+  }
   function shell(sim, host, line) {
     const H = hosts(sim).find(h => h.host === host);
     if (!H) return 'ssh: Could not resolve hostname';
     line = String(line || '').trim();
     if (!line) return '';
     const segs = line.split('|').map(s => s.trim());
+    const cwd = (sim.cwd && sim.cwd[host]) || HOME, dirs = dirsOf(sim, H);
+    const w = segs[0].split(/\s+/), cmd = w[0];
+    if (cmd === 'pwd') return cwd;
+    if (cmd === 'cd') {
+      const arg = w[1] || '~', t = resolvePath(cwd, arg);
+      if (!dirs.has(t)) return `bash: cd: ${arg}: No such file or directory`;
+      sim.cwd = sim.cwd || {}; sim.cwd[host] = t; return '';
+    }
+    if (cmd === 'echo') return w.slice(1).join(' ').replace(/^['"]|['"]$/g, '');
+    if (cmd === 'id') return 'uid=1001(support_ro) gid=1001(support_ro) groups=1001(support_ro)';
+    // file arguments are read from the current folder when they are not absolute
+    const isOpt = x => x.startsWith('-') || /^\d+$/.test(x);
+    const fileIdx = cmd === 'grep' ? (w.length >= 3 ? [w.length - 1] : []) : ['ls', 'cat', 'head', 'tail', 'wc', 'zcat', 'less'].includes(cmd) ? w.map((x, i) => i).slice(1).filter(i => !isOpt(w[i])) : [];
+    fileIdx.forEach(i => { w[i] = resolvePath(cwd, w[i]); });
+    if (cmd === 'ls' && w.length === 1) { if (cwd === HOME) return ''; w.push(cwd); }
+    if (cmd === 'ls' && w.length === 2 && w[1] === HOME) return '';
+    segs[0] = w.join(' ');
+    // head, wc and grep read any file on the host the same way cat does, so they work on every folder
+    const readFile = path => { const t = run(sim, H, 'cat ' + path); return /^cat: /.test(t) ? null : t; };
+    const cmdName = cmd, args = w.slice(1);
+    const logFile = args.length && args[args.length - 1].startsWith('/var/log/app/');
+    if (cmdName === 'head' || cmdName === 'wc' || (cmdName === 'tail' && !logFile) || (cmdName === 'grep' && !logFile && args.length >= 2)) {
+      const nIdx = args.findIndex(x => /^-?\d+$/.test(x) || x === '-n');
+      const file = args.filter(x => !isOpt(x)).pop() || '';
+      const pat = cmdName === 'grep' ? args.filter(x => !x.startsWith('-')).slice(0, -1).join(' ').replace(/^['"]|['"]$/g, '') : '';
+      if (cmdName !== 'grep' && !file) return `${cmdName}: missing file operand`;
+      const text = readFile(file);
+      if (text === null) return `${cmdName}: ${file}: No such file or directory`;
+      const L = text.split('\n');
+      if (cmdName === 'wc') return args.includes('-l') ? `${L.length} ${file}` : `${L.length} ${text.split(/\s+/).filter(Boolean).length} ${text.length} ${file}`;
+      if (cmdName === 'head' || cmdName === 'tail') { const n = nIdx >= 0 ? +(args[nIdx] === '-n' ? args[nIdx + 1] : args[nIdx].replace('-', '')) || 10 : 10; return (cmdName === 'head' ? L.slice(0, n) : L.slice(-n)).join('\n'); }
+      const ic = args.includes('-i'), re = new RegExp(pat.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), ic ? 'i' : '');
+      return L.filter(x => re.test(x)).join('\n');
+    }
     let out = run(sim, H, segs[0]);
     for (const p of segs.slice(1)) {
       const a = p.split(/\s+/), lines = out.split('\n');
@@ -322,10 +367,10 @@
       const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
       const base = file.replace(/\d{8}\.csv$/, ''), size = n => (2861442 - n * 13117).toLocaleString('en-US');
       // the last ten business days, each file stamped with the time it arrived on its own day
-      const archive = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => { const d = sim.businessDay(n); return `-rw-r--r-- 1 sftp sftp ${size(n)} ${MON[d.getUTCMonth()]} ${String(d.getUTCDate()).padStart(2)} 05:3${n % 10} ${base}${sim.businessDate(n)}.csv`; });
+      const archive = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].filter(n => n > 0 || !missing).map(n => { const d = sim.businessDay(n); return `-rw-r--r-- 1 sftp sftp ${size(n)} ${MON[d.getUTCMonth()]} ${String(d.getUTCDate()).padStart(2)} 05:3${n % 10} ${base}${sim.businessDate(n)}.csv`; });
       if (target === inbox + '/archive') return ['total ' + archive.length * 4, ...archive].join('\n');
       const today = sim.businessDay(0), todayStamp = MON[today.getUTCMonth()] + ' ' + String(today.getUTCDate()).padStart(2);
-      if (target === inbox && !missing) return `total 8\n-rw-r--r-- 1 sftp sftp 2,861,442 ${todayStamp} 05:38 ${file}\ndrwxr-xr-x 2 sftp sftp 4,096 ${todayStamp} 00:05 archive`;
+      if (target === inbox && !missing) return `total 4\ndrwxr-xr-x 2 sftp sftp 4,096 ${todayStamp} 00:05 archive`; // today's file was loaded at 05:38 and moved to archive/
       if (target === inbox.replace(/\/[^/]+$/, '') && target !== '/data') return `total 4\ndrwxr-xr-x 3 sftp sftp 4,096 ${todayStamp} 00:05 ${inbox.split('/').pop()}`;
       if (target === '/data') return `total 4\ndrwxr-xr-x 3 sftp sftp 4,096 ${todayStamp} 00:05 inbound`;
     }
@@ -340,6 +385,9 @@
       const ev = (cx.fault && cx.fault.pack && cx.fault.pack.evidence) || {};
       for (const k of [...Object.keys(ev), ...Object.keys(P.shell || {})]) {
         const kk = sim.packText(cx, k);
+        // a pack's own listing (e.g. the inbox) only answers for the folders it is about, not every path on the host
+        const tgt = a.slice(1).find(x => !x.startsWith('-')) || '';
+        if (kk === 'ls' && tgt.startsWith('/') && !tgt.startsWith('/data')) continue;
         if (cmd === kk || cmd.startsWith(kk + ' ')) return sim.packText(cx, ev[k] !== undefined ? ev[k] : P.shell[k]);
       }
     }
@@ -365,6 +413,8 @@
         ...(c.type === 'kafka_topic' ? [`  kafka-consumer-groups.sh --describe --group ${d.consumer_group || 'consumers'}`, '  kafka-topics.sh --describe --topic ' + d.name] : []),
         ...(c.type === 'database' ? ['  (use the Database tab for SQL)'] : []),
         ...H.comps.flatMap(x => { const P = sim.c[x].def.pack_type && S.PACK_TYPES[sim.c[x].def.pack_type]; return P ? Object.keys(P.shell || {}).map(k => '  ' + sim.packText(sim.c[x], k) + `   (${P.label || sim.c[x].def.pack_type})`) : []; }),
+        '  cd <folder>   pwd   cd ..   cd ~   echo   id   clear   history',
+        '  head -n 20 <file>   tail -n 20 <file>   wc -l <file>   grep <text> <file>   cat <file>',
         'Pipes: | grep text   | tail -n 20   | head   | wc -l   | sort'].join('\n');
       case 'hostname': return H.host;
       case 'whoami': return 'support_ro';

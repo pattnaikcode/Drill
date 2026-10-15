@@ -17,11 +17,12 @@ function load() {
   return { sim, sod, host: T.hostOf(sim, sod.def.id) };
 }
 
-test('the inbox lists today\'s file and the archive lists earlier days', () => {
+test('once loaded, today\'s file is in the archive, and the archive lists earlier days', () => {
   const { sim, host, sod } = load();
   const file = sim.packText(sod, '{FILE}');
-  assert.match(T.shell(sim, host, 'ls -lrth /data/inbound/customer_static'), new RegExp(file.replace(/\./g, '\\.')));
+  assert.doesNotMatch(T.shell(sim, host, 'ls -lrth /data/inbound/customer_static'), new RegExp(file.replace(/\./g, '\\.')), 'loaded at 05:38, so moved out of the inbox');
   const arch = T.shell(sim, host, 'ls /data/inbound/customer_static/archive');
+  assert.match(arch, new RegExp(file.replace(/\./g, '\\.')));
   assert.match(arch, /CUSTOMER_STATIC_20261008\.csv/);
   assert.match(arch, /CUSTOMER_STATIC_20261004\.csv/);
 });
@@ -49,7 +50,7 @@ test('ping answers for a healthy component and reports loss when its host is dow
 test('the archive covers the last ten days, and date follows the business day', () => {
   const { sim, host } = load();
   const arch = T.shell(sim, host, 'ls /data/inbound/customer_static/archive');
-  assert.strictEqual(arch.match(/CUSTOMER_STATIC_\d{8}\.csv/g).length, 10);
+  assert.strictEqual(arch.match(/CUSTOMER_STATIC_\d{8}\.csv/g).length, 11, 'today plus ten earlier days');
   assert.match(arch, /CUSTOMER_STATIC_20260929\.csv/, 'ten days back from Oct 9');
   assert.match(T.shell(sim, host, 'date'), /^Fri Oct  9 \d\d:\d\d:\d\d IST 2026$/);
 });
