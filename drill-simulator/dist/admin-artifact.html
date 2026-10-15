@@ -3019,8 +3019,9 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
           <span class="small muted">${A.mapView === 'live' ? 'Click a component to inspect it.' : 'Numbered steps follow the business flow.'}</span></div>
           ${A.mapView === 'live' ? '<div class="map" id="map"></div>' : diagramBlock(A.bp)}</section>
       <div class="stack">${toolsPanel()}</div>
-      <div class="stack">${side}
+      <div class="stack">
         <section class="panel stack"><div class="row between"><h2>Alerts</h2><span class="small muted" id="alertCount"></span></div><div class="alerts" id="alerts"></div></section>
+        ${side}
       </div></div>`;
   }
 
