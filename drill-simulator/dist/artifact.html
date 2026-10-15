@@ -319,6 +319,7 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
       return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
     };
   }
+  const LOG_KEEP = 5000; // lines kept per component: far more than a shift produces, so nothing from the start is lost
   const pad = n => String(n).padStart(2, '0');
   function parseClock(s) {
     const m = /^(\d{1,2}):(\d{2})$/.exec(String(s || '').trim());
@@ -842,7 +843,8 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
   Simulator.prototype.log = function (id, level, msg) {
     const s = this.c[id];
     s.logs.push({ t: this.t, level, msg, id, line: `${clockStr(this.t, true)} ${level.padEnd(5)} [${id}] ${msg}` });
-    if (s.logs.length > 600) s.logs.splice(0, s.logs.length - 600);
+    // keep the whole shift and then some: a break at 15:30 needs the lines from 13:30 to explain it
+    if (s.logs.length > LOG_KEEP) s.logs.splice(0, s.logs.length - LOG_KEEP);
   };
   Simulator.prototype.chance = function (p) { return this.rand() < p; };
   Simulator.prototype.sessionId = function (s) { return s.def.session || s.def.id.toUpperCase().slice(0, 6); };
@@ -2111,7 +2113,12 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
         if (k === 'index' || k === 'sourcetype') return;
         if (k === 'component' || k === 'source' || k === 'host') filters.component = wildcard(v);
         else if (k === 'level' || k === 'log_level') filters.level = wildcard(v);
-        else if (k === 'earliest') { const m = /^-(\d+)([mh])$/.exec(v); if (m) filters.earliest = sim.t - (+m[1]) * (m[2] === 'h' ? 3600 : 60); }
+        else if (k === 'earliest') {
+          const m = /^-(\d+)([mh])$/.exec(v);
+          const clock = S.parseClock(v); // earliest=13:30: everything since that time of the simulated day
+          if (m) filters.earliest = sim.t - (+m[1]) * (m[2] === 'h' ? 3600 : 60);
+          else if (clock !== null) filters.earliest = clock;
+        }
         else filters.terms.push(w.toLowerCase());
         return;
       }
@@ -2870,7 +2877,7 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
     let body = '';
     if (A.toolTab === 'component') body = `<div class="row between"><div><h3 id="insTitle"></h3><span class="small muted" id="insType"></span></div></div>
       <div class="tiles" id="tiles"></div>
-      <div class="row between"><span class="label">Logs</span><label class="small row" style="gap:6px"><input type="checkbox" id="errOnly" ${A.errorsOnly ? 'checked' : ''}> Warnings and errors only</label></div>
+      <div class="row between"><span class="label">Logs</span><span class="small muted" id="logCount"></span><button class="btn sm" id="moreLogs">Show earlier</button><label class="small row" style="gap:6px"><input type="checkbox" id="errOnly" ${A.errorsOnly ? 'checked' : ''}> Warnings and errors only</label></div>
       <div class="term" id="logs" tabindex="0" aria-label="Component logs"></div>`;
     if (A.toolTab === 'trace') {
       const js = A.bp.journeys || [];
@@ -2907,7 +2914,9 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
     $('#tiles').innerHTML = Object.keys(M).map(m => `<div class="tile"><div class="label">${esc(M[m])}</div><div class="v">${fmtMetric(m, A.sim.metric(id, m))}</div>${spark(s.hist[m] || [])}</div>`).join('')
       + (s.type === 'kafka_topic' ? `<div class="tile"><div class="label">Lag by partition</div><div class="mono small">${s.parts.map((v, i) => `p${i}: ${S.fmtInt(v)}`).join('<br>')}</div></div>` : '');
     const term = $('#logs'), near = term.scrollHeight - term.scrollTop - term.clientHeight < 40;
-    const logs = s.logs.filter(l => !A.errorsOnly || l.level !== 'INFO').slice(-150);
+    const all = s.logs.filter(l => !A.errorsOnly || l.level !== 'INFO');
+    const logs = all.slice(-(A.logLimit || 150));
+    const lc = $('#logCount'); if (lc) lc.textContent = `showing ${logs.length} of ${all.length} lines`;
     term.innerHTML = logs.length ? logs.map(l => `<span class="${l.level[0]}">${esc(l.line)}</span>`).join('\n') : (s.type === 'issuer' ? 'No logs: the exchange cannot see inside a listed company. Look at the systems that use its data.' : s.type === 'source' ? 'Only connection events are visible for a participant.' : 'No log lines yet.');
     if (near) term.scrollTop = term.scrollHeight;
   }
@@ -3186,6 +3195,7 @@ debrief:
     on('#map', 'keydown', e => { const n = e.target.closest('[data-node]'); if (n && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); select(n.dataset.node); } });
     on('#alerts', 'click', e => { const b = e.target.closest('[data-alert-on]'); if (b && A.sim.c[b.dataset.alertOn]) select(b.dataset.alertOn); });
     on('#errOnly', 'change', e => { A.errorsOnly = e.target.checked; drawInspector(); });
+    on('#moreLogs', 'click', () => { A.logLimit = (A.logLimit || 150) + 300; drawInspector(); });
     // tools
     each('[data-tool]', b => b.addEventListener('click', () => { A.toolTab = b.dataset.tool; if (A.toolTab === 'grafana' && A.session) A.session.useTool('Grafana', A.grafana === 'overview' ? 'overview dashboard' : A.bp.byId[A.grafana].name); renderAll(); }));
     on('#gDash', 'change', e => { A.grafana = e.target.value; if (A.session) A.session.useTool('Grafana', A.grafana === 'overview' ? 'overview dashboard' : A.bp.byId[A.grafana].name); updateLive(); });

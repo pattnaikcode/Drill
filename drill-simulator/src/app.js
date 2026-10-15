@@ -345,7 +345,7 @@
     let body = '';
     if (A.toolTab === 'component') body = `<div class="row between"><div><h3 id="insTitle"></h3><span class="small muted" id="insType"></span></div></div>
       <div class="tiles" id="tiles"></div>
-      <div class="row between"><span class="label">Logs</span><label class="small row" style="gap:6px"><input type="checkbox" id="errOnly" ${A.errorsOnly ? 'checked' : ''}> Warnings and errors only</label></div>
+      <div class="row between"><span class="label">Logs</span><span class="small muted" id="logCount"></span><button class="btn sm" id="moreLogs">Show earlier</button><label class="small row" style="gap:6px"><input type="checkbox" id="errOnly" ${A.errorsOnly ? 'checked' : ''}> Warnings and errors only</label></div>
       <div class="term" id="logs" tabindex="0" aria-label="Component logs"></div>`;
     if (A.toolTab === 'trace') {
       const js = A.bp.journeys || [];
@@ -382,7 +382,9 @@
     $('#tiles').innerHTML = Object.keys(M).map(m => `<div class="tile"><div class="label">${esc(M[m])}</div><div class="v">${fmtMetric(m, A.sim.metric(id, m))}</div>${spark(s.hist[m] || [])}</div>`).join('')
       + (s.type === 'kafka_topic' ? `<div class="tile"><div class="label">Lag by partition</div><div class="mono small">${s.parts.map((v, i) => `p${i}: ${S.fmtInt(v)}`).join('<br>')}</div></div>` : '');
     const term = $('#logs'), near = term.scrollHeight - term.scrollTop - term.clientHeight < 40;
-    const logs = s.logs.filter(l => !A.errorsOnly || l.level !== 'INFO').slice(-150);
+    const all = s.logs.filter(l => !A.errorsOnly || l.level !== 'INFO');
+    const logs = all.slice(-(A.logLimit || 150));
+    const lc = $('#logCount'); if (lc) lc.textContent = `showing ${logs.length} of ${all.length} lines`;
     term.innerHTML = logs.length ? logs.map(l => `<span class="${l.level[0]}">${esc(l.line)}</span>`).join('\n') : (s.type === 'issuer' ? 'No logs: the exchange cannot see inside a listed company. Look at the systems that use its data.' : s.type === 'source' ? 'Only connection events are visible for a participant.' : 'No log lines yet.');
     if (near) term.scrollTop = term.scrollHeight;
   }
@@ -661,6 +663,7 @@ debrief:
     on('#map', 'keydown', e => { const n = e.target.closest('[data-node]'); if (n && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); select(n.dataset.node); } });
     on('#alerts', 'click', e => { const b = e.target.closest('[data-alert-on]'); if (b && A.sim.c[b.dataset.alertOn]) select(b.dataset.alertOn); });
     on('#errOnly', 'change', e => { A.errorsOnly = e.target.checked; drawInspector(); });
+    on('#moreLogs', 'click', () => { A.logLimit = (A.logLimit || 150) + 300; drawInspector(); });
     // tools
     each('[data-tool]', b => b.addEventListener('click', () => { A.toolTab = b.dataset.tool; if (A.toolTab === 'grafana' && A.session) A.session.useTool('Grafana', A.grafana === 'overview' ? 'overview dashboard' : A.bp.byId[A.grafana].name); renderAll(); }));
     on('#gDash', 'change', e => { A.grafana = e.target.value; if (A.session) A.session.useTool('Grafana', A.grafana === 'overview' ? 'overview dashboard' : A.bp.byId[A.grafana].name); updateLive(); });

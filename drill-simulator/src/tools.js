@@ -44,7 +44,12 @@
         if (k === 'index' || k === 'sourcetype') return;
         if (k === 'component' || k === 'source' || k === 'host') filters.component = wildcard(v);
         else if (k === 'level' || k === 'log_level') filters.level = wildcard(v);
-        else if (k === 'earliest') { const m = /^-(\d+)([mh])$/.exec(v); if (m) filters.earliest = sim.t - (+m[1]) * (m[2] === 'h' ? 3600 : 60); }
+        else if (k === 'earliest') {
+          const m = /^-(\d+)([mh])$/.exec(v);
+          const clock = S.parseClock(v); // earliest=13:30: everything since that time of the simulated day
+          if (m) filters.earliest = sim.t - (+m[1]) * (m[2] === 'h' ? 3600 : 60);
+          else if (clock !== null) filters.earliest = clock;
+        }
         else filters.terms.push(w.toLowerCase());
         return;
       }
