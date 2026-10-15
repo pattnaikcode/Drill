@@ -247,8 +247,20 @@
       if (s.type === 'database') h.push({ host: `${id.replace(/_/g, '-')}-db1`, comp: id });
       if (s.type === 'external_party') h.push({ host: `${id.replace(/_/g, '-')}-adapter`, comp: id });
     });
-    const seen = new Set();
-    return h.filter(x => (seen.has(x.host) ? false : seen.add(x.host))).map(x => ({ comps: [x.comp], ...x }));
+    // one entry per server; several components can share a server (a Kafka broker serves every topic)
+    const byHost = new Map();
+    h.forEach(x => {
+      if (!byHost.has(x.host)) byHost.set(x.host, { host: x.host, comp: x.comp, comps: [] });
+      const e = byHost.get(x.host);
+      [].concat(x.comps || [x.comp]).forEach(id => { if (!e.comps.includes(id)) e.comps.push(id); });
+    });
+    return [...byHost.values()];
+  }
+  // the server a component runs on, as the Unix tool names it ('' if it has none)
+  function hostOf(sim, id) { const h = hosts(sim).find(x => x.comps.includes(id)); return h ? h.host : ''; }
+  // what people see in the Host list: the server, then the components on it and the unit name each one uses
+  function hostLabel(sim, h) {
+    return `${h.host} — ` + h.comps.map(id => `${sim.c[id].def.name} (${sim.c[id].type === 'kafka_topic' ? 'topic' : 'unit'} ${sim.c[id].type === 'kafka_topic' ? id : id + '.service'})`).join(', ');
   }
   const DENY = /^(rm|mv|cp|kill|pkill|killall|reboot|shutdown|halt|sudo|su|chmod|chown|dd|mkfs|truncate|vi|vim|nano|crontab|iptables|docker|scp|ssh)$/;
   function shell(sim, host, line) {
@@ -432,7 +444,7 @@
     return `bash: ${a[0]}: command not found (type help)`;
   }
 
-  const OpsTools = { search, sql, shell, hosts, normalize, tables };
+  const OpsTools = { search, sql, shell, hosts, hostOf, hostLabel, normalize, tables };
   if (typeof module === 'object' && module.exports) module.exports = OpsTools;
   else root.OpsTools = OpsTools;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

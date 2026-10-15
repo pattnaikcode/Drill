@@ -2321,8 +2321,20 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
       if (s.type === 'database') h.push({ host: `${id.replace(/_/g, '-')}-db1`, comp: id });
       if (s.type === 'external_party') h.push({ host: `${id.replace(/_/g, '-')}-adapter`, comp: id });
     });
-    const seen = new Set();
-    return h.filter(x => (seen.has(x.host) ? false : seen.add(x.host))).map(x => ({ comps: [x.comp], ...x }));
+    // one entry per server; several components can share a server (a Kafka broker serves every topic)
+    const byHost = new Map();
+    h.forEach(x => {
+      if (!byHost.has(x.host)) byHost.set(x.host, { host: x.host, comp: x.comp, comps: [] });
+      const e = byHost.get(x.host);
+      [].concat(x.comps || [x.comp]).forEach(id => { if (!e.comps.includes(id)) e.comps.push(id); });
+    });
+    return [...byHost.values()];
+  }
+  // the server a component runs on, as the Unix tool names it ('' if it has none)
+  function hostOf(sim, id) { const h = hosts(sim).find(x => x.comps.includes(id)); return h ? h.host : ''; }
+  // what people see in the Host list: the server, then the components on it and the unit name each one uses
+  function hostLabel(sim, h) {
+    return `${h.host} — ` + h.comps.map(id => `${sim.c[id].def.name} (${sim.c[id].type === 'kafka_topic' ? 'topic' : 'unit'} ${sim.c[id].type === 'kafka_topic' ? id : id + '.service'})`).join(', ');
   }
   const DENY = /^(rm|mv|cp|kill|pkill|killall|reboot|shutdown|halt|sudo|su|chmod|chown|dd|mkfs|truncate|vi|vim|nano|crontab|iptables|docker|scp|ssh)$/;
   function shell(sim, host, line) {
@@ -2506,7 +2518,7 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
     return `bash: ${a[0]}: command not found (type help)`;
   }
 
-  const OpsTools = { search, sql, shell, hosts, normalize, tables };
+  const OpsTools = { search, sql, shell, hosts, hostOf, hostLabel, normalize, tables };
   if (typeof module === 'object' && module.exports) module.exports = OpsTools;
   else root.OpsTools = OpsTools;
 })(typeof globalThis !== 'undefined' ? globalThis : this);
@@ -2879,7 +2891,7 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
       <div class="row"><button class="btn primary" id="sqlRun">Run query</button><span class="small muted">Read-only. Changes go through approved actions.</span></div>
       <div class="chips">${sqlExamples().map(q => `<button type="button" class="chip" data-sql="${esc(q)}">${esc(q.length > 60 ? q.slice(0, 58) + '…' : q)}</button>`).join('')}</div>
       <div id="sqlBody">${resultTable(A.sqlR)}</div>` : '<p class="muted">This system has no database.</p>';
-    if (A.toolTab === 'unix') body = `<div class="row"><label class="small muted row" style="gap:6px">Host<select id="uxHost">${TL.hosts(A.sim).map(h => `<option value="${h.host}"${A.unixHost === h.host ? ' selected' : ''}>${h.host}</option>`).join('')}</select></label><span class="small muted">Read-only support account. Participants' and vendors' own servers are not reachable.</span></div>
+    if (A.toolTab === 'unix') body = `<div class="row"><label class="small muted row" style="gap:6px">Host<select id="uxHost">${TL.hosts(A.sim).map(h => `<option value="${h.host}"${A.unixHost === h.host ? ' selected' : ''}>${esc(TL.hostLabel(A.sim, h))}</option>`).join('')}</select></label><span class="small muted">Read-only support account. Participants' and vendors' own servers are not reachable.</span></div>
       <div class="term" id="uxOut" style="height:300px">${A.unixOut.map(x => esc(x)).join('\n') || 'Type help to see available commands.'}</div>
       <form class="row" id="uxForm"><span class="mono small">support_ro@${esc(A.unixHost)}:~$</span><input type="text" id="uxIn" class="mono grow" autocomplete="off" aria-label="Shell command"><button class="btn">Run</button></form>
       <div class="chips">${unixExamples().map(q => `<button type="button" class="chip" data-ux="${esc(q)}">${esc(q)}</button>`).join('')}</div>`;
@@ -2891,7 +2903,8 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
     const id = A.selected, s = A.sim.c[id]; if (!s || !$('#tiles')) return;
     const h = A.sim.health(id);
     $('#insTitle').innerHTML = `${esc(s.def.name)} <span class="pill ${h === 'ok' ? 'ok' : h}">${h === 'ok' ? 'healthy' : h === 'warn' ? 'degraded' : 'critical'}</span>`;
-    $('#insType').textContent = `${roleOf(s.def)} · ${S.typeLabel(s.def)} · id ${id}${s.def.uses ? ' · uses ' + s.def.uses.join(', ') : ''}${s.def.feeds ? ' · publishes to ' + s.def.feeds : ''}`;
+    const srv = TL.hostOf(A.sim, id);
+    $('#insType').textContent = `${roleOf(s.def)} · ${S.typeLabel(s.def)} · id ${id}${srv ? ' · server ' + srv : ''}${s.def.uses ? ' · uses ' + s.def.uses.join(', ') : ''}${s.def.feeds ? ' · publishes to ' + s.def.feeds : ''}`;
     const M = S.TYPES[s.type].metrics;
     $('#tiles').innerHTML = Object.keys(M).map(m => `<div class="tile"><div class="label">${esc(M[m])}</div><div class="v">${fmtMetric(m, A.sim.metric(id, m))}</div>${spark(s.hist[m] || [])}</div>`).join('')
       + (s.type === 'kafka_topic' ? `<div class="tile"><div class="label">Lag by partition</div><div class="mono small">${s.parts.map((v, i) => `p${i}: ${S.fmtInt(v)}`).join('<br>')}</div></div>` : '');

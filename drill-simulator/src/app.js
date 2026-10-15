@@ -364,7 +364,7 @@
       <div class="row"><button class="btn primary" id="sqlRun">Run query</button><span class="small muted">Read-only. Changes go through approved actions.</span></div>
       <div class="chips">${sqlExamples().map(q => `<button type="button" class="chip" data-sql="${esc(q)}">${esc(q.length > 60 ? q.slice(0, 58) + '…' : q)}</button>`).join('')}</div>
       <div id="sqlBody">${resultTable(A.sqlR)}</div>` : '<p class="muted">This system has no database.</p>';
-    if (A.toolTab === 'unix') body = `<div class="row"><label class="small muted row" style="gap:6px">Host<select id="uxHost">${TL.hosts(A.sim).map(h => `<option value="${h.host}"${A.unixHost === h.host ? ' selected' : ''}>${h.host}</option>`).join('')}</select></label><span class="small muted">Read-only support account. Participants' and vendors' own servers are not reachable.</span></div>
+    if (A.toolTab === 'unix') body = `<div class="row"><label class="small muted row" style="gap:6px">Host<select id="uxHost">${TL.hosts(A.sim).map(h => `<option value="${h.host}"${A.unixHost === h.host ? ' selected' : ''}>${esc(TL.hostLabel(A.sim, h))}</option>`).join('')}</select></label><span class="small muted">Read-only support account. Participants' and vendors' own servers are not reachable.</span></div>
       <div class="term" id="uxOut" style="height:300px">${A.unixOut.map(x => esc(x)).join('\n') || 'Type help to see available commands.'}</div>
       <form class="row" id="uxForm"><span class="mono small">support_ro@${esc(A.unixHost)}:~$</span><input type="text" id="uxIn" class="mono grow" autocomplete="off" aria-label="Shell command"><button class="btn">Run</button></form>
       <div class="chips">${unixExamples().map(q => `<button type="button" class="chip" data-ux="${esc(q)}">${esc(q)}</button>`).join('')}</div>`;
@@ -376,7 +376,8 @@
     const id = A.selected, s = A.sim.c[id]; if (!s || !$('#tiles')) return;
     const h = A.sim.health(id);
     $('#insTitle').innerHTML = `${esc(s.def.name)} <span class="pill ${h === 'ok' ? 'ok' : h}">${h === 'ok' ? 'healthy' : h === 'warn' ? 'degraded' : 'critical'}</span>`;
-    $('#insType').textContent = `${roleOf(s.def)} · ${S.typeLabel(s.def)} · id ${id}${s.def.uses ? ' · uses ' + s.def.uses.join(', ') : ''}${s.def.feeds ? ' · publishes to ' + s.def.feeds : ''}`;
+    const srv = TL.hostOf(A.sim, id);
+    $('#insType').textContent = `${roleOf(s.def)} · ${S.typeLabel(s.def)} · id ${id}${srv ? ' · server ' + srv : ''}${s.def.uses ? ' · uses ' + s.def.uses.join(', ') : ''}${s.def.feeds ? ' · publishes to ' + s.def.feeds : ''}`;
     const M = S.TYPES[s.type].metrics;
     $('#tiles').innerHTML = Object.keys(M).map(m => `<div class="tile"><div class="label">${esc(M[m])}</div><div class="v">${fmtMetric(m, A.sim.metric(id, m))}</div>${spark(s.hist[m] || [])}</div>`).join('')
       + (s.type === 'kafka_topic' ? `<div class="tile"><div class="label">Lag by partition</div><div class="mono small">${s.parts.map((v, i) => `p${i}: ${S.fmtInt(v)}`).join('<br>')}</div></div>` : '');
