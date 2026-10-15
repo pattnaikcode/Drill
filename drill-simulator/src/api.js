@@ -26,8 +26,9 @@
     if (!comp || !comp.hist) return { error: `Component not found: ${filter.component}` };
 
     const metric = filter.metric;
-    const from_t = filter.from_t || (this.sim.bp.start - 3600); // default: 1h before start
-    const to_t = filter.to_t || this.sim.t;
+    const times = this.sim.history.t; // simulated second of each sample, shared by every metric
+    const from_t = filter.from_t !== undefined ? filter.from_t : (times[0] !== undefined ? times[0] : 0);
+    const to_t = filter.to_t !== undefined ? filter.to_t : this.sim.t;
     const agg = filter.aggregation || 'none'; // none, avg, max, min, p95
 
     // Get historical snapshots for this component
@@ -36,16 +37,11 @@
       return { error: `Metric not found: ${metric}` };
     }
 
-    // Map history to time-series points
-    // hist is structured as: hist[metric] = [v1, v2, v3, ...] sampled every 60s
-    // We need to pair with timestamps
+    // hist[i] was sampled at times[i]; both arrays are trimmed together, so they stay aligned
     let points = [];
-    const sampleInterval = 60; // seconds
-    let baseTime = this.sim.bp.start - this.sim.bp.start % 60; // round to nearest minute
-
     for (let i = 0; i < hist.length; i++) {
-      const t = baseTime + i * sampleInterval;
-      if (t >= from_t && t <= to_t) {
+      const t = times[i];
+      if (t !== undefined && t >= from_t && t <= to_t) {
         points.push({ t, v: hist[i] });
       }
     }
