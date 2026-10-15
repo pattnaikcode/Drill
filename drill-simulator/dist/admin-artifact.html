@@ -319,6 +319,7 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
       return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
     };
   }
+  const SOD_LOAD_T = 5 * 3600 + 38 * 60 + 5; // 05:38:05, when the start-of-day file is normally loaded
   const LOG_KEEP = 5000; // lines kept per component: far more than a shift produces, so nothing from the start is lost
   const pad = n => String(n).padStart(2, '0');
   function parseClock(s) {
@@ -825,8 +826,70 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
     Object.keys(this.c).forEach(srcOf);
     this.ruleState = {};
     this.biz = { produced: 0, prevCut: 0, netRate: 0, lost: 0 };
+    this._seedHistory();
     this.warmup(bp.start - this.t);
   }
+
+  // The history a support engineer finds on the host before the drill starts: ten archived days, and today
+  // up to the drill's start. Every line follows from the day's events, so the archive and the live log agree.
+  Simulator.prototype._seedHistory = function () {
+    this.archive = {};
+    Object.values(this.c).forEach(s => {
+      this.archive[s.def.id] = {};
+      for (let n = 1; n <= 10; n++) { const d = this.businessDay(n).toISOString().slice(0, 10); this.archive[s.def.id][n] = this._dayLines(s, n).map(l => `${d} ${this._entry(s.def.id, l.t, l.level, l.msg).line}`); }
+    });
+    Object.values(this.c).forEach(s => {
+      if (s.def.pack_type === 'sod_file_load') { s.lastRefresh = SOD_LOAD_T; this._sodMorning(s); return; }
+      this._dayLines(s, 0, this.bp.start).forEach(l => this.log(s.def.id, l.level, l.msg, l.t, true));
+    });
+  };
+  // one day's log lines for a component, as {t, level, msg}. back = 0 is today; until limits today to the hours before it
+  Simulator.prototype._dayLines = function (s, back, until) {
+    if (s.def.pack_type === 'sod_file_load') return this._sodLines(s, back);
+    const id = s.def.id, L = back > 0 ? [{ t: 300, level: 'INFO', msg: `log rotated: ${id}.log-${this.businessDate(back)}.gz` }] : [];
+    const rate = Math.max(1, Math.round(s.def.capacity_per_min || s.def.rate_per_min || 60));
+    const hours = until === undefined ? 24 : Math.floor(until / 3600);
+    for (let hh = 0; hh < hours; hh++) {
+      const seed = (id.length * 31 + hh * 7 + back * 13) % 17, n = Math.round(rate * 60 * (0.85 + seed / 100));
+      L.push({ t: hh * 3600, level: 'INFO', msg: `hourly summary: ${n.toLocaleString('en-US')} processed in that hour, errors 0` });
+    }
+    return L;
+  };
+  // the start-of-day file's day: arrival, load and archive, or the way it went wrong (fault as of now)
+  Simulator.prototype._sodLines = function (s, back) {
+    const id = s.def.id, inbox = this.packText(s, '{INBOX}'), base = this.packText(s, '{FILE}').replace(/\d{8}\.csv$/, '');
+    const file = base + this.businessDate(back) + '.csv', yfile = base + this.businessDate(back + 1) + '.csv';
+    const f = back === 0 && s.fault ? s.fault.type : null, L = [];
+    if (back > 0) L.push({ t: 300, level: 'INFO', msg: `log rotated: ${id}.log-${this.businessDate(back)}.gz` });
+    if (f === 'file_missing') {
+      L.push({ t: 18000, level: 'WARN', msg: 'Vendor upload window open (05:00-06:00): no upload session from the customer master vendor has connected yet' });
+      L.push({ t: 19800, level: 'ERROR', msg: `SOD check 1 of 3: ${file} not found in ${inbox}. Next check 06:00.` });
+      L.push({ t: 21600, level: 'ERROR', msg: `SOD check 2 of 3: ${file} still not found. Next check 06:30.` });
+      L.push({ t: 23400, level: 'ERROR', msg: `SOD check 3 of 3: ${file} still not found. Load not run: customer lookups have no file for today, so new customers' payments are parked for repair.` });
+    } else if (f === 'load_yesterday') {
+      L.push({ t: 19800, level: 'WARN', msg: `SOD check: ${file} not found in ${inbox}` });
+      L.push({ t: 19860, level: 'WARN', msg: `SOD load: loaded ${yfile} instead. Today's new and changed records are missing.` });
+    } else {
+      L.push({ t: 19872, level: 'INFO', msg: `${file} arrived in ${inbox} (${(f === 'file_truncated' ? 1498000 : 2861442 - back * 13117).toLocaleString('en-US')} bytes)` });
+      L.push({ t: 19880, level: 'INFO', msg: `SOD load started for ${file}` });
+      if (f === 'file_truncated') L.push({ t: SOD_LOAD_T, level: 'ERROR', msg: `SOD load: ${file} read 31,204 records, trailer says 48,210. Trailer count mismatch: the load is partial and about 30% of customer lookups will be rejected.` });
+      else L.push({ t: SOD_LOAD_T, level: 'INFO', msg: `SOD load: ${file} loaded, 48,210 records, trailer OK. File moved to ${inbox}/archive/` });
+    }
+    return L;
+  };
+  // rewrite today's start-of-day lines to match the fault now in place; the later lines stay as they were
+  Simulator.prototype._sodMorning = function (s) {
+    const rest = s.logs.filter(l => !l.pre);
+    s.logs = this._sodLines(s, 0).map(l => this._entry(s.def.id, l.t, l.level, l.msg, true)).concat(rest);
+  };
+  // while a start-of-day file is missing, the load is retried every half hour
+  Simulator.prototype._sodStep = function (s) {
+    if (!s.fault || !s.fault.pack || !this.packEffect(s).stale) return;
+    const slot = Math.floor(this.t / 1800);
+    if (s.retrySlot === slot) return;
+    s.retrySlot = slot;
+    this.log(s.def.id, 'ERROR', `SOD retry: ${this.packText(s, '{FILE}')} still not found in ${this.packText(s, '{INBOX}')}. Load not run. Next retry ${clockStr((slot + 1) * 1800)}.`);
+  };
 
   Simulator.prototype._initState = function (def) {
     const s = { def, type: def.type, fault: null, logs: [], hist: {}, rates: {}, tot: { in: 0, out: 0, rej: 0, err: 0 }, win: { in: 0, out: 0, rej: 0, err: 0, n: 0 } };
@@ -842,11 +905,16 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
 
   Simulator.prototype.now = function () { return this.t; };
   Simulator.prototype.time = function (sec) { return clockStr(this.t, sec); };
-  Simulator.prototype.log = function (id, level, msg) {
+  Simulator.prototype.log = function (id, level, msg, at, pre) {
     const s = this.c[id];
-    s.logs.push({ t: this.t, level, msg, id, line: `${clockStr(this.t, true)} ${level.padEnd(5)} [${id}] ${msg}` });
+    s.logs.push(this._entry(id, at === undefined ? this.t : at, level, msg, pre));
     // keep the whole shift and then some: a break at 15:30 needs the lines from 13:30 to explain it
     if (s.logs.length > LOG_KEEP) s.logs.splice(0, s.logs.length - LOG_KEEP);
+  };
+  Simulator.prototype._entry = function (id, t, level, msg, pre) {
+    const e = { t, level, msg, id, line: `${clockStr(t, true)} ${level.padEnd(5)} [${id}] ${msg}` };
+    if (pre) e.pre = true; // history written before the drill started; a fault can rewrite it
+    return e;
   };
   Simulator.prototype.chance = function (p) { return this.rand() < p; };
   Simulator.prototype.sessionId = function (s) { return s.def.session || s.def.id.toUpperCase().slice(0, 6); };
@@ -954,6 +1022,7 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
   Simulator.prototype.step = function (dt) {
     this.t += dt;
     Object.values(this.c).filter(s => s.type === 'ref_data').forEach(s => {
+      if (s.def.pack_type === 'sod_file_load') return this._sodStep(s);
       if (this.t - s.lastRefresh < s.def.refresh_every_min * 60) return;
       const hostBad = this.hostFault(s) === 'disk_full' || this.inOutage(s);
       if ((s.fault && s.fault.type === 'feed_failed') || this.packEffect(s).stale || hostBad) {
@@ -1074,8 +1143,9 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
     Object.values(this.c).forEach(s => {
       const id = s.def.id, name = s.def.name, f = s.fault && s.fault.type, hf = this.hostFault(s);
       const PT = packTypeOf(s.def);
-      if (s.fault && s.fault.pack && !(s.type === 'ref_data' && this.packEffect(s).stale) && this.chance(p * 1.5)) this._packLog(s, s.fault.pack.level || 'ERROR');
-      else if (PT && !s.fault && (PT.logs_ok || []).length && this.chance(p * 0.5)) this.log(id, 'INFO', this.packText(s, PT.logs_ok[Math.floor(this.rand() * PT.logs_ok.length)]));
+      const isSod = s.def.pack_type === 'sod_file_load';
+      if (!isSod && s.fault && s.fault.pack && !(s.type === 'ref_data' && this.packEffect(s).stale) && this.chance(p * 1.5)) this._packLog(s, s.fault.pack.level || 'ERROR');
+      else if (!isSod && PT && !s.fault && (PT.logs_ok || []).length && this.chance(p * 0.5)) this.log(id, 'INFO', this.packText(s, PT.logs_ok[Math.floor(this.rand() * PT.logs_ok.length)]));
       if (s.type === 'source') {
         const why = this.sourceDown(s);
         if (!why && this.chance(p * 0.6)) {
@@ -1371,6 +1441,7 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
     if (F.pack) {
       fault.pack = F; s.fault = fault;
       if (F.effect && F.effect.stale && s.type === 'ref_data') s.lastRefresh = Math.min(s.lastRefresh, this.t - (p.last_refresh_minutes_ago || s.def.stale_after_min + 5) * 60);
+      if (s.def.pack_type === 'sod_file_load') this._sodMorning(s);
       if (F.on_start) this.log(id, 'WARN', this.packText(s, F.on_start));
       this.events.push({ t: this.t, kind: 'fault', hidden: true, text: `Fault injected: ${F.label} on ${s.def.name}` });
       return fault;
@@ -1397,6 +1468,7 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
     const s = this.c[id];
     if (host) { if (!s.host || !s.host.fault) return; s.host.fault = null; }
     else { if (!s.fault) return; if (s.type === 'kafka_topic') s.blocked = -1; s.fault = null; }
+    if (!host && s.def.pack_type === 'sod_file_load') this.log(id, 'INFO', `SOD load: ${this.packText(s, '{FILE}')} loaded, 48,210 records, trailer OK (${why})`);
     this.events.push({ t: this.t, kind: 'fixed', text: `${s.def.name}: ${why}` });
   };
   Simulator.prototype.actionsFor = function (id) { const s = this.c[id]; return s ? actionsForDef(s.def) : {}; };
@@ -2381,22 +2453,15 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
     const archLog = /^\/var\/log\/app\/archive\/(\w+)\.log-(\d{8})\.gz$/;
     if (a[0] === 'ls' && (a[1] || '').replace(/\/+$/, '') === '/var/log/app/archive') {
       const rows = [];
-      H.comps.forEach(x => { for (let n = 1; n <= 10; n++) rows.push(`-rw-r--r-- 1 app app ${(180 + n * 7 + x.length * 3)}K ${sim.businessDay(n).toISOString().slice(5, 10)} 00:05 ${x}.log-${sim.businessDate(n)}.gz`); });
+      H.comps.forEach(x => { for (let n = 1; n <= 10; n++) { const bytes = sim.archive[x][n].join('\n').length; rows.push(`-rw-r--r-- 1 app app ${Math.max(1, Math.round(bytes / 1024))}K ${sim.businessDay(n).toISOString().slice(5, 10)} 00:05 ${x}.log-${sim.businessDate(n)}.gz`); } });
       return [`total ${rows.length * 4}`, ...rows].join('\n');
     }
     if ((a[0] === 'cat' || a[0] === 'zcat') && archLog.test(a[1] || '')) {
-      const [, id, day] = archLog.exec(a[1]), cx = H.comps.includes(id) ? sim.c[id] : null;
-      if (!cx) return `${a[0]}: ${a[1]}: No such file or directory (this host has ${H.comps.map(x => '/var/log/app/archive/' + x + '.log-*.gz').join(', ')})`;
+      const [, id, day] = archLog.exec(a[1]);
+      if (!H.comps.includes(id)) return `${a[0]}: ${a[1]}: No such file or directory (this host has ${H.comps.map(x => '/var/log/app/archive/' + x + '.log-*.gz').join(', ')})`;
       const back = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].find(n => sim.businessDate(n) === day);
       if (!back) return `${a[0]}: ${a[1]}: No such file or directory`;
-      // a plausible hour-by-hour summary for that day; the rate comes from the component's own throughput
-      const rate = Math.max(1, Math.round(sim.rates(id).out_rate || 0) || 60), d = sim.businessDay(back).toISOString().slice(0, 10);
-      const lines = [`${d} 00:05:00 INFO  [${id}] log rotated; archive ${id}.log-${day}.gz`];
-      for (let hh = 0; hh < 24; hh++) {
-        const seed = (id.length * 31 + hh * 7 + back * 13) % 17, n = Math.round(rate * 60 * (0.85 + seed / 100));
-        lines.push(`${d} ${String(hh).padStart(2, '0')}:00:00 INFO  [${id}] hourly: ${n.toLocaleString('en-US')} processed in last 60 min, errors 0`);
-      }
-      return lines.join('\n');
+      return sim.archive[id][back].join('\n');
     }
     // start-of-day file folders (a loader host): /data, /data/inbound, the inbox and its archive of earlier days.
     // The archive is always there; the inbox listing gives way to the pack's evidence while its file is missing.

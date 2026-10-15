@@ -60,6 +60,8 @@ test('every component keeps ten days of rotated logs, and a day reads hour by ho
   const hostComps = T.hosts(sim).find(h => h.host === host).comps;
   assert.strictEqual(listing.match(/\.log-\d{8}\.gz/g).length, hostComps.length * 10);
   const day = T.shell(sim, host, `cat /var/log/app/archive/${hostComps[0]}.log-20261008.gz`);
-  assert.match(day, /2026-10-08 23:00:00 INFO/, 'a full day of hourly lines');
+  assert.match(day, /2026-10-08 05:38:05 INFO  \[customer_static\] SOD load: CUSTOMER_STATIC_20261008\.csv loaded, 48,210 records, trailer OK/, 'the day\'s load, as it happened');
+  const other = hostComps.find(x => x !== 'customer_static');
+  if (other) assert.match(T.shell(sim, host, `cat /var/log/app/archive/${other}.log-20261008.gz`), /2026-10-08 23:00:00 INFO .*hourly summary/, 'a full day of hourly lines');
   assert.match(T.shell(sim, host, `cat /var/log/app/archive/${hostComps[0]}.log-20261101.gz`), /No such file or directory/);
 });
