@@ -14,16 +14,30 @@ Writes:
 Blueprints (blueprints/*.yaml) and drills (drills/*.yaml) are embedded as text, so the
 YAML files stay the single source of truth.
 """
+import datetime
 import json
 import pathlib
 import re
+import subprocess
 
 ROOT = pathlib.Path(__file__).parent
 DEFAULT_BLUEPRINT = "trade-allocation-kafka"  # the system the app opens with
 
 
+def build_tag() -> str:
+    # a fingerprint of the source files this page was built from, and the time it was built (India time)
+    import hashlib
+    h = hashlib.sha256()
+    for f in sorted((ROOT / "src").glob("*")) + sorted((ROOT / "drills").glob("*.yaml")):
+        if f.is_file():
+            h.update(f.name.encode() + f.read_bytes())
+    ist = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5, minutes=30)))
+    return f"build {h.hexdigest()[:8]} · {ist:%d %b %Y %H:%M} IST"
+
+
 def build(template: str = "src/index.template.html", role: str = "participant") -> str:
     page = (ROOT / template).read_text(encoding="utf-8")
+    page = page.replace("</footer>", f' <span class="build-tag">{build_tag()}</span></footer>', 1)
     for rel in re.findall(r"/\*INLINE:([^*]+)\*/", page):
         code = (ROOT / rel).read_text(encoding="utf-8")
         page = page.replace(f"/*INLINE:{rel}*/", code.replace("</script", "<\\/script"))
