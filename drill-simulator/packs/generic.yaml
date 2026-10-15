@@ -1,0 +1,60 @@
+# Pack: generic building blocks
+#
+# The everyday boxes of almost any system diagram: a website, a mobile app, back-office users, a web
+# server behind a load balancer, an SMS/email provider, an SFTP file exchange and a reporting database.
+# They carry no faults of their own, so drop them in freely; add faults in a sector pack when a
+# drill needs them. This pack is open by default in the Designer palette.
+
+pack: generic
+label: Generic building blocks
+description: Website, mobile app, back-office users, web server, load balancer, SMS/email provider, SFTP exchange, reporting database.
+open: true
+
+types:
+  website:
+    label: Website
+    behaves_like: source
+    help: "Customers using a web browser. Sends requests (sessions) to the first system behind it."
+    defaults: {rate_per_min: 600}
+
+  mobile_app:
+    label: Mobile app
+    behaves_like: source
+    help: "Customers using the mobile app. Usually shares the same back end as the website."
+    defaults: {rate_per_min: 500}
+
+  back_office_users:
+    label: Back-office users
+    behaves_like: source
+    help: "Staff working in internal screens: operations, customer care, approvals."
+    defaults: {rate_per_min: 120}
+
+  web_server:
+    label: Web or app server
+    behaves_like: service
+    help: "Runs the application code that answers requests. Several instances share the load."
+    defaults: {capacity_per_min: 1000, instances: 2}
+
+  load_balancer:
+    label: Load balancer
+    behaves_like: service
+    help: "Spreads incoming requests across the servers behind it and removes the ones that fail health checks."
+    defaults: {capacity_per_min: 3000, instances: 2}
+
+  sms_email_provider:
+    label: SMS and email provider
+    behaves_like: external_party
+    help: "Outside provider that sends customer messages (OTPs, alerts, confirmations). Its queue and rate limits are not ours."
+    defaults: {capacity_per_min: 1600}
+
+  sftp_exchange:
+    label: SFTP file exchange
+    behaves_like: external_party
+    help: "Files moved to and from partners as scheduled transfers (statements, settlement files, master data)."
+    defaults: {capacity_per_min: 200}
+
+  reporting_database:
+    label: Reporting database
+    behaves_like: database
+    help: "Copy of operational data used for reports and dashboards. Heavy queries here must not slow the live system."
+    defaults: {pool_size: 30}

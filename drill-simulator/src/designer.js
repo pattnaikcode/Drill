@@ -142,7 +142,7 @@
   const palOpen = new Set();
   function renderPalette() {
     const tiles = [...BUILTIN.map(b => ({ ...b, key: 'type:' + b.type, color: COLOR[b.type] }))];
-    Object.entries(S.PACK_TYPES).forEach(([t, P]) => tiles.push({ key: 'type:' + t, type: t, label: P.label || t, sub: (P.help || '').split('.')[0], group: `${P.packLabel} pack`, color: COLOR[P.behaves_like] }));
+    Object.entries(S.PACK_TYPES).forEach(([t, P]) => tiles.push({ key: 'type:' + t, type: t, label: P.label || t, sub: (P.help || '').split('.')[0], group: `${P.packLabel} pack`, pack: P.pack, color: COLOR[P.behaves_like] }));
     Object.entries(B.kinds || {}).forEach(([k, d]) => tiles.push({ key: 'kind:' + k, label: d.role || k, sub: `Kind "${k}"${d.connects_to ? ' · connects to ' + [].concat(d.connects_to).join(', ') : ''}`, group: 'Kinds in this system', color: COLOR[S.baseType(d.type)] }));
     // built-in boxes and this system's kinds stay open; each sector library folds away unless it is
     // used in this design, opened by hand, or matches the search
@@ -154,7 +154,7 @@
     $('#palette').innerHTML = (groups.length ? '' : '<p class="small muted">No component matches.</p>') + groups.map(g => {
       const ts = shown.filter(t => t.group === g);
       if (!/ pack$/.test(g)) return `<h3>${esc(g)}</h3>` + ts.map(tileHtml).join('');
-      const open = q || palOpen.has(g) || ts.some(t => used.has(t.type));
+      const open = q || palOpen.has(g) || ts.some(t => used.has(t.type)) || !!(S.PACKS[ts[0].pack] || {}).open;
       return `<details class="pgrp" data-grp="${esc(g)}"${open ? ' open' : ''}><summary>${esc(g.replace(/ pack$/, ''))} <span class="muted">${ts.length}</span></summary><div class="pgrid">${ts.map(tileHtml).join('')}</div></details>`;
     }).join('');
   }
