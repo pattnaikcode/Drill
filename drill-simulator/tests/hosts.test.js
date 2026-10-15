@@ -51,3 +51,19 @@ test('all Kafka topics on the shared broker are listed, not only the first', () 
   assert.deepStrictEqual(broker.comps.sort(), ['topic_a', 'topic_b']);
   assert.strictEqual(T.hostOf(sim, 'topic_b'), 'kafka-broker1');
 });
+
+test('cat reads an application log on its own server, as ls says it exists', () => {
+  const sim = load('blueprints/trade-allocation-kafka.yaml');
+  for (let i = 0; i < 60; i++) sim.step(5);
+  const listing = T.shell(sim, 'kafka-broker1', 'ls /var/log/app');
+  assert.match(listing, /trades_topic\.log/);
+  const out = T.shell(sim, 'kafka-broker1', 'cat /var/log/app/trades_topic.log');
+  assert.doesNotMatch(out, /No such file/);
+  assert.match(out, /\[trades_topic\]/, 'the log lines name the component');
+});
+
+test('cat says where a log lives when it is asked for on the wrong server', () => {
+  const sim = load('blueprints/trade-allocation-kafka.yaml');
+  const out = T.shell(sim, 'tam-node1', 'cat /var/log/app/trades_topic.log');
+  assert.match(out, /No such file or directory \(this host has \/var\/log\/app\/tam\.log/);
+});

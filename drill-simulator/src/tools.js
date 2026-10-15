@@ -378,6 +378,11 @@
         if (a[1] && d.mount && a[a.length - 1].startsWith(d.mount)) return hf === 'disk_full' ? 'tx_000096.dat\ntx_000097.dat\ntx_000098.dat  (0 bytes: write failed)' : 'tx_000096.dat\ntx_000097.dat\ntx_000098.dat';
         return H.comps.map(x => `${x}.log\n${x}.log.1.gz`).join('\n') + '\ngc.log';
       case 'cat': {
+        if (a[1] && a[1].startsWith('/var/log/app/')) { // application logs: the same lines tail and grep read
+          const lc = logOf(a[1]);
+          if (!lc) return `cat: ${a[1]}: No such file or directory (this host has ${H.comps.map(x => '/var/log/app/' + x + '.log').join(', ')})`;
+          return lc.logs.map(l => l.line).join('\n');
+        }
         if (a[1] && a[1].includes('partitions.conf')) {
           if (!consumers.length) return `cat: ${a[1]}: No such file or directory`;
           return consumers.map(x => { const k = sim.kafkaIn(x), ps = sim.partitionsOf(k, x.def.id); return `# ${x.def.name}\n${x.def.id}.topic=${k.def.name}\n${x.def.id}.partitions=${ps.join(',')}` + (k.def.keys ? `\n${x.def.id}.underlyings=${ps.map(i => k.def.keys[i]).join(',')}` : ''); }).join('\n\n') + '\n# last changed: 2025-11-14 by platform-admin';
