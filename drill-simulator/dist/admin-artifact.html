@@ -2368,6 +2368,26 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
       return `Permission denied: ${H.host} is accessed with a read-only support account.\nChanges go through approved actions with a named approver.`;
     if (c.host && sim.inOutage(c)) return `ssh: connect to host ${H.host} port 22: Connection refused`;
     const hf = sim.hostFault(c), f = c.fault && c.fault.type;
+    // start-of-day file folders (a loader host): /data, /data/inbound, the inbox and its archive of earlier days.
+    // The archive is always there; the inbox listing gives way to the pack's evidence while its file is missing.
+    const sod = H.comps.map(x => sim.c[x]).find(cx => cx.def.pack_type === 'sod_file_load');
+    if (sod && a[0] === 'ls') {
+      const inbox = sim.packText(sod, '{INBOX}'), file = sim.packText(sod, '{FILE}');
+      const target = (a.slice(1).find(x => !x.startsWith('-')) || '').replace(/\/+$/, '') || '.';
+      const missing = !!(sod.fault && sod.fault.pack && sod.fault.pack.evidence && sod.fault.pack.evidence.ls);
+      const dayOf = f2 => f2.match(/(\d{8})\.csv$/), prev = n => { const d = new Date(Date.UTC(2026, 9, 9 - n)); return d.toISOString().slice(0, 10).replace(/-/g, ''); };
+      const base = file.replace(/\d{8}\.csv$/, ''), size = n => (2861442 - n * 13117).toLocaleString('en-US');
+      const archive = [1, 2, 3, 4, 5].map(n => `-rw-r--r-- 1 sftp sftp ${size(n)} Oct  ${9 - n} 05:3${n} ${base}${prev(n)}.csv`);
+      if (target === inbox + '/archive') return ['total ' + archive.length * 4, ...archive].join('\n');
+      if (target === inbox && !missing) return `total 8\n-rw-r--r-- 1 sftp sftp 2,861,442 Oct  9 05:38 ${file}\ndrwxr-xr-x 2 sftp sftp 4,096 Oct  9 00:05 archive`;
+      if (target === inbox.replace(/\/[^/]+$/, '') && target !== '/data') return `total 4\ndrwxr-xr-x 3 sftp sftp 4,096 Oct  9 00:05 ${inbox.split('/').pop()}`;
+      if (target === '/data') return 'total 4\ndrwxr-xr-x 3 sftp sftp 4,096 Oct  9 00:05 inbound';
+    }
+    if (sod && a[0] === 'cat') { // one archived file: a header, a few records and the trailer count
+      const inbox = sim.packText(sod, '{INBOX}'), file = sim.packText(sod, '{FILE}');
+      const path = a[1] || '', m = path.match(new RegExp('^' + inbox.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '/archive/(\\w+?)(\\d{8})\\.csv$'));
+      if (m) return [`HDR|${m[1].replace(/_$/, '')}|${m[2]}`, 'C000001|ACTIVE|20261008', 'C000002|ACTIVE|20261008', 'C000003|CLOSED|20261007', '...', 'TRL|48210'].join('\n');
+    }
     // commands a pack defines for its technology (e.g. dspmq for IBM MQ); a broken component shows its fault's evidence
     for (const x of H.comps) {
       const cx = sim.c[x], P = cx.def.pack_type && S.PACK_TYPES[cx.def.pack_type]; if (!P) continue;
@@ -2388,7 +2408,8 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
         '  hostname  uptime  date  df -h  free -m  ps aux  top  dmesg | tail',
         '  chronyc tracking   ulimit -n   lsof -p 3120 | wc -l',
         ...H.comps.map(x => `  tail -n 50 /var/log/app/${x}.log   grep ERROR /var/log/app/${x}.log`),
-        '  ls /var/log/app',
+        '  ls /var/log/app   ping <component id>',
+        ...(sod ? ['  ls ' + sim.packText(sod, '{INBOX}') + '/archive   (earlier days\' files)'] : []),
         ...(consumers.length ? ['  cat /opt/app/conf/partitions.conf   (which partitions this server consumes)'] : []),
         ...(vm ? ['  systemctl status <process>'] : []),
         '  cat /etc/app/application.yml   curl -s localhost:8080/health',
@@ -2427,6 +2448,16 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
         const rows = ['COMMAND  PID USER   FD   TYPE DEVICE NAME'];
         for (let k = 0; k < n; k++) rows.push(hf === 'fd_exhausted' && k % 10 ? `java    3120 app  ${k + 20}u  IPv4 TCP ${H.host}:${40000 + k}->${c.type === 'external_party' ? 'api.' + id.replace(/_/g, '') + '.example' : '10.20.4.' + (k % 200)}:443 (CLOSE_WAIT)` : `java    3120 app  ${k + 20}u  IPv4 TCP ${H.host}:8443->10.20.4.${k % 200}:${50000 + k} (ESTABLISHED)`);
         return rows.join('\n');
+      }
+      case 'ping': {
+        const name = a.slice(1).find(x => !x.startsWith('-')) || '';
+        const t = H.comps.map(x => sim.c[x]).find(x => x.def.id === name) || Object.values(sim.c).find(x => x.def.id === name);
+        if (!t) return `ping: ${name || '(no host given)'}: Name or service not known`;
+        const ip = '10.0.' + (t.def.id.length % 9 + 4) + '.' + (10 + t.def.id.charCodeAt(0) % 200);
+        const down = t.host ? sim.inOutage(t) : false, h2 = sim.health(t.def.id);
+        const ms = h2 === 'ok' ? 0.31 + t.def.id.length * 0.01 : h2 === 'warn' ? 9.8 : 14.2;
+        const rows = [0, 1, 2, 3].map(i => down ? `Request timeout for icmp_seq ${i}` : `64 bytes from ${ip}: icmp_seq=${i} ttl=64 time=${(ms + i * 0.07).toFixed(3)} ms`);
+        return [`PING ${t.def.name} (${ip}): 56 data bytes`, ...rows, '', `--- ${name} ping statistics ---`, `4 packets transmitted, ${down ? 0 : 4} received, ${down ? 100 : 0}% packet loss`].join('\n');
       }
       case 'openssl': {
         if (c.type !== 'external_party') return 'Could not open file /etc/pki/tls/client.pem: No such file or directory';
