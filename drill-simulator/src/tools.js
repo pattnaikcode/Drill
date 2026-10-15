@@ -299,8 +299,7 @@
     const isOpt = x => x.startsWith('-') || /^\d+$/.test(x);
     const fileIdx = cmd === 'grep' ? (w.length >= 3 ? [w.length - 1] : []) : ['ls', 'cat', 'head', 'tail', 'wc', 'zcat', 'less'].includes(cmd) ? w.map((x, i) => i).slice(1).filter(i => !isOpt(w[i])) : [];
     fileIdx.forEach(i => { w[i] = resolvePath(cwd, w[i]); });
-    if (cmd === 'ls' && w.length === 1) { if (cwd === HOME) return ''; w.push(cwd); }
-    if (cmd === 'ls' && w.length === 2 && w[1] === HOME) return '';
+    if (cmd === 'ls' && w.length === 1) w.push(cwd);
     segs[0] = w.join(' ');
     // head, wc and grep read any file on the host the same way cat does, so they work on every folder
     const readFile = path => { const t = run(sim, H, 'cat ' + path); return /^cat: /.test(t) ? null : t; };
@@ -479,7 +478,22 @@
       case 'ls':
         if (a[1] && a[1].startsWith('/etc')) return 'application.yml';
         if (a[1] && d.mount && a[a.length - 1].startsWith(d.mount)) return hf === 'disk_full' ? 'tx_000096.dat\ntx_000097.dat\ntx_000098.dat  (0 bytes: write failed)' : 'tx_000096.dat\ntx_000097.dat\ntx_000098.dat';
-        return H.comps.map(x => `${x}.log\n${x}.log.1.gz`).join('\n') + '\ngc.log';
+        {
+          // the application log folder: names, or the long listing (-l) with sizes and times; -t sorts by time, -r reverses
+          const flags = a.filter(x => x.startsWith('-')).join(''), MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+          const today = sim.businessDay(0), yest = sim.businessDay(1), liveHHMM = clk(sim.t, false);
+          const files = [];
+          H.comps.forEach(x => {
+            const cx = sim.c[x], live = cx.logs.reduce((n, l) => n + l.line.length + 1, 0);
+            files.push({ name: `${x}.log`, bytes: live, t: sim.t, when: `${MON[today.getUTCMonth()]} ${String(today.getUTCDate()).padStart(2)} ${liveHHMM}` });
+            files.push({ name: `${x}.log.1.gz`, bytes: sim.archive[x][1].join('\n').length, t: sim.t - 86400, when: `${MON[yest.getUTCMonth()]} ${String(yest.getUTCDate()).padStart(2)} 00:05` });
+          });
+          files.push({ name: 'gc.log', bytes: 2400 + H.comps.length * 300, t: sim.t, when: `${MON[today.getUTCMonth()]} ${String(today.getUTCDate()).padStart(2)} ${liveHHMM}` });
+          if (flags.includes('t')) files.sort((x, y) => y.t - x.t); else files.sort((x, y) => x.name.localeCompare(y.name));
+          if (flags.includes('r')) files.reverse();
+          if (!flags.includes('l')) return files.map(f => f.name).join('\n');
+          return [`total ${files.length * 4}`, ...files.map(f => `-rw-r--r-- 1 app app ${Math.max(1, Math.round(f.bytes / 1024))}K ${f.when} ${f.name}`)].join('\n');
+        }
       case 'cat': {
         if (a[1] && a[1].startsWith('/var/log/app/')) { // application logs: the same lines tail and grep read
           const lc = logOf(a[1]);
