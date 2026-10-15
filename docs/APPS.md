@@ -18,13 +18,24 @@ charts, Splunk-style search, a read-only SQL console and safe Unix commands, the
 **Source.** `src/index.template.html`, `src/app.js`, `src/tools.js`, `src/session.js`, `src/trace.js`.
 Built to `dist/index.html`.
 
+**How it behaves.**
+- Speed: 0.5×, 1× (default), 2× or 4×. At 1× one real second is ten simulated seconds.
+- Acknowledge is available only after the first real alert fires. Before that the Respond panel says
+  "Waiting for the first alert". The session refuses an earlier acknowledgement too.
+- The alert list shows up to about 60% of the window height and scrolls; the newest alerts are at the top.
+- Components and actions in the request dropdowns are grouped (by kind, and fixes before other actions).
+- After a fault clears, the orders queued during the outage must drain before the cut-off. The example
+  systems have spare capacity after the failure point, set in their YAML (`capacity_per_min`). Raising it shortens the drain.
+
 **Where to start when it misbehaves.**
 - A drill does not start: check the system's blueprint loads (`src/engine.js` `validateBlueprint`).
 - Charts look wrong: check `src/tools.js` and the metric history in `src/engine.js` (`_sample`).
 - Scoring looks wrong: `src/session.js`, which compares declared root causes and fixes to the drill file.
+- A drill cannot be recovered in time: check the backlog at the cut-off (`cutoffKpi` in `src/engine.js`) and
+  the capacity of the stages upstream of the cut-off in the system's YAML.
 
-**Limits.** No fault injection (that is the admin page). Drill content is read from `drills/*.yaml`; there is
-no editor for it yet.
+**Limits.** No fault injection (that is the admin page). Drill content is read from `drills/*.yaml` when the
+app is built, so a new or changed drill appears after `python3 build.py`.
 
 ---
 
@@ -37,7 +48,7 @@ live as the room works.
 
 **Where to start.** Fault injection goes through `Simulator.injectFault` in `src/engine.js`.
 
-**Limits.** Use cases are YAML files, not forms. Editing a use case means editing `drills/*.yaml`.
+**Limits.** Use cases are YAML files on disk. Build them in the Use Case Builder (section 3b) rather than by hand.
 
 ---
 
@@ -49,7 +60,31 @@ live as the room works.
 
 **Where to start.** The YAML is produced by `src/builder.js`; the validator is `src/engine.js`.
 
-**Limits.** It is a form editor, so it has the same gaps as the Designer for tables and journeys.
+**Limits.** Tables and journeys are not in this builder yet. Use the Designer (section 4) for them.
+
+---
+
+## 3b. Use Case Builder (forms that write drill YAML)
+
+**Purpose.** Write one use case (a drill) from forms: the system, title, level and brief; faults with their time,
+component, fault and parameters; hints; the debrief; the root cause, accepted fixes and risky actions. The YAML
+on the right is rewritten on every change, and the page checks the use case with the drill player's own rules.
+
+**Source.** `src/usecase.js` (the logic), `src/usecase-ui.js` (the form), `src/usecase.template.html`. Output
+`dist/usecase.html`. The save route is in `src/api.js` (`POST /api/drills`).
+
+**Saving.** "Save to drills folder" posts the YAML to the simulator server on this machine (default port 3000).
+Start it with `node src/server.js --blueprint <system file>`. The server checks the use case against that
+system, refuses to overwrite an existing drill unless you confirm, and writes `drills/<id>.yaml`. It accepts
+requests from this machine only. Run `python3 build.py` afterwards so the drill player shows it.
+
+**Where to start when it misbehaves.**
+- A fault or fix is missing from a list: `faultChoices` and `actionChoices` in `src/usecase.js`.
+- "Save" says it cannot reach the server: the server is not running on that port, or it runs a different system.
+- The check says the root cause is not one of the faults: it must match a fault row exactly (component and fault).
+
+**Limits.** No tables or journeys (those belong to the system, not the drill). Saving an existing use case
+replaces its file after you confirm. Saving needs the simulator server running on the same machine.
 
 ---
 
@@ -70,7 +105,8 @@ and set their properties. The YAML view updates as you work.
 - Work is lost on reload: work is saved in the browser's local storage only.
 
 **Limits.**
-- Tables and journeys can only be edited as YAML.
+- Tables and journeys are added in the System panel (not on the canvas). A journey's steps are one per line,
+  with an optional `| table: insert col=value` write. The check reports any step that does not fit the flow.
 - Alerts take one threshold (above or below). There is no duration or combined condition.
 - Saving is per browser. Nothing is shared between people or machines.
 - Some settings have no form field: pack-specific fields, host settings such as `mount`, and Kafka `weights`,
@@ -133,9 +169,10 @@ and an investigation runner that uses only approved, read-only checks.
 
 ## Known gaps, in the order they should be closed
 
-1. Tables and journeys editable in the Designer (currently YAML only).
-2. Drills (use cases and faults) editable in a form, instead of YAML files.
+1. Use cases appear in the drill player only after a rebuild; there is no live reload.
+2. The Designer's tables and journeys have no drag-and-drop on the canvas.
 3. Designer work saved to a server so it can be shared.
 4. Alerts with a duration and combined conditions.
 5. Real per-request traces in the API.
 6. Errors shown on the box that causes them.
+7. Exchange drills tolerate a responder about 5 minutes slower than the debrief pace, and four drills were removed for missing that margin (see the git history of `drills/`).

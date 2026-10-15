@@ -261,6 +261,18 @@
         <div class="fgrid2"><input type="text" id="aName" placeholder="Alert name" class="wide"><select id="aOn">${B.components.map(c => `<option value="${esc(c.id)}">${esc(c.name || c.id)}</option>`).join('')}</select><select id="aMetric"></select>
           <select id="aDir"><option value="above">above</option><option value="below">below</option></select><input type="number" id="aVal" step="any" placeholder="threshold">
           <select id="aSev"><option>P1</option><option>P2</option><option selected>P3</option><option>P4</option></select><button class="btn sm" id="addAlert">Add alert</button></div></div>
+      <div class="stack" style="gap:6px"><span class="label">Tables (journeys write rows into these)</span>
+        <div class="tl">${Object.entries(B.tables || {}).map(([t, d]) => `<div class="li"><span><code>${esc(t)}</code> <span class="muted">in ${esc(d.db)} · ${(d.columns || []).map(esc).join(', ')}</span></span><button class="btn sm" data-deltable="${esc(t)}">Remove</button></div>`).join('') || '<span class="small muted">None yet.</span>'}</div>
+        ${B.components.some(c => c.type === 'database') ? `<div class="fgrid2"><input type="text" id="tName" placeholder="Table name, e.g. orders" class="wide"><select id="tDb">${B.components.filter(c => c.type === 'database').map(c => `<option value="${esc(c.id)}">${esc(c.name || c.id)}</option>`).join('')}</select><input type="text" id="tCols" class="wide" placeholder="Columns, comma separated, e.g. id, customer, status"><button class="btn sm" id="addTable">Add table</button></div>` : '<span class="small muted">Add a database component first.</span>'}
+      </div>
+      <div class="stack" style="gap:6px"><span class="label">Journeys (one order's path through the system)</span>
+        <div class="tl">${(B.journeys || []).map((j, i) => `<div class="li"><span>${esc(j.name)} <span class="muted">${(j.steps || []).map(s => esc(s.at)).join(' → ')}</span></span><button class="btn sm" data-deljourney="${i}">Remove</button></div>`).join('') || '<span class="small muted">None yet.</span>'}</div>
+        <div class="fgrid2"><input type="text" id="jName" class="wide" placeholder="Journey name, e.g. Customer places an order">
+          <input type="text" id="jOrder" class="wide" placeholder="Order fields, e.g. customer=C1, amount=499">
+          <textarea id="jSteps" class="wide" rows="4" placeholder="One step per line: a component id. To record a row, add | then the write.&#10;web&#10;web_srv | orders: insert status=NEW&#10;notifier"></textarea>
+          <button class="btn sm" id="addJourney">Add journey</button></div>
+        <span class="small muted">Steps follow the flow in order. A write names a table above and says insert or update.</span>
+      </div>
       <div class="stack" style="gap:6px"><span class="label">Diagram groups</span>
         <div class="tl">${B.diagram.groups.map((g2, i) => `<div class="li"><span>${esc(g2.label)} <span class="muted">${g2.roles ? 'roles: ' + esc(g2.roles.join(', ')) : (g2.ids || []).length + ' components'}</span></span><button class="btn sm" data-delgrp="${i}">Remove</button></div>`).join('') || '<span class="small muted">None yet.</span>'}</div>
         <div class="row"><input type="text" id="gLabel" placeholder="Group name" style="flex:1"><button class="btn sm" id="addGrp">Add group</button></div>
@@ -426,6 +438,27 @@
     else if (t.dataset.delgrp !== undefined) change(() => { B.diagram.groups.splice(+t.dataset.delgrp, 1); });
     else if (t.id === 'addKpi') { const l = $('#kLabel').value.trim(); if (!l) return toast('Give the KPI a label.'); change(() => { if ($('#kCut').checked) B.business.kpis.forEach(k => delete k.cutoff); B.business.kpis.push({ label: l, at: $('#kAt').value, ...($('#kCut').checked ? { cutoff: true } : {}) }); }); }
     else if (t.id === 'addAlert') { const n = $('#aName').value.trim(), v = $('#aVal').value; if (!n || v === '') return toast('An alert needs a name and a threshold.'); change(() => { B.alerts.push({ name: n, on: $('#aOn').value, metric: $('#aMetric').value, [$('#aDir').value]: Number(v), severity: $('#aSev').value }); }); }
+    else if (t.dataset.deltable !== undefined) change(() => { delete B.tables[t.dataset.deltable]; });
+    else if (t.dataset.deljourney !== undefined) change(() => { B.journeys.splice(+t.dataset.deljourney, 1); });
+    else if (t.id === 'addTable') {
+      const n = ($('#tName').value || '').trim(), cols = ($('#tCols').value || '').split(',').map(s => s.trim()).filter(Boolean);
+      if (!/^[a-z][a-z0-9_]*$/.test(n)) return toast('A table name uses lowercase letters, digits or _, e.g. orders.');
+      if (!cols.length) return toast('List at least one column.');
+      change(() => { B.tables = B.tables || {}; B.tables[n] = { db: $('#tDb').value, columns: cols }; });
+    }
+    else if (t.id === 'addJourney') {
+      const name = ($('#jName').value || '').trim();
+      if (!name) return toast('Give the journey a name.');
+      const order = {};
+      ($('#jOrder').value || '').split(',').map(s => s.trim()).filter(Boolean).forEach(p => { const i = p.indexOf('='); if (i > 0) { const v = p.slice(i + 1).trim(); order[p.slice(0, i).trim()] = /^-?\d+(\.\d+)?$/.test(v) ? Number(v) : v; } });
+      const steps = $('#jSteps').value.split('\n').map(s => s.trim()).filter(Boolean).map(line => {
+        const [at, w] = line.split('|').map(s => s.trim());
+        return w ? { at, writes: [w] } : { at };
+      });
+      if (!steps.length) return toast('Add at least one step.');
+      let id = name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'journey';
+      change(() => { B.journeys = B.journeys || []; const ids = new Set(B.journeys.map(j => j.id)); let x = id, n = 2; while (ids.has(x)) x = `${id}_${n++}`; B.journeys.push({ id: x, name, order, steps }); });
+    }
     else if (t.id === 'addGrp') { const l = $('#gLabel').value.trim(); if (!l) return; change(() => { B.diagram.groups.push({ label: l, ids: [] }); }); }
   });
 

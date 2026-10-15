@@ -98,6 +98,7 @@
 
   Session.prototype.acknowledge = function (who) {
     if (this.ackAt !== null || this.state !== 'running') return false;
+    if (this.firstAlertAt() === null) return false; // nothing to acknowledge until an alert fires
     this.ackAt = this.sim.t; this.ackBy = who || 'Responder';
     this.timeline.push({ t: this.sim.t, kind: 'ack', text: `Acknowledged by ${this.ackBy}` });
     return true;

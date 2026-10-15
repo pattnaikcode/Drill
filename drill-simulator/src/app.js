@@ -416,8 +416,9 @@
       : '<p class="small muted" style="margin:0">No alerts. Alert rules come from the system blueprint.</p>';
     if (A.session) {
       const ss = A.session;
-      $('#ackStatus').textContent = ss.ackAt === null ? 'Not acknowledged' : `Acknowledged at ${S.clockStr(ss.ackAt)} by ${ss.ackBy}`;
-      $('#ackBtn').disabled = ss.ackAt !== null;
+      const noAlert = ss.firstAlertAt() === null;
+      $('#ackStatus').textContent = ss.ackAt !== null ? `Acknowledged at ${S.clockStr(ss.ackAt)} by ${ss.ackBy}` : noAlert ? 'Waiting for the first alert. You can acknowledge once one fires.' : 'Alert fired. Not acknowledged';
+      $('#ackBtn').disabled = ss.ackAt !== null || noAlert;
       $('#hints').innerHTML = ss.visibleHints().map(h => `<div class="hint">${esc(h)}</div>`).join('');
       if (ADMIN && $('#instrFaults')) { const af = sim.activeFaults(); $('#instrFaults').innerHTML = '<b>Active now:</b> ' + (af.length ? af.map(f => `${esc(f.type === 'outage' ? 'host restarting / failing over' : S.faultsForDef(sim.c[f.id].def)[f.type].label)} on ${esc(sim.c[f.id].def.name)}`).join('; ') : 'nothing — all faults cleared'); }
     }
@@ -447,7 +448,7 @@
         <div class="setup">
           <label class="field">Your name (shown on acknowledgements)<input type="text" id="responder" value="${esc(A.responder)}" placeholder="e.g. Priya, L2 Support" autocomplete="off"></label>
           <label class="field">Mode<select id="mode"><option value="practice"${A.mode === 'practice' ? ' selected' : ''}>Practice: hints and feedback</option><option value="assessment"${A.mode === 'assessment' ? ' selected' : ''}>Assessment: no hints</option></select></label>
-          <label class="field">Speed<select id="speedSel">${[0.5, 1, 2].map(x => `<option value="${x}"${A.speed === x ? ' selected' : ''}>${x}× (1 s = ${x * 10} s)</option>`).join('')}</select></label>
+          <label class="field">Speed<select id="speedSel">${[0.5, 1, 2, 4].map(x => `<option value="${x}"${A.speed === x ? ' selected' : ''}>${x}× (1 s = ${x * 10} s)</option>`).join('')}</select></label>
           <button class="btn primary" id="startBtn" ${!sel || D.validateDrill(sel.d, A.bp).length ? 'disabled' : ''}>${sel ? `Start “${esc(sel.d.title)}”` : 'No use case'}</button>
         </div>
         <div class="lib">${list.map(({ d, builtIn }) => {
@@ -461,7 +462,12 @@
       </section></div>`;
   }
 
-  function compOptions(filter) { return A.bp.components.filter(filter).map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join(''); }
+  const KIND_LABEL = { source: 'Sources', service: 'Services', kafka_topic: 'Kafka topics', external_party: 'External parties', ref_data: 'Reference data', database: 'Databases', issuer: 'Issuers' };
+  function compOptions(filter) { // grouped by kind, so a long list of components reads in sections
+    const groups = {};
+    A.bp.components.filter(filter).forEach(c => { const k = KIND_LABEL[c.type] || 'Other'; (groups[k] = groups[k] || []).push(`<option value="${c.id}">${esc(c.name)}</option>`); });
+    return Object.entries(groups).map(([k, opts]) => `<optgroup label="${esc(k)}">${opts.join('')}</optgroup>`).join('');
+  }
   function actionPicker() {
     return `<div class="stack" style="gap:6px"><span class="label">Request an action</span>
       <div class="pick"><select id="acComp" aria-label="Component">${compOptions(c => Object.keys(S.actionsForDef(c)).length)}</select><select id="acAction" aria-label="Action"></select><button class="btn" id="acBtn">Request approval</button></div>
@@ -634,7 +640,10 @@ debrief:
   });
   function fillActions() { // the runbook catalogue for this kind of component: fixes, heavy options and harmful ones alike
     const c = A.bp.byId[$('#acComp').value]; if (!c) return;
-    $('#acAction').innerHTML = Object.entries(S.actionsForDef(c)).map(([k, a]) => `<option value="${k}">${esc(A.sim.packText ? A.sim.packText(A.sim.c[c.id], a.label) : a.label)}</option>`).join('');
+    const opt = ([k, a]) => `<option value="${k}">${esc(A.sim.packText ? A.sim.packText(A.sim.c[c.id], a.label) : a.label)}</option>`;
+    const acts = Object.entries(S.actionsForDef(c));
+    const fixes = acts.filter(([, a]) => (a.fixes || []).length), other = acts.filter(([, a]) => !(a.fixes || []).length);
+    $('#acAction').innerHTML = (fixes.length ? `<optgroup label="Fixes a known fault">${fixes.map(opt).join('')}</optgroup>` : '') + (other.length ? `<optgroup label="Other actions">${other.map(opt).join('')}</optgroup>` : '');
   }
   const errList = errs => `<ul class="errors">${errs.map(x => `<li>${esc(x)}</li>`).join('')}</ul>`;
   function copyText(text, btn) {
@@ -702,7 +711,7 @@ debrief:
     // run: response
     if ($('#fxComp')) { fillFaults('#fxComp', '#fxFault'); on('#fxComp', 'change', () => fillFaults('#fxComp', '#fxFault')); }
     if ($('#acComp')) { fillActions(); on('#acComp', 'change', fillActions); }
-    on('#ackBtn', 'click', () => { if (A.session.acknowledge(A.responder.trim() || 'Responder')) { pushFeed('Incident acknowledged'); updateLive(); } });
+    on('#ackBtn', 'click', () => { if (A.session.acknowledge(A.responder.trim() || 'Responder')) { pushFeed('Incident acknowledged'); updateLive(); } else toast('Wait for the first alert before you acknowledge.'); });
     on('#rcBtn', 'click', () => {
       const comp = $('#rcComp').value, fault = $('#rcFault').value, ev = $('#rcEvidence').value.trim(), ss = A.session;
       if (!fault) { pushFeed('Choose a cause first.', 'bad'); return; }

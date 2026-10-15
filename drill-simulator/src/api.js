@@ -235,6 +235,33 @@
 
     const self = this;
 
+    // POST /api/drills - save a use case into drills/ (local machine only). The builder page sends
+    // { drill: "<yaml text>", overwrite: false }. It is checked against the running system first.
+    const LOOPBACK = ['127.0.0.1', '::1', '::ffff:127.0.0.1'];
+    app.use('/api/drills', (req, res, next) => { // the builder page is a local file, so allow its requests
+      res.set('Access-Control-Allow-Origin', '*');
+      res.set('Access-Control-Allow-Headers', 'Content-Type');
+      res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
+      if (req.method === 'OPTIONS') return res.sendStatus(204);
+      next();
+    });
+    app.post('/api/drills', (req, res) => {
+      if (!LOOPBACK.includes(req.socket.remoteAddress)) return res.status(403).json({ ok: false, errors: ['Saving is allowed from this machine only.'] });
+      const fs = require('fs'), path = require('path'), yamlLib = require('../vendor/js-yaml.min.js');
+      const D = require('./session.js');
+      let drill;
+      try { drill = yamlLib.load(String((req.body && req.body.drill) || '')); } catch (e) { return res.status(400).json({ ok: false, errors: ['YAML syntax: ' + e.message] }); }
+      if (!drill || typeof drill !== 'object') return res.status(400).json({ ok: false, errors: ['The use case is empty.'] });
+      if (!/^[a-z0-9][a-z0-9-]*$/.test(String(drill.id || ''))) return res.status(400).json({ ok: false, errors: ['"id" must be lowercase letters, digits and dashes.'] });
+      const errors = (drill.systems || []).includes(self.sim.bp.id) ? D.validateDrill(drill, self.sim.bp) : [`This server runs "${self.sim.bp.id}". Start the server on the system the use case is for.`];
+      if (errors.length) return res.status(400).json({ ok: false, errors });
+      const dir = path.resolve(__dirname, '..', 'drills');
+      const file = path.join(dir, drill.id + '.yaml');
+      if (fs.existsSync(file) && !(req.body && req.body.overwrite)) return res.status(409).json({ ok: false, exists: true, errors: [`drills/${drill.id}.yaml already exists. Choose another title, or confirm the overwrite.`] });
+      fs.writeFileSync(file, String(req.body.drill).endsWith('\n') ? req.body.drill : req.body.drill + '\n');
+      res.json({ ok: true, file: `drills/${drill.id}.yaml`, note: 'Run node build.py to add it to the app.' });
+    });
+
     // POST /api/v1/metrics - query time-series metrics
     app.post('/api/v1/metrics', (req, res) => {
       const result = self.metrics.query(req.body);
