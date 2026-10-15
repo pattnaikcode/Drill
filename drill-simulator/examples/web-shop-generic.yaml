@@ -1,0 +1,81 @@
+# Generic web shop: website and app, load balancer, web servers, orders database, order events and
+# notifications (illustrative model)
+#
+# A customer's order is saved to the orders database before the web server answers. It is then
+# published as an event on a Kafka topic, so checkout does not wait for messaging. A notification
+# service reads the topic and sends the SMS through the provider. Built from the generic pack.
+# Names and numbers are a training model.
+
+id: web-shop-generic
+system: Web shop with order events
+description: >
+  Customers use the website or the mobile app. The load balancer spreads requests across the web
+  servers, which save each order to the orders database and publish an event. The notification
+  service reads the events and sends the confirmation SMS through the provider.
+
+clock: {start: "18:00", cutoff: "19:00", cutoff_label: Evening peak ends}
+
+business:
+  currency: "₹"
+  unit: L
+  unit_name: orders
+  avg_notional: 0.004
+  kpis:
+    - {label: "Orders not yet saved", at: orders_db, cutoff: true}
+    - {label: "Messages not yet sent", at: order_events}
+
+components:
+  - {id: web, type: website, name: Website, session: WEB01, rate_per_min: 600}
+  - {id: app, type: mobile_app, name: Mobile app, session: APP01, rate_per_min: 500}
+  - {id: lb, type: load_balancer, role: Front door, name: Load Balancer, capacity_per_min: 3000, instances: 2}
+  - {id: web_srv, type: web_server, role: Storefront, name: Web Servers, capacity_per_min: 1500, instances: 3, uses: [orders_db]}
+  - {id: orders_db, type: database, name: Orders DB, pool_size: 50, big_table: orders}
+  - {id: order_events, type: kafka_topic, role: Events, name: Order Events Topic, partitions: 6}
+  - {id: notifier, type: web_server, role: Notifications, name: Notification Service, capacity_per_min: 1500, instances: 2}
+  - {id: sms, type: sms_email_provider, role: Customer messages, name: SMS Provider, capacity_per_min: 1600}
+
+flow:
+  - web -> lb
+  - app -> lb
+  - lb -> web_srv -> order_events -> notifier -> sms
+
+tables:
+  orders: {db: orders_db, columns: [order_id, customer, status, amount]}
+
+journeys:
+  - id: place_order
+    name: Customer places an order
+    order: {customer: C1, amount: 499}
+    steps:
+      - {at: web}
+      - {at: lb}
+      - {at: web_srv, writes: ["orders: insert status=NEW"]}
+      - {at: order_events}
+      - {at: notifier}
+      - {at: sms}
+
+alerts:
+  - {name: "Website or app traffic stopped", on: lb, metric: sessions_down, above: 0, severity: P1}
+  - {name: "Load balancer rejecting requests", on: lb, metric: reject_rate, above: 2, severity: P1}
+  - {name: "Checkout failures", on: web_srv, metric: reject_rate, above: 3, severity: P1}
+  - {name: "Checkout slow", on: web_srv, metric: latency_ms, above: 600, severity: P2}
+  - {name: "Orders DB pool saturated", on: orders_db, metric: pool_pct, above: 90, severity: P2}
+  - {name: "Order events lagging", on: order_events, metric: lag, above: 2000, severity: P2}
+  - {name: "Notifications failing", on: notifier, metric: error_rate, above: 3, severity: P2}
+  - {name: "SMS provider errors", on: sms, metric: error_rate, above: 5, severity: P3}
+
+diagram:
+  notes: >
+    The order is saved before the customer is answered, so a slow messaging step never loses an order.
+    A growing lag on the events topic means notifications are late, not that orders are lost.
+  groups:
+    - {label: "Customers", ids: [web, app]}
+    - {label: "Shop", ids: [lb, web_srv, orders_db]}
+    - {label: "Messaging", ids: [order_events, notifier, sms]}
+  steps:
+    - {from: web, to: lb, text: "Website and app requests reach the load balancer."}
+    - {from: lb, to: web_srv, text: "The load balancer spreads requests across the web servers."}
+    - {from: web_srv, to: orders_db, text: "Each order is saved to the orders database."}
+    - {from: web_srv, to: order_events, text: "The web server publishes an order event after saving."}
+    - {from: order_events, to: notifier, text: "The notification service reads events from the topic."}
+    - {from: notifier, to: sms, text: "The SMS provider sends the confirmation to the customer."}
