@@ -26,11 +26,11 @@ business:
 components:
   - {id: atms, type: atm_fleet, role: Card channels, name: ATM Fleet, session: ATM01, rate_per_min: 300}
   - {id: pos, type: source, role: Card channels, name: Card Terminals, session: POS01, rate_per_min: 700}
-  - {id: card_switch, type: card_switch_iso8583, role: Card switch, name: Card Switch, capacity_per_min: 1500, instances: 2, uses: [hsm]}
+  - {id: card_switch, type: card_switch_iso8583, role: Card switch, name: Card Switch, capacity_per_min: 2300, instances: 2, uses: [hsm]}
   - {id: hsm, type: hsm, name: HSM}
   - {id: upi_in, type: source, role: UPI, name: UPI Requests, session: UPI01, rate_per_min: 1200}
-  - {id: upi_switch, type: instant_payment_switch, role: UPI switch, name: UPI Switch, capacity_per_min: 1800, instances: 3}
-  - {id: cbs, type: core_banking_system, role: Ledger, name: Core Banking (CBS), capacity_per_min: 3000, instances: 4, uses: [accounts_db]}
+  - {id: upi_switch, type: instant_payment_switch, role: UPI switch, name: UPI Switch, capacity_per_min: 2700, instances: 3}
+  - {id: cbs, type: core_banking_system, role: Ledger, name: Core Banking (CBS), capacity_per_min: 4500, instances: 4, uses: [accounts_db]}
   - {id: accounts_db, type: database, name: Accounts DB, pool_size: 120, big_table: ACCT_TXN}
   - {id: sms, type: external_party, role: Alerts, name: SMS Gateway, capacity_per_min: 3200}
 

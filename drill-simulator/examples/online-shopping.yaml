@@ -28,16 +28,16 @@ components:
   - {id: website, type: source, role: Customers, name: Website, session: WEB01, rate_per_min: 900}
   - {id: android_app, type: source, role: Customers, name: Android App, session: AND01, rate_per_min: 1000}
   - {id: ios_app, type: source, role: Customers, name: iOS App, session: IOS01, rate_per_min: 600}
-  - {id: api_gw, type: service, role: API gateway, name: API Gateway, capacity_per_min: 3500, instances: 3}
-  - {id: checkout, type: service, role: Cart and checkout, name: Checkout Service, capacity_per_min: 3400, instances: 4, uses: [catalog, inventory_db], rejects: return}
+  - {id: api_gw, type: service, role: API gateway, name: API Gateway, capacity_per_min: 7000, instances: 3}
+  - {id: checkout, type: service, role: Cart and checkout, name: Checkout Service, capacity_per_min: 6800, instances: 4, uses: [catalog, inventory_db], rejects: return}
   - {id: catalog, type: ref_data, name: Product Catalogue and Prices, refresh_every_min: 15, stale_after_min: 30, stale_reject_share: 0.12,
      missing_msg: "No current price for SKU {key}: checkout rejected, customer sees an error"}
   - {id: inventory_db, type: database, name: Inventory DB, pool_size: 80, big_table: STOCK_MOVEMENTS}
-  - {id: payment_gw, type: external_party, role: Payments, name: Payment Gateway (cards and UPI), capacity_per_min: 3500}
+  - {id: payment_gw, type: external_party, role: Payments, name: Payment Gateway (cards and UPI), capacity_per_min: 7000}
   - {id: orders_topic, type: kafka_topic, name: orders.paid, partitions: 6, consumer_group: fulfilment}
-  - {id: fulfilment, type: service, role: Fulfilment, name: Fulfilment Service, capacity_per_min: 3400, instances: 3}
-  - {id: wms, type: service, role: Warehouse, name: Warehouse Management, capacity_per_min: 3400, instances: 2}
-  - {id: courier, type: external_party, role: Delivery partner, name: Delivery Partner API, capacity_per_min: 3500}
+  - {id: fulfilment, type: service, role: Fulfilment, name: Fulfilment Service, capacity_per_min: 6800, instances: 3}
+  - {id: wms, type: service, role: Warehouse, name: Warehouse Management, capacity_per_min: 6800, instances: 2}
+  - {id: courier, type: external_party, role: Delivery partner, name: Delivery Partner API, capacity_per_min: 7000}
   - {id: notify, type: external_party, role: Notifications, name: SMS and Email Provider, capacity_per_min: 3500}
 
 flow:

@@ -39,9 +39,9 @@ components:
   - {id: mm_2, kind: market_maker, name: Delta Quotes, session: DLTQ12}
 
   # exchange trading system
-  - {id: fix_gateway, type: service, role: Exchange, name: Order Entry Gateway (OEGW), capacity_per_min: 2700, instances: 3}
-  - {id: risk, type: service, role: Exchange, name: Order Validation, capacity_per_min: 2800, instances: 4, uses: [instrument_master], rejects: return}
-  - {id: matching, type: service, role: Exchange, name: Matching Engine, capacity_per_min: 3000, instances: 2, uses: [orderbook_db]}
+  - {id: fix_gateway, type: service, role: Exchange, name: Order Entry Gateway (OEGW), capacity_per_min: 4100, instances: 3}
+  - {id: risk, type: service, role: Exchange, name: Order Validation, capacity_per_min: 4200, instances: 4, uses: [instrument_master], rejects: return}
+  - {id: matching, type: service, role: Exchange, name: Matching Engine, capacity_per_min: 4500, instances: 2, uses: [orderbook_db]}
   - {id: instrument_master, type: ref_data, name: Instrument Master, refresh_every_min: 10, stale_after_min: 30}
   - {id: orderbook_db, type: database, name: Order Book Store, pool_size: 80, big_table: ORDER_HIST}
 
@@ -52,8 +52,8 @@ components:
 
   # post-trade
   - {id: trade_bus, type: kafka_topic, name: trades.matched, partitions: 8, consumer_group: clearing-feed}
-  - {id: clearing_feed, type: service, role: Exchange, name: Clearing Feed Adapter, capacity_per_min: 2600, instances: 2}
-  - {id: clearing, type: external_party, role: Clearing corporation, name: Clearing Corporation, capacity_per_min: 3600}
+  - {id: clearing_feed, type: service, role: Exchange, name: Clearing Feed Adapter, capacity_per_min: 3900, instances: 2}
+  - {id: clearing, type: external_party, role: Clearing corporation, name: Clearing Corporation, capacity_per_min: 5400}
 
   # market surveillance: every order event and trade from matching, on its own Kafka topic
   - {id: surv_bus, type: kafka_topic, name: matching.events, partitions: 8, consumer_group: surveillance}

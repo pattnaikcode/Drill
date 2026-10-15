@@ -23,12 +23,12 @@ business:
 components:
   - {id: net_banking, type: source, role: Channel, name: Net Banking, session: NETB01, rate_per_min: 500}
   - {id: corporate_h2h, type: source, role: Channel, name: Corporate Host-to-Host, session: H2H01, rate_per_min: 300}
-  - {id: payment_engine, type: service, role: Payments, name: Payment Engine, capacity_per_min: 1200, instances: 3, uses: [customer_static, payments_db]}
+  - {id: payment_engine, type: service, role: Payments, name: Payment Engine, capacity_per_min: 1800, instances: 3, uses: [customer_static, payments_db]}
   - {id: customer_static, type: sod_file_load, name: Customer Static (SOD file), refresh_every_min: 1440, stale_after_min: 1440, stale_reject_share: 0.9,
      missing_msg: "No customer static for account {key}: payment parked for repair", key_prefix: ACC}
   - {id: payments_db, type: database, name: Payments DB, pool_size: 60, big_table: PAYMENT_HIST}
-  - {id: mq_out, type: mq_queue_manager, role: Messaging, name: MQ to SWIFT, capacity_per_min: 1200, instances: 1}
-  - {id: swift, type: external_party, role: SWIFT network, name: SWIFT Gateway, capacity_per_min: 1300}
+  - {id: mq_out, type: mq_queue_manager, role: Messaging, name: MQ to SWIFT, capacity_per_min: 1800, instances: 1}
+  - {id: swift, type: external_party, role: SWIFT network, name: SWIFT Gateway, capacity_per_min: 2000}
 
 flow:
   - net_banking -> payment_engine

@@ -28,9 +28,9 @@ business:
 components:
   - {id: brokers, type: bid_channel, role: Bid channels, name: Broker Terminals, session: BRK01, rate_per_min: 500}
   - {id: apps, type: bid_channel, role: Bid channels, name: Investment Apps (UPI), session: APP01, rate_per_min: 700}
-  - {id: bidding, type: bidding_platform, role: Exchange, name: Bidding Platform, capacity_per_min: 1800, instances: 3, uses: [secmaster]}
+  - {id: bidding, type: bidding_platform, role: Exchange, name: Bidding Platform, capacity_per_min: 2700, instances: 3, uses: [secmaster]}
   - {id: secmaster, type: security_master, name: Security Master}
-  - {id: sponsor, type: sponsor_bank, role: Banks, name: Sponsor Bank, capacity_per_min: 1800}
+  - {id: sponsor, type: sponsor_bank, role: Banks, name: Sponsor Bank, capacity_per_min: 2700}
   - {id: registrar, type: registrar, role: Registrar, name: Registrar (RTA), capacity_per_min: 1800, instances: 2}
   - {id: allotment, type: allotment_engine, role: Registrar, name: Allotment Engine, capacity_per_min: 1800, instances: 2}
   - {id: depository, type: securities_depository, role: Depository, name: Depository (demat credit), capacity_per_min: 1900}
