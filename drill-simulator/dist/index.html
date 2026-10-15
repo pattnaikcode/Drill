@@ -3027,7 +3027,7 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
       <section class="panel stack"><h2>Respond</h2>
         <div class="row between"><span id="ackStatus" class="small muted"></span><button class="btn" id="ackBtn">Acknowledge</button></div>
         <div class="stack" style="gap:6px"><span class="label">Declare root cause</span>
-          <div class="pick"><select id="rcComp" aria-label="Where the problem is">${compOptions(() => true)}</select><select id="rcFault" aria-label="Cause">${causeOptions()}</select></div>
+          <div class="pick"><select id="rcComp" aria-label="Where the problem is">${compOptions(() => true)}</select><select id="rcGroup" aria-label="Kind of cause">${causeGroupOptions()}</select><select id="rcFault" aria-label="Cause">${causeOptions('')}</select></div>
           <textarea id="rcEvidence" class="evidence" rows="2" placeholder="Your evidence: what you saw, and in which tool (an error in a log, a metric, a query result, a command output)" aria-label="Evidence for the root cause"></textarea>
           <div class="row"><button class="btn" id="rcBtn">Declare</button><span class="small muted">The same list of causes is offered for every component.</span></div></div>
         ${actionPicker()}
@@ -3161,10 +3161,16 @@ debrief:
     const c = A.bp.byId[$(compSel).value]; if (!c) return;
     $(faultSel).innerHTML = Object.entries(S.faultsForDef(c)).map(([k, f]) => `<option value="${k}">${esc(f.label)}${f.host ? ' (host)' : ''}</option>`).join('');
   }
-  function causeOptions() { // one list for every component, real causes among decoys
-    const all = S.causesFor(A.bp), groups = [...new Set(all.map(c => c.group))];
-    return '<option value="">Choose a cause…</option>' + groups.map(g => `<optgroup label="${esc(g)}">${all.filter(c => c.group === g).map(c => `<option value="${c.key}">${esc(c.label)}</option>`).join('')}</optgroup>`).join('');
+  // one list of causes for every component, real causes among decoys; shown one group at a time so each list is short
+  const causeGroups = () => [...new Set(S.causesFor(A.bp).map(c => c.group))];
+  function causeGroupOptions() { return '<option value="">Choose a kind…</option>' + causeGroups().map(g => `<option value="${esc(g)}">${esc(g)}</option>`).join(''); }
+  function causeOptions(group) {
+    const all = S.causesFor(A.bp).filter(c => c.group === group);
+    return '<option value="">Choose a cause…</option>' + all.map(c => `<option value="${c.key}">${esc(c.label)}</option>`).join('');
   }
+  document.addEventListener('change', e => {
+    if (e.target.id === 'rcGroup') { const f = $('#rcFault'); if (f) f.innerHTML = causeOptions(e.target.value); }
+  });
   function fillActions() { // the runbook catalogue for this kind of component: fixes, heavy options and harmful ones alike
     const c = A.bp.byId[$('#acComp').value]; if (!c) return;
     $('#acAction').innerHTML = Object.entries(S.actionsForDef(c)).map(([k, a]) => `<option value="${k}">${esc(A.sim.packText ? A.sim.packText(A.sim.c[c.id], a.label) : a.label)}</option>`).join('');
