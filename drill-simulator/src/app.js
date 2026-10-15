@@ -39,7 +39,7 @@
     tab: 'drills', sysId: SYSTEMS[C.default_blueprint] ? C.default_blueprint : Object.keys(SYSTEMS)[0],
     bp: null, sim: null, session: null, drillId: null, layout: null,
     mode: store.get('mode', 'practice'), responder: store.get('responder', ''),
-    running: true, speed: 2, acc: 0, ended: false, selected: null, approval: null, feed: [], debrief: null, debriefReason: null,
+    running: true, speed: 1, acc: 0, ended: false, selected: null, approval: null, feed: [], debrief: null, debriefReason: null,
     mapView: 'live', toolTab: 'component', errorsOnly: false,
     grafana: 'overview', splunkQ: 'level=ERROR OR level=WARN earliest=-15m', splunkR: null, sqlDb: null, sqlQ: 'SHOW TABLES', sqlR: null,
     unixHost: null, unixOut: [], designSys: null, designUC: null, designMsg: '', ucMsg: '', traceSel: null, journey: null,
@@ -447,7 +447,7 @@
         <div class="setup">
           <label class="field">Your name (shown on acknowledgements)<input type="text" id="responder" value="${esc(A.responder)}" placeholder="e.g. Priya, L2 Support" autocomplete="off"></label>
           <label class="field">Mode<select id="mode"><option value="practice"${A.mode === 'practice' ? ' selected' : ''}>Practice: hints and feedback</option><option value="assessment"${A.mode === 'assessment' ? ' selected' : ''}>Assessment: no hints</option></select></label>
-          <label class="field">Speed<select id="speedSel">${[1, 2, 4, 8].map(x => `<option value="${x}"${A.speed === x ? ' selected' : ''}>${x}× (1 s = ${x * 10} s)</option>`).join('')}</select></label>
+          <label class="field">Speed<select id="speedSel">${[0.5, 1, 2].map(x => `<option value="${x}"${A.speed === x ? ' selected' : ''}>${x}× (1 s = ${x * 10} s)</option>`).join('')}</select></label>
           <button class="btn primary" id="startBtn" ${!sel || D.validateDrill(sel.d, A.bp).length ? 'disabled' : ''}>${sel ? `Start “${esc(sel.d.title)}”` : 'No use case'}</button>
         </div>
         <div class="lib">${list.map(({ d, builtIn }) => {
