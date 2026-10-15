@@ -698,13 +698,28 @@ debrief:
     each('[data-sql]', b => b.addEventListener('click', () => { $('#sqlQ').value = b.dataset.sql; runSql(b.dataset.sql); }));
     const runUnix = cmd => {
       if (!cmd.trim()) return;
-      const out = TL.shell(A.sim, A.unixHost, cmd);
+      A.unixHist = A.unixHist || []; A.unixHistPos = null;
+      if (A.unixHist[A.unixHist.length - 1] !== cmd) A.unixHist.push(cmd);
+      if (A.unixHist.length > 200) A.unixHist.splice(0, A.unixHist.length - 200);
+      // "history" is the shell's own: numbered commands from this session, like a real bash history
+      const out = cmd.trim() === 'history' ? A.unixHist.map((h, i) => `${String(i + 1).padStart(5)}  ${h}`).join('\n') : TL.shell(A.sim, A.unixHost, cmd);
       A.unixOut.push(`support_ro@${A.unixHost}:~$ ${cmd}`, ...(out ? [out] : []));
       if (A.unixOut.length > 400) A.unixOut.splice(0, A.unixOut.length - 400);
       if (A.session) A.session.useTool('Shell', `${A.unixHost}$ ${cmd}`);
       const el = $('#uxOut'); el.textContent = A.unixOut.join('\n'); el.scrollTop = el.scrollHeight;
     };
     on('#uxForm', 'submit', e => { e.preventDefault(); const v = $('#uxIn').value; $('#uxIn').value = ''; runUnix(v); });
+    // up and down arrows walk back through this session's commands, as in a terminal; down past the newest clears the line
+    on('#uxIn', 'keydown', e => {
+      const h = A.unixHist || [];
+      if (!h.length || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;
+      e.preventDefault();
+      let p = A.unixHistPos === null || A.unixHistPos === undefined ? h.length : A.unixHistPos;
+      p = e.key === 'ArrowUp' ? Math.max(0, p - 1) : Math.min(h.length, p + 1);
+      A.unixHistPos = p === h.length ? null : p;
+      e.target.value = p === h.length ? '' : h[p];
+      e.target.setSelectionRange(e.target.value.length, e.target.value.length);
+    });
     on('#uxHost', 'change', e => { A.unixHost = e.target.value; A.unixOut.push(`--- connected to ${A.unixHost} ---`); renderAll(); });
     each('[data-ux]', b => b.addEventListener('click', () => runUnix(b.dataset.ux)));
     if ($('#uxOut')) $('#uxOut').scrollTop = $('#uxOut').scrollHeight;

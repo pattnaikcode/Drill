@@ -2381,6 +2381,27 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
       return `Permission denied: ${H.host} is accessed with a read-only support account.\nChanges go through approved actions with a named approver.`;
     if (c.host && sim.inOutage(c)) return `ssh: connect to host ${H.host} port 22: Connection refused`;
     const hf = sim.hostFault(c), f = c.fault && c.fault.type;
+    // rotated application logs: ten days of each component's log, one file per day, as on a real host
+    const archLog = /^\/var\/log\/app\/archive\/(\w+)\.log-(\d{8})\.gz$/;
+    if (a[0] === 'ls' && (a[1] || '').replace(/\/+$/, '') === '/var/log/app/archive') {
+      const rows = [];
+      H.comps.forEach(x => { for (let n = 1; n <= 10; n++) rows.push(`-rw-r--r-- 1 app app ${(180 + n * 7 + x.length * 3)}K ${sim.businessDay(n).toISOString().slice(5, 10)} 00:05 ${x}.log-${sim.businessDate(n)}.gz`); });
+      return [`total ${rows.length * 4}`, ...rows].join('\n');
+    }
+    if ((a[0] === 'cat' || a[0] === 'zcat') && archLog.test(a[1] || '')) {
+      const [, id, day] = archLog.exec(a[1]), cx = H.comps.includes(id) ? sim.c[id] : null;
+      if (!cx) return `${a[0]}: ${a[1]}: No such file or directory (this host has ${H.comps.map(x => '/var/log/app/archive/' + x + '.log-*.gz').join(', ')})`;
+      const back = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].find(n => sim.businessDate(n) === day);
+      if (!back) return `${a[0]}: ${a[1]}: No such file or directory`;
+      // a plausible hour-by-hour summary for that day; the rate comes from the component's own throughput
+      const rate = Math.max(1, Math.round(sim.rates(id).out_rate || 0) || 60), d = sim.businessDay(back).toISOString().slice(0, 10);
+      const lines = [`${d} 00:05:00 INFO  [${id}] log rotated; archive ${id}.log-${day}.gz`];
+      for (let hh = 0; hh < 24; hh++) {
+        const seed = (id.length * 31 + hh * 7 + back * 13) % 17, n = Math.round(rate * 60 * (0.85 + seed / 100));
+        lines.push(`${d} ${String(hh).padStart(2, '0')}:00:00 INFO  [${id}] hourly: ${n.toLocaleString('en-US')} processed in last 60 min, errors 0`);
+      }
+      return lines.join('\n');
+    }
     // start-of-day file folders (a loader host): /data, /data/inbound, the inbox and its archive of earlier days.
     // The archive is always there; the inbox listing gives way to the pack's evidence while its file is missing.
     const sod = H.comps.map(x => sim.c[x]).find(cx => cx.def.pack_type === 'sod_file_load');
@@ -2423,6 +2444,7 @@ window.DRILL_CONTENT = {"blueprints": {"exchange": "# An equity exchange: member
         '  chronyc tracking   ulimit -n   lsof -p 3120 | wc -l',
         ...H.comps.map(x => `  tail -n 50 /var/log/app/${x}.log   grep ERROR /var/log/app/${x}.log`),
         '  ls /var/log/app   ping <component id>',
+        '  ls /var/log/app/archive   cat /var/log/app/archive/<id>.log-<date>.gz   (ten days back)',
         ...(sod ? ['  ls ' + sim.packText(sod, '{INBOX}') + '/archive   (earlier days\' files)'] : []),
         ...(consumers.length ? ['  cat /opt/app/conf/partitions.conf   (which partitions this server consumes)'] : []),
         ...(vm ? ['  systemctl status <process>'] : []),
@@ -3276,13 +3298,28 @@ debrief:
     each('[data-sql]', b => b.addEventListener('click', () => { $('#sqlQ').value = b.dataset.sql; runSql(b.dataset.sql); }));
     const runUnix = cmd => {
       if (!cmd.trim()) return;
-      const out = TL.shell(A.sim, A.unixHost, cmd);
+      A.unixHist = A.unixHist || []; A.unixHistPos = null;
+      if (A.unixHist[A.unixHist.length - 1] !== cmd) A.unixHist.push(cmd);
+      if (A.unixHist.length > 200) A.unixHist.splice(0, A.unixHist.length - 200);
+      // "history" is the shell's own: numbered commands from this session, like a real bash history
+      const out = cmd.trim() === 'history' ? A.unixHist.map((h, i) => `${String(i + 1).padStart(5)}  ${h}`).join('\n') : TL.shell(A.sim, A.unixHost, cmd);
       A.unixOut.push(`support_ro@${A.unixHost}:~$ ${cmd}`, ...(out ? [out] : []));
       if (A.unixOut.length > 400) A.unixOut.splice(0, A.unixOut.length - 400);
       if (A.session) A.session.useTool('Shell', `${A.unixHost}$ ${cmd}`);
       const el = $('#uxOut'); el.textContent = A.unixOut.join('\n'); el.scrollTop = el.scrollHeight;
     };
     on('#uxForm', 'submit', e => { e.preventDefault(); const v = $('#uxIn').value; $('#uxIn').value = ''; runUnix(v); });
+    // up and down arrows walk back through this session's commands, as in a terminal; down past the newest clears the line
+    on('#uxIn', 'keydown', e => {
+      const h = A.unixHist || [];
+      if (!h.length || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;
+      e.preventDefault();
+      let p = A.unixHistPos === null || A.unixHistPos === undefined ? h.length : A.unixHistPos;
+      p = e.key === 'ArrowUp' ? Math.max(0, p - 1) : Math.min(h.length, p + 1);
+      A.unixHistPos = p === h.length ? null : p;
+      e.target.value = p === h.length ? '' : h[p];
+      e.target.setSelectionRange(e.target.value.length, e.target.value.length);
+    });
     on('#uxHost', 'change', e => { A.unixHost = e.target.value; A.unixOut.push(`--- connected to ${A.unixHost} ---`); renderAll(); });
     each('[data-ux]', b => b.addEventListener('click', () => runUnix(b.dataset.ux)));
     if ($('#uxOut')) $('#uxOut').scrollTop = $('#uxOut').scrollHeight;

@@ -53,3 +53,13 @@ test('the archive covers the last ten days, and date follows the business day', 
   assert.match(arch, /CUSTOMER_STATIC_20260929\.csv/, 'ten days back from Oct 9');
   assert.match(T.shell(sim, host, 'date'), /^Fri Oct  9 \d\d:\d\d:\d\d IST 2026$/);
 });
+
+test('every component keeps ten days of rotated logs, and a day reads hour by hour', () => {
+  const { sim, host } = load();
+  const listing = T.shell(sim, host, 'ls /var/log/app/archive');
+  const hostComps = T.hosts(sim).find(h => h.host === host).comps;
+  assert.strictEqual(listing.match(/\.log-\d{8}\.gz/g).length, hostComps.length * 10);
+  const day = T.shell(sim, host, `cat /var/log/app/archive/${hostComps[0]}.log-20261008.gz`);
+  assert.match(day, /2026-10-08 23:00:00 INFO/, 'a full day of hourly lines');
+  assert.match(T.shell(sim, host, `cat /var/log/app/archive/${hostComps[0]}.log-20261101.gz`), /No such file or directory/);
+});

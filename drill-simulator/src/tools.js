@@ -298,6 +298,27 @@
       return `Permission denied: ${H.host} is accessed with a read-only support account.\nChanges go through approved actions with a named approver.`;
     if (c.host && sim.inOutage(c)) return `ssh: connect to host ${H.host} port 22: Connection refused`;
     const hf = sim.hostFault(c), f = c.fault && c.fault.type;
+    // rotated application logs: ten days of each component's log, one file per day, as on a real host
+    const archLog = /^\/var\/log\/app\/archive\/(\w+)\.log-(\d{8})\.gz$/;
+    if (a[0] === 'ls' && (a[1] || '').replace(/\/+$/, '') === '/var/log/app/archive') {
+      const rows = [];
+      H.comps.forEach(x => { for (let n = 1; n <= 10; n++) rows.push(`-rw-r--r-- 1 app app ${(180 + n * 7 + x.length * 3)}K ${sim.businessDay(n).toISOString().slice(5, 10)} 00:05 ${x}.log-${sim.businessDate(n)}.gz`); });
+      return [`total ${rows.length * 4}`, ...rows].join('\n');
+    }
+    if ((a[0] === 'cat' || a[0] === 'zcat') && archLog.test(a[1] || '')) {
+      const [, id, day] = archLog.exec(a[1]), cx = H.comps.includes(id) ? sim.c[id] : null;
+      if (!cx) return `${a[0]}: ${a[1]}: No such file or directory (this host has ${H.comps.map(x => '/var/log/app/archive/' + x + '.log-*.gz').join(', ')})`;
+      const back = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].find(n => sim.businessDate(n) === day);
+      if (!back) return `${a[0]}: ${a[1]}: No such file or directory`;
+      // a plausible hour-by-hour summary for that day; the rate comes from the component's own throughput
+      const rate = Math.max(1, Math.round(sim.rates(id).out_rate || 0) || 60), d = sim.businessDay(back).toISOString().slice(0, 10);
+      const lines = [`${d} 00:05:00 INFO  [${id}] log rotated; archive ${id}.log-${day}.gz`];
+      for (let hh = 0; hh < 24; hh++) {
+        const seed = (id.length * 31 + hh * 7 + back * 13) % 17, n = Math.round(rate * 60 * (0.85 + seed / 100));
+        lines.push(`${d} ${String(hh).padStart(2, '0')}:00:00 INFO  [${id}] hourly: ${n.toLocaleString('en-US')} processed in last 60 min, errors 0`);
+      }
+      return lines.join('\n');
+    }
     // start-of-day file folders (a loader host): /data, /data/inbound, the inbox and its archive of earlier days.
     // The archive is always there; the inbox listing gives way to the pack's evidence while its file is missing.
     const sod = H.comps.map(x => sim.c[x]).find(cx => cx.def.pack_type === 'sod_file_load');
@@ -340,6 +361,7 @@
         '  chronyc tracking   ulimit -n   lsof -p 3120 | wc -l',
         ...H.comps.map(x => `  tail -n 50 /var/log/app/${x}.log   grep ERROR /var/log/app/${x}.log`),
         '  ls /var/log/app   ping <component id>',
+        '  ls /var/log/app/archive   cat /var/log/app/archive/<id>.log-<date>.gz   (ten days back)',
         ...(sod ? ['  ls ' + sim.packText(sod, '{INBOX}') + '/archive   (earlier days\' files)'] : []),
         ...(consumers.length ? ['  cat /opt/app/conf/partitions.conf   (which partitions this server consumes)'] : []),
         ...(vm ? ['  systemctl status <process>'] : []),
