@@ -1,0 +1,37 @@
+id: exch-archive-disk-full
+title: Matching stops committing trades
+systems: [exchange]
+level: Medium
+summary: Matching is up but no trades are being committed. It looks like a database pool problem. It is not.
+brief: >
+  14:30. A large index rebuild ran on the order book store last night and the archive backup job
+  was skipped. The clearing cut-off is 15:30.
+faults:
+  - {at: "14:36", component: orderbook_db, fault: disk_full}
+noise:
+  - {at: "14:38", name: "CPU 79% on gw-node-1", severity: P4}
+root_cause: {component: orderbook_db, fault: disk_full}
+accepted_fixes: [orderbook_db.clear_disk_space]
+risky_actions: [matching.restart, orderbook_db.increase_pool_size, orderbook_db.kill_blocking_session, orderbook_db.failover_to_dr]
+hints:
+  - {after_min: 2, text: "The pool is full, but is anything actually running? What are the sessions waiting on?"}
+  - {after_min: 5, text: "Log on to the order book store host. How full are its disks?"}
+debrief:
+  what_happened: >
+    The archive backup was skipped after last night's index rebuild, so archived redo logs were never
+    moved off the database host. The archive destination reached 100%, the archiver stopped, and every
+    commit hung with ORA-00257. Matching's connections waited on those commits until the pool was full.
+  key_signal: >
+    df -h on the order book store host shows the archive mount at 100%, the database log shows
+    ORA-19815 and ORA-00257, and the sessions are waiting on "log file switch (archiving needed)",
+    not on a long-running query.
+  why_not_restart: >
+    The full pool is a symptom. Killing sessions or adding connections gives you more sessions waiting
+    on the same archiver. Restarting matching during trading is a market-wide event and it comes back to
+    the same stuck database. Failing over to DR works but takes order matching away for several minutes.
+  runbook:
+    - When the pool is full, check what the sessions are waiting on before killing anything.
+    - Log on to the database host and run df -h and dmesg | tail.
+    - Read the database log for ORA-00257 and ORA-19815.
+    - Archive and clear old files on the host with approval, then watch commits and matching recover.
+    - Problem record - alert on archive mount above 80% and make the archive backup job page on failure.
